@@ -559,7 +559,26 @@ function makeApiClient(getToken) {
     getUserBank: (username) => call(`/bank/${encodeURIComponent(username)}`),
     bankMeta: (username) => call(`/bank/${encodeURIComponent(username)}/meta`),
     deleteMyBank: () => call('/bank', { method: 'DELETE', auth: true }),
+    listBanks: () => call('/banks'),
   };
+}
+
+// Hard-reload that defeats browser cache by adding a fresh query param
+// and clearing any registered Cache Storage entries (PWA service workers).
+async function forceUpdateApp() {
+  try {
+    if ('caches' in window) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((k) => caches.delete(k)));
+    }
+    if ('serviceWorker' in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map((r) => r.unregister()));
+    }
+  } catch {}
+  const url = new URL(window.location.href);
+  url.searchParams.set('_t', Date.now().toString());
+  window.location.replace(url.toString());
 }
 
 // ---------- app context ----------
@@ -1597,7 +1616,7 @@ function QuizLauncher({ onStart }) {
 }
 
 // ---------- quiz: MC ----------
-function MCQuestion({ item, onAnswer }) {
+function MCQuestion({ item, onAnswer, nextSlot }) {
   const [picked, setPicked] = useState(null);
   // shuffle choices, but remember original index for grading
   const shuffled = useMemo(() => {
@@ -1639,19 +1658,24 @@ function MCQuestion({ item, onAnswer }) {
         })}
       </div>
       {picked && (
-        <div className="mt-3 bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg p-3 text-sm">
-          <div className={picked.origIdx === item.q.correct_index ? 'text-[var(--success-text)] font-medium' : 'text-[var(--danger-text)] font-medium'}>
-            {picked.origIdx === item.q.correct_index ? 'Correct' : 'Incorrect'}
+        <>
+          <div className="flex items-center justify-between gap-3 mt-3">
+            <div className={picked.origIdx === item.q.correct_index ? 'text-[var(--success-text)] font-medium' : 'text-[var(--danger-text)] font-medium'}>
+              {picked.origIdx === item.q.correct_index ? 'Correct' : 'Incorrect'}
+            </div>
+            {nextSlot}
           </div>
-          <div className="text-[var(--text)] mt-1">{item.q.explanation}</div>
-        </div>
+          <div className="bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg p-3 text-sm text-[var(--text)]">
+            {item.q.explanation}
+          </div>
+        </>
       )}
     </div>
   );
 }
 
 // ---------- quiz: short answer ----------
-function ShortAnswerQuestion({ item, onAnswer }) {
+function ShortAnswerQuestion({ item, onAnswer, nextSlot }) {
   const [text, setText] = useState('');
   const [revealed, setRevealed] = useState(false);
   const [graded, setGraded] = useState(false);
@@ -1707,7 +1731,10 @@ function ShortAnswerQuestion({ item, onAnswer }) {
               </button>
             </div>
           ) : (
-            <div className="text-xs text-[var(--text-faint)] pt-2 border-t border-[var(--border-soft)]">Graded.</div>
+            <div className="flex items-center justify-between gap-3 pt-2 border-t border-[var(--border-soft)]">
+              <div className="text-xs text-[var(--text-faint)]">Graded.</div>
+              {nextSlot}
+            </div>
           )}
         </div>
       )}
@@ -1717,10 +1744,11 @@ function ShortAnswerQuestion({ item, onAnswer }) {
 
 // ---------- quiz: matching ----------
 // ---------- quiz: two-part ----------
-function TwoPartQuestion({ item, onAnswer }) {
+function TwoPartQuestion({ item, onAnswer, nextSlot }) {
   const parts = item.q.parts || [];
   const [partIdx, setPartIdx] = useState(0);
-  const [results, setResults] = useState([]); // [{correct, user_answer, ...}]
+  const [results, setResults] = useState([]);
+  const [done, setDone] = useState(false);
 
   if (parts.length === 0) {
     return <div className="text-sm text-[var(--text-muted)]">Malformed two-part question.</div>;
@@ -1730,18 +1758,14 @@ function TwoPartQuestion({ item, onAnswer }) {
     const nextResults = [...results, res];
     setResults(nextResults);
     if (partIdx + 1 < parts.length) {
-      // record this sub-attempt (parent attempt id base + part suffix)
-      onAnswer({ ...res, isInterim: true, partIdx, totalParts: parts.length });
+      onAnswer({ ...res, isInterim: true });
       setPartIdx((i) => i + 1);
     } else {
-      // final part — emit the cumulative result. mark the whole item correct only if every part is right.
       const allCorrect = nextResults.every((r) => r.correct);
+      setDone(true);
       onAnswer({
         correct: allCorrect,
         user_answer: nextResults.map((r, i) => `P${i + 1}: ${r.user_answer}`).join(' | '),
-        partIdx,
-        totalParts: parts.length,
-        partResults: nextResults,
       });
     }
   };
@@ -1760,14 +1784,16 @@ function TwoPartQuestion({ item, onAnswer }) {
         key={partIdx}
         part={current}
         onAnswer={handlePartAnswer}
-        previousResults={results}
+        nextSlot={done && partIdx === parts.length - 1 ? nextSlot : null}
+        continueLabel={partIdx === parts.length - 1 ? null : 'Continue →'}
       />
     </div>
   );
 }
 
-function SinglePart({ part, onAnswer }) {
+function SinglePart({ part, onAnswer, nextSlot, continueLabel }) {
   const [picked, setPicked] = useState(null);
+  const [advanced, setAdvanced] = useState(false);
   const shuffled = useMemo(() => {
     const arr = (part.choices || []).map((text, origIdx) => ({ text, origIdx }));
     return shuffle(arr);
@@ -1779,7 +1805,8 @@ function SinglePart({ part, onAnswer }) {
   };
 
   const onContinue = () => {
-    if (picked === null) return;
+    if (picked === null || advanced) return;
+    setAdvanced(true);
     const correct = picked.origIdx === part.correct_index;
     onAnswer({ correct, user_answer: picked.text });
   };
@@ -1812,25 +1839,30 @@ function SinglePart({ part, onAnswer }) {
       </div>
       {picked && (
         <>
-          <div className="mt-3 bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg p-3 text-sm">
+          <div className="flex items-center justify-between gap-3 mt-3">
             <div className={picked.origIdx === part.correct_index ? 'text-[var(--success-text)] font-medium' : 'text-[var(--danger-text)] font-medium'}>
               {picked.origIdx === part.correct_index ? 'Correct' : 'Incorrect'}
             </div>
-            <div className="text-[var(--text)] mt-1">{part.explanation}</div>
+            {!advanced && (
+              <button
+                onClick={onContinue}
+                className="bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] rounded px-4 py-2 text-sm font-medium"
+              >
+                {continueLabel || 'Continue →'}
+              </button>
+            )}
+            {advanced && nextSlot}
           </div>
-          <button
-            onClick={onContinue}
-            className="w-full bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] rounded-lg py-2 text-sm font-medium"
-          >
-            Continue
-          </button>
+          <div className="bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg p-3 text-sm text-[var(--text)]">
+            {part.explanation}
+          </div>
         </>
       )}
     </div>
   );
 }
 
-function MatchingQuestion({ item, onAnswer }) {
+function MatchingQuestion({ item, onAnswer, nextSlot }) {
   const pairs = item.q.terms; // [{term, definition}, ...]
   const termOrder = useMemo(() => pairs.map((_, i) => i), [item.id]);
   const defOrder = useMemo(() => shuffle(pairs.map((_, i) => i)), [item.id]);
@@ -1946,7 +1978,7 @@ function MatchingQuestion({ item, onAnswer }) {
           })}
         </div>
       </div>
-      {!submitted && (
+      {!submitted ? (
         <button
           onClick={submit}
           disabled={!allPaired}
@@ -1954,6 +1986,8 @@ function MatchingQuestion({ item, onAnswer }) {
         >
           {allPaired ? 'Submit' : `Pair all ${pairs.length} terms to submit`}
         </button>
+      ) : (
+        <div className="flex justify-end">{nextSlot}</div>
       )}
     </div>
   );
@@ -2016,22 +2050,23 @@ function QuizRunner({ items, onExit }) {
       </div>
 
       <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-5">
-        {item.mode === 'mc' && <MCQuestion key={item.id} item={item} onAnswer={handleAnswer} />}
-        {item.mode === 'two_part' && <TwoPartQuestion key={item.id} item={item} onAnswer={handleAnswer} />}
-        {item.mode === 'short' && <ShortAnswerQuestion key={item.id} item={item} onAnswer={handleAnswer} />}
-        {item.mode === 'match' && <MatchingQuestion key={item.id} item={item} onAnswer={handleAnswer} />}
+        {(() => {
+          const nextBtn = answered ? (
+            <button
+              onClick={isLast ? () => onExit([...results]) : next}
+              className="bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] rounded px-4 py-2 text-sm font-medium shrink-0"
+            >
+              {isLast ? 'See results' : 'Next →'}
+            </button>
+          ) : null;
+          const props = { key: item.id, item, onAnswer: handleAnswer, nextSlot: nextBtn };
+          if (item.mode === 'mc') return <MCQuestion {...props} />;
+          if (item.mode === 'two_part') return <TwoPartQuestion {...props} />;
+          if (item.mode === 'short') return <ShortAnswerQuestion {...props} />;
+          if (item.mode === 'match') return <MatchingQuestion {...props} />;
+          return null;
+        })()}
       </div>
-
-      {answered && (
-        <div className="flex justify-end">
-          <button
-            onClick={isLast ? () => onExit([...results]) : next}
-            className="bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] rounded-lg px-4 py-2 text-sm font-medium"
-          >
-            {isLast ? 'See results' : 'Next →'}
-          </button>
-        </div>
-      )}
     </div>
   );
 }
@@ -2533,6 +2568,19 @@ function SettingsPanel({ onClose }) {
       )}
 
       <div>
+        <div className="text-xs uppercase tracking-wide text-[var(--text-muted)] mb-2">App</div>
+        <div className="flex items-center justify-between gap-3 bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg px-3 py-2.5">
+          <div className="text-sm text-[var(--text-muted)]">Fetch the latest version of the app</div>
+          <button
+            onClick={forceUpdateApp}
+            className="shrink-0 text-xs px-3 py-1.5 border border-[var(--border)] hover:bg-[var(--bg-hover)] rounded font-medium"
+          >
+            Force update
+          </button>
+        </div>
+      </div>
+
+      <div>
         <div className="text-xs uppercase tracking-wide text-[var(--text-muted)] mb-2">Gemini API key</div>
         <div className="flex gap-2">
           <input
@@ -2987,6 +3035,112 @@ function ServerStatsPayload({ data }) {
   );
 }
 
+function BanksBrowser() {
+  const { api, session, setFiles, setExtraction, setQuestionsFor, files } = useApp();
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState('');
+  const [tick, setTick] = useState(0);
+  const [busy, setBusy] = useState(null); // username currently downloading
+  const [status, setStatus] = useState(null); // { username, msg, kind }
+
+  useEffect(() => {
+    let cancelled = false;
+    setData(null); setErr('');
+    api.listBanks()
+      .then((d) => { if (!cancelled) setData(d); })
+      .catch((e) => { if (!cancelled) setErr(e.message); });
+    return () => { cancelled = true; };
+  }, [api, tick]);
+
+  const download = async (username) => {
+    if (busy) return;
+    const localCount = files.length;
+    const msg = localCount > 0
+      ? `Replace your local bank (${localCount} chapter${localCount === 1 ? '' : 's'}) with @${username}'s bank? Your local data will be lost.`
+      : `Download @${username}'s bank to this device?`;
+    if (!confirm(msg)) return;
+    setBusy(username);
+    setStatus(null);
+    try {
+      const bank = await api.getUserBank(username);
+      setFiles(bank.files || []);
+      storage.set(KEYS.extractions, bank.extractions || {});
+      storage.set(KEYS.questions, bank.questions || {});
+      for (const fid of Object.keys(bank.extractions || {})) setExtraction(fid, bank.extractions[fid]);
+      for (const fid of Object.keys(bank.questions || {})) setQuestionsFor(fid, bank.questions[fid]);
+      const n = (bank.files || []).length;
+      setStatus({ username, msg: `Downloaded ${n} chapter${n === 1 ? '' : 's'} from @${username}`, kind: 'ok' });
+    } catch (e) {
+      setStatus({ username, msg: e.message, kind: 'err' });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  if (err) {
+    return (
+      <div className="bg-[var(--danger-bg)] border border-[var(--danger-border)] rounded-2xl px-4 py-3 text-sm text-[var(--danger-text)] flex items-center justify-between">
+        <span>Could not load banks: {err}</span>
+        <button onClick={() => setTick((t) => t + 1)} className="text-xs px-3 py-1 border border-[var(--danger-border)] rounded">Retry</button>
+      </div>
+    );
+  }
+  if (!data) return <div className="text-sm text-[var(--text-muted)]">Loading banks…</div>;
+  if (!data.banks.length) {
+    return (
+      <div className="bg-[var(--bg-card-soft)] border border-dashed border-[var(--border-soft)] rounded-2xl p-6 text-sm text-[var(--text-muted)]">
+        No one has published a bank yet. Publish yours from the Library tab.
+      </div>
+    );
+  }
+
+  const ago = (ts) => {
+    const d = Date.now() - ts;
+    const m = Math.round(d / 60000);
+    if (m < 1) return 'just now';
+    if (m < 60) return `${m} min ago`;
+    const h = Math.round(m / 60);
+    if (h < 24) return `${h} hr ago`;
+    return `${Math.round(h / 24)} d ago`;
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-5">
+        <h2 className="font-semibold mb-1 text-[var(--text-strong)]">Published banks</h2>
+        <p className="text-sm text-[var(--text-muted)] mb-4">
+          Download any user's question bank to study from their chapters. {' '}
+          {session ? 'Replaces your local bank.' : 'Sign in to download.'}
+        </p>
+        <ul className="divide-y divide-[var(--border-soft)]">
+          {data.banks.map((b) => (
+            <li key={b.username} className="py-3 flex items-center gap-3">
+              <div className="flex-1 min-w-0">
+                <div className="text-[var(--text)] font-medium">@{b.username}</div>
+                <div className="text-xs text-[var(--text-faint)]">
+                  {(b.size_bytes / 1024).toFixed(1)} KB · updated {ago(b.updated_at)}
+                </div>
+                {status?.username === b.username && (
+                  <div className={`text-xs mt-1 ${status.kind === 'ok' ? 'text-[var(--success-text)]' : 'text-[var(--danger-text)]'}`}>
+                    {status.kind === 'ok' ? '✓ ' : ''}{status.msg}
+                  </div>
+                )}
+              </div>
+              <button
+                onClick={() => download(b.username)}
+                disabled={!session || busy != null}
+                className="shrink-0 text-xs px-3 py-1.5 bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] disabled:opacity-40 rounded font-medium"
+              >
+                {busy === b.username ? 'Downloading…' : session ? 'Download' : 'Sign in'}
+              </button>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
 function UserProfile({ username, onBack }) {
   const { api } = useApp();
   const [data, setData] = useState(null);
@@ -3090,10 +3244,10 @@ function Shell() {
 
   const hasLibrary = apiKey || readOnly || session;
   const tabs = readOnly
-    ? [['study', 'Study'], ['stats', 'Stats'], ['leaderboard', 'Leaderboard'], ['library', 'Library']]
+    ? [['study', 'Study'], ['stats', 'Stats'], ['leaderboard', 'Leaderboard'], ['banks', 'Banks'], ['library', 'Library']]
     : hasLibrary
-      ? [['library', 'Library'], ['study', 'Study'], ['stats', 'Stats'], ['leaderboard', 'Leaderboard']]
-      : [['stats', 'Stats'], ['leaderboard', 'Leaderboard'], ['study', 'Study']];
+      ? [['library', 'Library'], ['study', 'Study'], ['stats', 'Stats'], ['leaderboard', 'Leaderboard'], ['banks', 'Banks']]
+      : [['stats', 'Stats'], ['leaderboard', 'Leaderboard'], ['banks', 'Banks'], ['study', 'Study']];
   useEffect(() => { if (readOnly) setTab('study'); else if (!hasLibrary) setTab('stats'); }, [readOnly, hasLibrary]);
   useEffect(() => { setProfileUser(null); }, [tab]);
 
@@ -3164,7 +3318,7 @@ function Shell() {
               {session && <CloudBankPanel />}
               {fullyProcessed > 0 && (
                 <>
-                  <SyncPanel />
+                  {/* SyncPanel (GitHub auto-push) intentionally hidden — Cloudflare CloudBankPanel replaces it. */}
                   <div className="flex justify-end">
                     <button
                       onClick={() => exportBank({ files, extractions, questions })}
@@ -3190,6 +3344,7 @@ function Shell() {
               ? <UserProfile username={profileUser} onBack={() => setProfileUser(null)} />
               : <Leaderboard onPickUser={(u) => setProfileUser(u)} />
           )}
+          {tab === 'banks' && <BanksBrowser />}
         </div>
       </main>
 
