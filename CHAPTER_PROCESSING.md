@@ -4,6 +4,61 @@ Use this file to process MCAT chapter PDFs into the JSON shape the app expects, 
 publish them to the cloud bank (https://mcat-api.solitary-sky-76c1.workers.dev) without
 spending Gemini quota. Designed for Claude Code with Sonnet/Opus + the Read + Write tools.
 
+---
+
+## Quick start
+
+### Launching Claude Code
+
+This project lives at `C:\MCAT REVIEW\`. **Open Claude Code from that directory** so it
+can see both the spec and the PDFs in one workspace:
+
+```powershell
+cd "C:\MCAT REVIEW"
+claude
+```
+
+If you've already launched Claude Code somewhere else (typically `C:\Users\<you>\`), you'll
+get an error like *"can't find a Website directory"* — that's because Claude Code only
+sees files under its launch cwd. Either restart it from `C:\MCAT REVIEW`, or in the
+running session ask it to add that directory to its workspace.
+
+### What to ask Claude Code
+
+After launching in `C:\MCAT REVIEW`, paste this prompt verbatim:
+
+> Read `Website/CHAPTER_PROCESSING.md`. Then run the pipeline it describes on every PDF in
+> `Material/Behaviorial Science/`. Write one `chapter_<file_id>.json` per chapter into a
+> new `Generated/` folder at the project root, and at the end merge them into a single
+> `Generated/bank.json` matching the bank-envelope shape at the bottom of the spec.
+>
+> Before processing all five chapters, do a **dry run on Chapter 1 only** and report the
+> token usage. Wait for me to say "go" before processing the remaining chapters.
+
+The dry-run gate is worth keeping — five chapters end-to-end (extraction + general MC +
+term coverage + two-part + short answer) typically runs **50-100k input + 30-60k output
+tokens per chapter**, so confirm Chapter 1's actual usage before paying for the rest.
+
+### Loading the result
+
+When Claude Code finishes and you have `Generated/bank.json`, see the
+[Loading the bank into the app](#loading-the-bank-into-the-app) section below. The
+**cloud bank PUT** path (Section A) is the easiest — one curl call after you're signed
+in, then every device pulls the new bank from the Library tab.
+
+### Resuming if it stops mid-run
+
+If Claude Code stops part-way (rate limit, interrupted session, context limit), restart
+it the same way and use:
+
+> Continue processing the PDFs in `Material/Behaviorial Science/` per `Website/CHAPTER_PROCESSING.md`.
+> Skip any chapter that already has a `Generated/chapter_*.json` file. After processing,
+> re-merge into `Generated/bank.json`.
+
+Idempotent skipping by file presence means you only pay for what's not yet done.
+
+---
+
 ## Goal
 
 For each chapter PDF you point at, produce a JSON file that mirrors the **exact** shape the
@@ -313,20 +368,27 @@ related concept the student is likely to confuse with the correct answer.
 
 ## Procedure for Claude Code
 
+Assumes the working directory is `C:\MCAT REVIEW` (per Quick start above).
+
 ```
-For each PDF in C:\MCAT REVIEW\Material\<Subject>\:
-  1. Read the PDF.
-  2. Run Step 1 (extraction). Save to extractions/<file_id>.json.
-  3. Run Step 2 (general MC). Save the 15 questions.
-  4. Run Step 3 (term coverage). Generate one per key_term, append to the MC array.
-  5. Run Step 4 (two-part). Generate ~6 items.
-  6. Run Step 5 (short answer). Generate ~8 items.
-  7. Write chapter_<file_id>.json with the aggregated shape above.
+For each PDF in Material/<Subject>/:
+  1. If Generated/chapter_<file_id>.json already exists → skip (resume-friendly).
+  2. Read the PDF.
+  3. Run Step 1 (extraction).
+  4. Run Step 2 (general MC, 15 items).
+  5. Run Step 3 (term coverage, one item per key_term). Append to the MC array.
+  6. Run Step 4 (two-part, ~6 items).
+  7. Run Step 5 (short answer, ~8 items).
+  8. Write Generated/chapter_<file_id>.json with the aggregated shape from §Final output.
 
 After all chapters:
-  8. Merge into bank.json.
-  9. PUT to the cloud bank (Section A above).
+  9. Re-read every Generated/chapter_*.json and merge into Generated/bank.json
+     per the bank envelope shape.
+  10. Tell the user "Done — bank.json written. See §Loading to publish."
 ```
 
-Optimize for quality, not speed. Claude Sonnet/Opus with a single careful pass per step
-will outperform multiple cheap iterations.
+Optimize for quality, not speed. A single careful Sonnet/Opus pass per step beats
+multiple cheap iterations — distractor quality is the whole point.
+
+If processing the first chapter, **stop and report token usage before continuing** so the
+user can decide whether to proceed with the rest.
