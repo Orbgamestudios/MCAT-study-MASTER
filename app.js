@@ -374,14 +374,13 @@ function makeClient(getKey) {
 
   // ---- term coverage MC ----
   // Generates one MC question PER key_term so the quiz covers every term in the chapter,
-  // even terms the chapter didn't directly quiz. Distractors should come from OTHER terms'
-  // definitions so wrong answers are plausibly close-but-wrong.
+  // even terms the chapter didn't directly quiz. Distractors should be deliberately tricky —
+  // drawn from common student confusions, sibling concepts, and adjacent topics, NOT just
+  // other terms' literal definitions.
   async function generateTermQuestions(extraction, chapterLabel) {
     const terms = extraction?.key_terms || [];
     if (!terms.length) return [];
 
-    // Batch in groups of 12 so any single call stays under output limits and respects
-    // per-minute rate caps (each batch ~ one API call).
     const BATCH = 12;
     const all = [];
     for (let i = 0; i < terms.length; i += BATCH) {
@@ -390,20 +389,26 @@ function makeClient(getKey) {
         maxOutputTokens: 16384,
         disableThinking: true,
         systemInstruction:
-          'You generate MCAT-style multiple-choice questions, one per assigned term. ' +
-          'For each term, write a question that tests understanding of that term — definition, application, ' +
-          'or recognition in a scenario. Vary phrasing across terms; avoid the pattern "What is the X?" for every item. ' +
-          'Exactly 4 choices. correct_index is 0-3. Distractors must be plausible and ideally drawn from ' +
-          'definitions of OTHER terms in the chapter so a student who half-remembers can be steered wrong. ' +
-          'Explanations are 1-2 sentences justifying the correct answer.',
+          'You write tough MCAT-style multiple-choice questions, one per assigned term. ' +
+          'For each term, write a question testing understanding — definition, application, ' +
+          'mechanism, recognition in a clinical/behavioral scenario, or distinguishing the term from a sibling concept. ' +
+          'Vary phrasing across items; do NOT default to "What is the X?" — mix in scenarios, vignettes, "best example of", "most similar to", "which of the following would NOT". ' +
+          'Exactly 4 choices, correct_index 0-3.\n\n' +
+          'DISTRACTORS MUST BE GENUINELY HARD:\n' +
+          '- Pull from commonly confused sibling concepts (e.g. for "generalization" use accommodation, assimilation, classical-vs-operant cousins).\n' +
+          '- Pull from adjacent material in the broader MCAT corpus, not just this chapter — Piaget vs Vygotsky, Type I vs Type II errors, sympathetic vs parasympathetic, etc.\n' +
+          '- Include at least one distractor that is technically true but does NOT answer the question.\n' +
+          '- Avoid "obviously wrong" distractors (unrelated facts, gibberish, definitions of trivial items). Every distractor should make a half-prepared student hesitate.\n' +
+          '- Don\'t pad with "all/none of the above" filler.\n\n' +
+          'Explanations are 1-2 sentences and should briefly call out why the most tempting distractor is wrong.',
         contents: [{
           role: 'user',
           parts: [{
             text:
               `Chapter: ${chapterLabel}\n\n` +
-              `Assigned terms (write ONE question for each):\n` +
+              `Assigned terms (write ONE question for each, in this order):\n` +
               batch.map((t, idx) => `${idx + 1}. ${t.term} — ${t.definition}`).join('\n') +
-              `\n\nOther terms in the chapter (use definitions as distractor material; do NOT write questions about these):\n` +
+              `\n\nOther terms in the same chapter (fair game as distractor inspiration):\n` +
               terms.filter((_, idx) => idx < i || idx >= i + BATCH)
                 .slice(0, 30)
                 .map((t) => `- ${t.term}: ${t.definition}`).join('\n') +
@@ -427,9 +432,76 @@ function makeClient(getKey) {
     return all;
   }
 
+  // ---- two-part MC ----
+  // Each item presents two sequential mini-MCs on related-but-distinct concepts that
+  // students commonly confuse. Each part is scored independently.
+  const TWO_PART_SCHEMA = {
+    type: 'OBJECT',
+    properties: {
+      questions: {
+        type: 'ARRAY',
+        items: {
+          type: 'OBJECT',
+          properties: {
+            theme: { type: 'STRING' },
+            parts: {
+              type: 'ARRAY',
+              items: {
+                type: 'OBJECT',
+                properties: {
+                  question: { type: 'STRING' },
+                  choices: { type: 'ARRAY', items: { type: 'STRING' } },
+                  correct_index: { type: 'INTEGER' },
+                  explanation: { type: 'STRING' },
+                },
+                required: ['question', 'choices', 'correct_index', 'explanation'],
+              },
+            },
+          },
+          required: ['theme', 'parts'],
+        },
+      },
+    },
+    required: ['questions'],
+  };
+
+  async function generateTwoPartQuestions(extraction, chapterLabel, n = 6) {
+    if (!extraction?.key_terms?.length) return [];
+    const resp = await generate({
+      maxOutputTokens: 16384,
+      disableThinking: true,
+      systemInstruction:
+        'You design "two-part" MCAT-style multiple choice items. Each item has exactly TWO MC parts on RELATED-BUT-DIFFERENT concepts that students commonly confuse. ' +
+        'Example shape: Part 1 presents a brief scenario or stem and asks "this illustrates _____" (correct: generalization). ' +
+        'Part 2 then asks a definitional or application question on a sibling concept (correct: accommodation to a schema). ' +
+        'The two parts share a "theme" (the broader area the student must navigate) but probe DISTINCT concepts so a student who has them blurred together will miss one. ' +
+        'Each part has exactly 4 choices, correct_index 0-3, and a 1-2 sentence explanation. ' +
+        'Distractors should be tough — sibling concepts, near-misses, things the student would plausibly pick if they\'re half-prepared. ' +
+        'Avoid trivial filler distractors.',
+      contents: [{
+        role: 'user',
+        parts: [{
+          text:
+            `Chapter: ${chapterLabel}\n\n` +
+            `Key terms in this chapter (use as raw material for concept pairs that are commonly confused):\n` +
+            (extraction.key_terms || []).slice(0, 40).map((t) => `- ${t.term}: ${t.definition}`).join('\n') +
+            `\n\nGenerate exactly ${n} two-part items. Pick term pairs that students actually confuse (different theories explaining the same phenomenon, different stages of the same process, parallel mechanisms with subtle differences). ` +
+            `Each "parts" array must have exactly 2 entries.`,
+        }],
+      }],
+      responseSchema: TWO_PART_SCHEMA,
+    });
+    const data = extractJson(resp);
+    return (data.questions || []).map((q, i) => ({
+      id: `tp_${Date.now()}_${i}`,
+      mode: 'two_part',
+      ...q,
+    }));
+  }
+
   return {
     uploadFile, deleteFile, generate, ping,
-    extractFromPdf, generateMCQuestions, generateShortAnswers, generateTermQuestions,
+    extractFromPdf, generateMCQuestions, generateShortAnswers, generateTermQuestions, generateTwoPartQuestions,
   };
 }
 
@@ -1043,7 +1115,7 @@ function FileRow({ file, extraction, qbank, busyStage, onProcess, onRemove, read
   const termsCount = extraction?.key_terms?.length || 0;
   const termCovered = qbank?.mc ? new Set(qbank.mc.filter((q) => q.from === 'term').map((q) => q.term)) : new Set();
   const termsNeeded = (extraction?.key_terms || []).filter((t) => !termCovered.has(t.term)).length;
-  const fullyProcessed = extraction && qbank?.mc && qbank?.short && termsNeeded === 0;
+  const fullyProcessed = extraction && qbank?.mc && qbank?.short && qbank?.twoPart && termsNeeded === 0;
 
   let badge;
   if (busyStage) {
@@ -1173,7 +1245,13 @@ function FileList() {
         setBusy((b) => ({ ...b, [file.file_id]: 'generating short' }));
         short = await client.generateShortAnswers(file.file_uri, file.mime_type, ext, file.chapter);
       }
-      setQuestionsFor(file.file_id, { mc, short, generated_at: new Date().toISOString() });
+      // Step 5: two-part bank (skip if already cached)
+      let twoPart = existingQ.twoPart;
+      if (!twoPart) {
+        setBusy((b) => ({ ...b, [file.file_id]: 'generating two-part' }));
+        twoPart = await client.generateTwoPartQuestions(ext, file.chapter);
+      }
+      setQuestionsFor(file.file_id, { mc, short, twoPart, generated_at: new Date().toISOString() });
       markFile(file.file_id, { processError: null });
       // Fire-and-forget auto-push. Don't block the UI on it.
       if (github.autoPush && github.token) {
@@ -1284,6 +1362,8 @@ function buildPool({ files, questions, extractions, attempts }, mode, scope) {
       for (const q of questions[f.file_id].mc) pool.push({ id: q.id, mode, q, ...meta });
     } else if (mode === 'short') {
       for (const q of questions[f.file_id].short) pool.push({ id: q.id, mode, q, ...meta });
+    } else if (mode === 'two_part') {
+      for (const q of (questions[f.file_id].twoPart || [])) pool.push({ id: q.id, mode, q, ...meta });
     } else if (mode === 'match') {
       const terms = (extractions[f.file_id].key_terms || []).slice();
       const GROUP = 5;
@@ -1369,6 +1449,7 @@ function QuizLauncher({ onStart }) {
 
   const modes = [
     ['mc', 'Multiple choice'],
+    ['two_part', 'Two-part'],
     ['short', 'Short answer'],
     ['match', 'Matching'],
   ];
@@ -1400,7 +1481,7 @@ function QuizLauncher({ onStart }) {
     <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-5 space-y-5">
       <div>
         <h2 className="font-semibold mb-3">Start a quiz</h2>
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
           {modes.map(([k, label]) => (
             <button
               key={k}
@@ -1635,6 +1716,120 @@ function ShortAnswerQuestion({ item, onAnswer }) {
 }
 
 // ---------- quiz: matching ----------
+// ---------- quiz: two-part ----------
+function TwoPartQuestion({ item, onAnswer }) {
+  const parts = item.q.parts || [];
+  const [partIdx, setPartIdx] = useState(0);
+  const [results, setResults] = useState([]); // [{correct, user_answer, ...}]
+
+  if (parts.length === 0) {
+    return <div className="text-sm text-[var(--text-muted)]">Malformed two-part question.</div>;
+  }
+
+  const handlePartAnswer = (res) => {
+    const nextResults = [...results, res];
+    setResults(nextResults);
+    if (partIdx + 1 < parts.length) {
+      // record this sub-attempt (parent attempt id base + part suffix)
+      onAnswer({ ...res, isInterim: true, partIdx, totalParts: parts.length });
+      setPartIdx((i) => i + 1);
+    } else {
+      // final part — emit the cumulative result. mark the whole item correct only if every part is right.
+      const allCorrect = nextResults.every((r) => r.correct);
+      onAnswer({
+        correct: allCorrect,
+        user_answer: nextResults.map((r, i) => `P${i + 1}: ${r.user_answer}`).join(' | '),
+        partIdx,
+        totalParts: parts.length,
+        partResults: nextResults,
+      });
+    }
+  };
+
+  const current = parts[partIdx];
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-baseline justify-between">
+        <span className="text-xs uppercase tracking-wide text-[var(--accent-text)]">
+          Two-part · {item.q.theme}
+        </span>
+        <span className="text-xs text-[var(--text-faint)]">Part {partIdx + 1} of {parts.length}</span>
+      </div>
+      <SinglePart
+        key={partIdx}
+        part={current}
+        onAnswer={handlePartAnswer}
+        previousResults={results}
+      />
+    </div>
+  );
+}
+
+function SinglePart({ part, onAnswer }) {
+  const [picked, setPicked] = useState(null);
+  const shuffled = useMemo(() => {
+    const arr = (part.choices || []).map((text, origIdx) => ({ text, origIdx }));
+    return shuffle(arr);
+  }, [part]);
+
+  const submit = (entry) => {
+    if (picked !== null) return;
+    setPicked(entry);
+  };
+
+  const onContinue = () => {
+    if (picked === null) return;
+    const correct = picked.origIdx === part.correct_index;
+    onAnswer({ correct, user_answer: picked.text });
+  };
+
+  return (
+    <div className="space-y-4">
+      <p className="text-base leading-relaxed">{part.question}</p>
+      <div className="space-y-2">
+        {shuffled.map((entry, i) => {
+          const isPicked = picked && entry.origIdx === picked.origIdx;
+          const isCorrect = entry.origIdx === part.correct_index;
+          let cls = 'border-[var(--border)] hover:bg-[var(--bg-hover)]';
+          if (picked) {
+            if (isCorrect) cls = 'border-[var(--success-border)] bg-[var(--success-bg-strong)]';
+            else if (isPicked) cls = 'border-[var(--danger-border)] bg-[var(--danger-bg-strong)]';
+            else cls = 'border-[var(--border-soft)] opacity-60';
+          }
+          return (
+            <button
+              key={i}
+              onClick={() => submit(entry)}
+              disabled={picked !== null}
+              className={`w-full text-left border rounded-lg px-3 py-2.5 text-sm transition-colors ${cls}`}
+            >
+              <span className="text-[var(--text-faint)] mr-2">{String.fromCharCode(65 + i)}.</span>
+              {entry.text}
+            </button>
+          );
+        })}
+      </div>
+      {picked && (
+        <>
+          <div className="mt-3 bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg p-3 text-sm">
+            <div className={picked.origIdx === part.correct_index ? 'text-[var(--success-text)] font-medium' : 'text-[var(--danger-text)] font-medium'}>
+              {picked.origIdx === part.correct_index ? 'Correct' : 'Incorrect'}
+            </div>
+            <div className="text-[var(--text)] mt-1">{part.explanation}</div>
+          </div>
+          <button
+            onClick={onContinue}
+            className="w-full bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] rounded-lg py-2 text-sm font-medium"
+          >
+            Continue
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
 function MatchingQuestion({ item, onAnswer }) {
   const pairs = item.q.terms; // [{term, definition}, ...]
   const termOrder = useMemo(() => pairs.map((_, i) => i), [item.id]);
@@ -1774,7 +1969,8 @@ function QuizRunner({ items, onExit }) {
   const item = items[index];
   const isLast = index === items.length - 1;
 
-  const handleAnswer = ({ correct, user_answer }) => {
+  const handleAnswer = ({ correct, user_answer, isInterim }) => {
+    if (isInterim) return; // two-part items emit interim results between parts; only score the final
     if (answered) return;
     setAnswered(true);
     addAttempt({
@@ -1821,6 +2017,7 @@ function QuizRunner({ items, onExit }) {
 
       <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-5">
         {item.mode === 'mc' && <MCQuestion key={item.id} item={item} onAnswer={handleAnswer} />}
+        {item.mode === 'two_part' && <TwoPartQuestion key={item.id} item={item} onAnswer={handleAnswer} />}
         {item.mode === 'short' && <ShortAnswerQuestion key={item.id} item={item} onAnswer={handleAnswer} />}
         {item.mode === 'match' && <MatchingQuestion key={item.id} item={item} onAnswer={handleAnswer} />}
       </div>
@@ -1862,6 +2059,7 @@ function QuizSummary({ results, onRestart, onDrillMisses }) {
               <li key={i} className="text-[var(--text)]">
                 <span className="text-[var(--text-faint)] mr-2">{i + 1}.</span>
                 {m.item.mode === 'mc' && m.item.q.question}
+                {m.item.mode === 'two_part' && <span><span className="text-[var(--accent-text)]">Two-part:</span> {m.item.q.theme}</span>}
                 {m.item.mode === 'short' && m.item.q.prompt}
                 {m.item.mode === 'match' && <span className="text-[var(--text-muted)]">Matching set · {m.user_answer}</span>}
                 <div className="text-xs text-[var(--text-faint)] mt-0.5 ml-6">{m.item.chapter}</div>
@@ -2245,6 +2443,131 @@ function ThemeSwitcher() {
           {t === 'dark' ? '🌙' : t === 'light' ? '☀️' : '🍂'}
         </button>
       ))}
+    </div>
+  );
+}
+
+// ---------- settings ----------
+function SettingsPanel({ onClose }) {
+  const { theme, setTheme, apiKey, setApiKey, client, session, pendingSync, syncBusy, syncError, flushSync } = useApp();
+  const [keyVal, setKeyVal] = useState(apiKey || '');
+  const [keyShow, setKeyShow] = useState(false);
+  const [keyErr, setKeyErr] = useState('');
+  const [keyBusy, setKeyBusy] = useState(false);
+
+  const saveKey = async () => {
+    const trimmed = keyVal.trim();
+    if (!trimmed) { setApiKey(''); return; }
+    if (!trimmed.startsWith('AIza')) {
+      setKeyErr('Google AI keys start with AIza.');
+      return;
+    }
+    setKeyBusy(true); setKeyErr('');
+    storage.set(KEYS.apiKey, trimmed);
+    try {
+      await client.ping();
+      setApiKey(trimmed);
+    } catch (e) {
+      storage.remove(KEYS.apiKey);
+      setKeyErr(`Key rejected: ${e.message}`);
+    } finally {
+      setKeyBusy(false);
+    }
+  };
+
+  const themeOpts = [
+    ['dark', '🌙', 'Dark'],
+    ['light', '☀️', 'Light'],
+    ['warm', '🍂', 'Warm'],
+  ];
+
+  return (
+    <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-5 max-w-md mx-auto space-y-5">
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-semibold text-[var(--text-strong)]">Settings</h2>
+        <button onClick={onClose} className="text-[var(--text-muted)] hover:text-[var(--text-strong)] text-2xl leading-none">×</button>
+      </div>
+
+      <div>
+        <div className="text-xs uppercase tracking-wide text-[var(--text-muted)] mb-2">Appearance</div>
+        <div className="grid grid-cols-3 gap-2">
+          {themeOpts.map(([k, emoji, label]) => (
+            <button
+              key={k}
+              onClick={() => setTheme(k)}
+              className={`flex flex-col items-center gap-1 py-3 rounded border ${theme === k
+                ? 'border-[var(--accent-border)] bg-[var(--accent-soft)]'
+                : 'border-[var(--border)] hover:bg-[var(--bg-hover)]'}`}
+            >
+              <span className="text-2xl">{emoji}</span>
+              <span className="text-xs text-[var(--text)]">{label}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {session && (
+        <div>
+          <div className="text-xs uppercase tracking-wide text-[var(--text-muted)] mb-2">Sync</div>
+          <div className="flex items-center justify-between gap-3 bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg px-3 py-2.5">
+            <div className="text-sm min-w-0 flex-1">
+              {syncBusy ? (
+                <span className="text-[var(--accent-text)]">Syncing…</span>
+              ) : syncError ? (
+                <span className="text-[var(--danger-text)] truncate" title={syncError}>{syncError}</span>
+              ) : pendingSync.length > 0 ? (
+                <span className="text-[var(--warning-text-strong)]">{pendingSync.length} attempt{pendingSync.length === 1 ? '' : 's'} pending</span>
+              ) : (
+                <span className="text-[var(--text-muted)]">All synced</span>
+              )}
+            </div>
+            <button
+              onClick={flushSync}
+              disabled={syncBusy}
+              className="shrink-0 text-xs px-3 py-1.5 bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] disabled:opacity-40 rounded font-medium"
+            >
+              Force sync
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div>
+        <div className="text-xs uppercase tracking-wide text-[var(--text-muted)] mb-2">Gemini API key</div>
+        <div className="flex gap-2">
+          <input
+            type={keyShow ? 'text' : 'password'}
+            value={keyVal}
+            onChange={(e) => { setKeyVal(e.target.value); setKeyErr(''); }}
+            placeholder={apiKey ? `current: …${apiKey.slice(-6)}` : 'AIza...'}
+            className="flex-1 bg-[var(--bg-elev)] border border-[var(--border)] rounded px-3 py-2 text-sm font-mono focus:outline-none focus:border-[var(--accent-border)]"
+          />
+          <button onClick={() => setKeyShow((s) => !s)} className="px-3 text-xs border border-[var(--border)] rounded hover:bg-[var(--bg-hover)]">
+            {keyShow ? 'Hide' : 'Show'}
+          </button>
+        </div>
+        {keyErr && <p className="text-[var(--danger-text)] text-xs mt-2">{keyErr}</p>}
+        <div className="flex gap-2 mt-2">
+          <button
+            onClick={saveKey}
+            disabled={keyBusy || keyVal === apiKey}
+            className="flex-1 text-xs px-3 py-2 bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] disabled:opacity-40 rounded font-medium"
+          >
+            {keyBusy ? 'Verifying…' : keyVal ? 'Save key' : 'No key set'}
+          </button>
+          {apiKey && (
+            <button
+              onClick={() => { if (confirm('Forget the saved API key?')) { setApiKey(''); setKeyVal(''); } }}
+              className="text-xs px-3 py-2 border border-[var(--border)] hover:bg-[var(--bg-hover)] text-[var(--text-muted)] rounded"
+            >
+              Forget
+            </button>
+          )}
+        </div>
+        <p className="text-[11px] text-[var(--text-faint)] mt-2">
+          Get a free key at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener" className="text-[var(--accent-text)] underline">aistudio.google.com/apikey</a>. Stored only in this browser.
+        </p>
+      </div>
     </div>
   );
 }
@@ -2742,7 +3065,6 @@ function ServerStatsView() {
 
   return (
     <div className="space-y-4">
-      <SyncBar />
       {err ? (
         <div className="flex items-center justify-between gap-3 bg-[var(--danger-bg)] border border-[var(--danger-border)] rounded-xl px-4 py-2.5 text-sm">
           <span className="text-[var(--danger-text)]">Could not load stats: {err}</span>
@@ -2763,6 +3085,7 @@ function Shell() {
   const { apiKey, setApiKey, attempts, readOnly, files, extractions, questions, session, setSession, pendingSync, syncBusy } = useApp();
   const [tab, setTab] = useState('library');
   const [showAccount, setShowAccount] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const [profileUser, setProfileUser] = useState(null);
 
   const hasLibrary = apiKey || readOnly || session;
@@ -2800,11 +3123,10 @@ function Shell() {
           ))}
         </nav>
         <div className="flex items-center gap-2 sm:gap-3 text-xs text-[var(--text-muted)] order-2 sm:order-3">
-          <ThemeSwitcher />
           {session ? (
             <button
               onClick={() => setShowAccount((s) => !s)}
-              className="px-2 py-1 border border-[var(--border)] rounded hover:bg-[var(--bg-hover)] flex items-center gap-1.5"
+              className="px-2 py-1.5 border border-[var(--border)] rounded hover:bg-[var(--bg-hover)] flex items-center gap-1.5"
               title={pendingSync.length ? `${pendingSync.length} attempts pending sync` : 'Signed in'}
             >
               <span className="text-[var(--text-strong)]">@{session.username}</span>
@@ -2815,24 +3137,22 @@ function Shell() {
           ) : (
             <button
               onClick={() => setShowAccount((s) => !s)}
-              className="px-2 py-1 border border-[var(--border)] rounded hover:bg-[var(--bg-hover)] text-[var(--text-strong)]"
+              className="px-2 py-1.5 border border-[var(--border)] rounded hover:bg-[var(--bg-hover)] text-[var(--text-strong)]"
             >
               Sign in
             </button>
           )}
-          {!readOnly && apiKey && (
-            <>
-              <span className="hidden md:inline">key: <span className="font-mono">…{apiKey.slice(-6)}</span></span>
-              <button
-                onClick={() => { if (confirm('Forget the saved API key?')) setApiKey(''); }}
-                className="px-2 py-1 border border-[var(--border)] rounded hover:bg-[var(--bg-hover)]"
-                title="Forget API key"
-              >
-                <span className="hidden sm:inline">Forget key</span>
-                <span className="sm:hidden">🔑</span>
-              </button>
-            </>
-          )}
+          <button
+            onClick={() => setShowSettings(true)}
+            aria-label="Settings"
+            title="Settings"
+            className="w-9 h-9 sm:w-auto sm:h-auto sm:px-2.5 sm:py-1.5 flex items-center justify-center border border-[var(--border)] rounded hover:bg-[var(--bg-hover)] text-[var(--text-strong)]"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+            </svg>
+          </button>
         </div>
       </header>
 
@@ -2875,11 +3195,22 @@ function Shell() {
 
       {showAccount && (
         <div
-          className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-start justify-center p-6 pt-24"
+          className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-start justify-center p-4 sm:p-6 pt-12 sm:pt-24"
           onClick={() => setShowAccount(false)}
         >
           <div className="w-full max-w-md" onClick={(e) => e.stopPropagation()}>
             <AccountPanel onClose={() => setShowAccount(false)} />
+          </div>
+        </div>
+      )}
+
+      {showSettings && (
+        <div
+          className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-start justify-center p-4 sm:p-6 pt-12 sm:pt-20 overflow-y-auto"
+          onClick={() => setShowSettings(false)}
+        >
+          <div className="w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+            <SettingsPanel onClose={() => setShowSettings(false)} />
           </div>
         </div>
       )}
