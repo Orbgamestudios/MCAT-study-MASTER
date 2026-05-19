@@ -1378,11 +1378,12 @@ function buildPool({ files, questions, extractions, attempts }, mode, scope) {
   for (const f of readyFiles) {
     const meta = { file_id: f.file_id, chapter: f.chapter, subject: f.subject };
     if (mode === 'mc') {
-      for (const q of questions[f.file_id].mc) pool.push({ id: q.id, mode, q, ...meta });
+      // Regular MC + two-part items share the same pool — two-part items keep their
+      // own mode so the runner dispatches them to TwoPartQuestion.
+      for (const q of questions[f.file_id].mc) pool.push({ id: q.id, mode: 'mc', q, ...meta });
+      for (const q of (questions[f.file_id].twoPart || [])) pool.push({ id: q.id, mode: 'two_part', q, ...meta });
     } else if (mode === 'short') {
       for (const q of questions[f.file_id].short) pool.push({ id: q.id, mode, q, ...meta });
-    } else if (mode === 'two_part') {
-      for (const q of (questions[f.file_id].twoPart || [])) pool.push({ id: q.id, mode, q, ...meta });
     } else if (mode === 'match') {
       const terms = (extractions[f.file_id].key_terms || []).slice();
       const GROUP = 5;
@@ -1468,7 +1469,6 @@ function QuizLauncher({ onStart }) {
 
   const modes = [
     ['mc', 'Multiple choice'],
-    ['two_part', 'Two-part'],
     ['short', 'Short answer'],
     ['match', 'Matching'],
   ];
@@ -1500,7 +1500,7 @@ function QuizLauncher({ onStart }) {
     <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-5 space-y-5">
       <div>
         <h2 className="font-semibold mb-3">Start a quiz</h2>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        <div className="grid grid-cols-3 gap-2">
           {modes.map(([k, label]) => (
             <button
               key={k}
