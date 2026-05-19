@@ -2,19 +2,161 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="MCAT" />
+<meta name="theme-color" content="#0b1020" media="(prefers-color-scheme: dark)" />
+<meta name="theme-color" content="#f5efe2" media="(prefers-color-scheme: light)" />
 <title>MCAT Study</title>
+<script>
+  // Apply persisted theme before paint to avoid flash.
+  (function () {
+    try {
+      const t = JSON.parse(localStorage.getItem('mcat:theme')) || 'dark';
+      document.documentElement.setAttribute('data-theme', t);
+    } catch { document.documentElement.setAttribute('data-theme', 'dark'); }
+  })();
+</script>
 <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 <script src="https://cdn.tailwindcss.com"></script>
 <style>
   html, body, #root { height: 100%; }
-  body { background: #0b1020; color: #e6e9f2; font-family: ui-sans-serif, system-ui, sans-serif; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: ui-sans-serif, system-ui, sans-serif;
+    transition: background-color 0.25s ease, color 0.25s ease;
+    /* iPhone notch + home indicator */
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+    -webkit-tap-highlight-color: transparent;
+  }
+  /* Keep iOS from zooming in on input focus */
+  input, textarea, select { font-size: 16px; }
+  /* Slightly larger touch targets on mobile */
+  @media (max-width: 640px) {
+    button { touch-action: manipulation; }
+  }
+
+  :root[data-theme="dark"] {
+    --bg: #0b1020;
+    --bg-card: rgb(15 23 42 / 0.6);
+    --bg-card-strong: rgb(15 23 42 / 0.7);
+    --bg-card-soft: rgb(15 23 42 / 0.4);
+    --bg-elev: #020617;
+    --bg-elev-soft: rgb(2 6 23 / 0.6);
+    --bg-hover: #1e293b;
+    --bg-hover-soft: rgb(30 41 59 / 0.5);
+    --border: #334155;
+    --border-soft: #1e293b;
+    --border-strong: #475569;
+    --text: #e6e9f2;
+    --text-strong: #f1f5f9;
+    --text-muted: #94a3b8;
+    --text-faint: #64748b;
+    --text-fainter: #475569;
+    --accent: #4f46e5;
+    --accent-hover: #6366f1;
+    --accent-text: #a5b4fc;
+    --accent-border: #818cf8;
+    --accent-soft: rgb(79 70 229 / 0.15);
+    --accent-2: #d946ef;
+    --accent-2-text: #f0abfc;
+    --success-bg: rgb(6 78 59 / 0.4);
+    --success-bg-strong: rgb(6 95 70 / 0.3);
+    --success-text: #6ee7b7;
+    --success-border: #10b981;
+    --danger-bg: rgb(127 29 29 / 0.4);
+    --danger-bg-strong: rgb(127 29 29 / 0.3);
+    --danger-text: #fca5a5;
+    --danger-border: #ef4444;
+    --warning-bg: rgb(120 53 15 / 0.4);
+    --warning-text: #fcd34d;
+    --warning-text-strong: #fbbf24;
+  }
+
+  :root[data-theme="light"] {
+    --bg: #f8fafc;
+    --bg-card: #ffffff;
+    --bg-card-strong: #ffffff;
+    --bg-card-soft: #f1f5f9;
+    --bg-elev: #f1f5f9;
+    --bg-elev-soft: #f8fafc;
+    --bg-hover: #e2e8f0;
+    --bg-hover-soft: #f1f5f9;
+    --border: #cbd5e1;
+    --border-soft: #e2e8f0;
+    --border-strong: #94a3b8;
+    --text: #0f172a;
+    --text-strong: #020617;
+    --text-muted: #475569;
+    --text-faint: #64748b;
+    --text-fainter: #94a3b8;
+    --accent: #4f46e5;
+    --accent-hover: #4338ca;
+    --accent-text: #4338ca;
+    --accent-border: #6366f1;
+    --accent-soft: rgb(99 102 241 / 0.10);
+    --accent-2: #a21caf;
+    --accent-2-text: #86198f;
+    --success-bg: #d1fae5;
+    --success-bg-strong: #a7f3d0;
+    --success-text: #065f46;
+    --success-border: #10b981;
+    --danger-bg: #fee2e2;
+    --danger-bg-strong: #fecaca;
+    --danger-text: #991b1b;
+    --danger-border: #dc2626;
+    --warning-bg: #fef3c7;
+    --warning-text: #92400e;
+    --warning-text-strong: #b45309;
+  }
+
+  :root[data-theme="warm"] {
+    --bg: #f5efe2;
+    --bg-card: #fbf6ea;
+    --bg-card-strong: #fffaee;
+    --bg-card-soft: #efe7d4;
+    --bg-elev: #efe7d4;
+    --bg-elev-soft: #f5efe2;
+    --bg-hover: #e6dac0;
+    --bg-hover-soft: #efe7d4;
+    --border: #d4c3a1;
+    --border-soft: #e6dac0;
+    --border-strong: #b89968;
+    --text: #3d2c1d;
+    --text-strong: #2a1f15;
+    --text-muted: #6b5440;
+    --text-faint: #8b6f4e;
+    --text-fainter: #ad9572;
+    --accent: #c2410c;
+    --accent-hover: #9a3412;
+    --accent-text: #9a3412;
+    --accent-border: #ea580c;
+    --accent-soft: rgb(194 65 12 / 0.12);
+    --accent-2: #b45309;
+    --accent-2-text: #92400e;
+    --success-bg: #d9f0d4;
+    --success-bg-strong: #b9e0b0;
+    --success-text: #3f6e2f;
+    --success-border: #65a30d;
+    --danger-bg: #fde0d3;
+    --danger-bg-strong: #fac8b0;
+    --danger-text: #9a2a1f;
+    --danger-border: #c2410c;
+    --warning-bg: #fbe9c5;
+    --warning-text: #784f1a;
+    --warning-text-strong: #92551c;
+  }
 </style>
 </head>
 <body>
 <div id="root"></div>
-<script type="text/babel" data-presets="react" src="app.js?v=9"></script>
+<script type="text/babel" data-presets="react" src="app.js?v=13"></script>
 </body>
 </html>

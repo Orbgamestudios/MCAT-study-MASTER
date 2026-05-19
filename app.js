@@ -5,6 +5,9 @@ const MODEL = 'gemini-2.5-flash';
 const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta';
 const UPLOAD_BASE = 'https://generativelanguage.googleapis.com/upload/v1beta';
 
+// Cloudflare Worker backend (accounts, attempt sync, stats, leaderboard).
+const API_BASE = 'https://mcat-api.solitary-sky-76c1.workers.dev';
+
 // How many of each item to pre-generate per chapter. Tune freely.
 const DEFAULT_MC_COUNT = 15;
 const DEFAULT_SHORT_COUNT = 8;
@@ -16,7 +19,76 @@ const KEYS = {
   questions: 'mcat:questions',
   attempts: 'mcat:attempts',
   extractions: 'mcat:extractions',
+  theme: 'mcat:theme',
+  github: 'mcat:github',
+  session: 'mcat:session',
+  pendingSync: 'mcat:pendingSync',
 };
+
+const THEMES = ['dark', 'light', 'warm'];
+
+const DEFAULT_GITHUB = {
+  token: '',
+  repo: 'Orbgamestudios/MCAT-study-MASTER',
+  branch: 'main',
+  path: 'data.json',
+  autoPush: false,
+};
+
+// ---------- github contents api ----------
+function toBase64Utf8(str) {
+  const bytes = new TextEncoder().encode(str);
+  let bin = '';
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(bin);
+}
+
+async function ghHeaders(token) {
+  return {
+    'Authorization': `Bearer ${token}`,
+    'Accept': 'application/vnd.github+json',
+    'X-GitHub-Api-Version': '2022-11-28',
+  };
+}
+
+async function ghGetSha({ token, repo, branch, path }) {
+  const url = `https://api.github.com/repos/${repo}/contents/${encodeURIComponent(path)}?ref=${encodeURIComponent(branch)}`;
+  const res = await fetch(url, { headers: await ghHeaders(token) });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`GitHub GET ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  const j = await res.json();
+  return j.sha;
+}
+
+async function ghPutFile({ token, repo, branch, path }, content, sha, message) {
+  const url = `https://api.github.com/repos/${repo}/contents/${encodeURIComponent(path)}`;
+  const body = { message, content: toBase64Utf8(content), branch };
+  if (sha) body.sha = sha;
+  const res = await fetch(url, {
+    method: 'PUT',
+    headers: { ...(await ghHeaders(token)), 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`GitHub PUT ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  return res.json();
+}
+
+async function pushBankToGithub(github, { files, extractions, questions }) {
+  if (!github.token || !github.repo || !github.path) throw new Error('GitHub sync not configured.');
+  const data = {
+    version: 1,
+    exported_at: new Date().toISOString(),
+    model: MODEL,
+    files, extractions, questions,
+  };
+  const content = JSON.stringify(data, null, 2);
+  const sha = await ghGetSha(github);
+  const msg = `Update bank: ${files.length} files (${new Date().toISOString().slice(0, 10)})`;
+  return ghPutFile(github, content, sha, msg);
+}
 
 const storage = {
   get(key, fallback = null) {
@@ -306,6 +378,45 @@ function makeClient(getKey) {
   };
 }
 
+// ---------- backend api client ----------
+class ApiError extends Error {
+  constructor(status, message) {
+    super(message);
+    this.status = status;
+  }
+}
+
+function makeApiClient(getToken) {
+  async function call(path, { method = 'GET', body, auth = false } = {}) {
+    const headers = {};
+    if (body !== undefined) headers['Content-Type'] = 'application/json';
+    if (auth) {
+      const t = getToken();
+      if (!t) throw new ApiError(401, 'not signed in');
+      headers['Authorization'] = `Bearer ${t}`;
+    }
+    const res = await fetch(`${API_BASE}${path}`, {
+      method,
+      headers,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+    let data = null;
+    try { data = await res.json(); } catch {}
+    if (!res.ok) throw new ApiError(res.status, data?.error || res.statusText || `HTTP ${res.status}`);
+    return data;
+  }
+  return {
+    signup: ({ username, pin }) => call('/signup', { method: 'POST', body: { username, pin } }),
+    login: ({ username, pin }) => call('/login', { method: 'POST', body: { username, pin } }),
+    logout: () => call('/logout', { method: 'POST', auth: true }),
+    me: () => call('/me', { auth: true }),
+    postAttempts: (attempts) => call('/attempts', { method: 'POST', body: { attempts }, auth: true }),
+    meStats: () => call('/me/stats', { auth: true }),
+    leaderboard: () => call('/leaderboard'),
+    userProfile: (username) => call(`/u/${encodeURIComponent(username)}`),
+  };
+}
+
 // ---------- app context ----------
 const AppCtx = createContext(null);
 const useApp = () => useContext(AppCtx);
@@ -318,6 +429,45 @@ function AppProvider({ children }) {
   const [attempts, setAttemptsState] = useState(() => storage.get(KEYS.attempts, []));
   const [staticBank, setStaticBank] = useState(null); // { files, extractions, questions } or null
   const [readOnly, setReadOnly] = useState(false);
+  const [theme, setThemeState] = useState(() => storage.get(KEYS.theme, 'dark'));
+  const [github, setGithubState] = useState(() => ({ ...DEFAULT_GITHUB, ...(storage.get(KEYS.github, {}) || {}) }));
+  const [pushStatus, setPushStatus] = useState({ state: 'idle', lastAt: null, error: null });
+
+  const setGithub = useCallback((patch) => {
+    setGithubState((prev) => {
+      const next = typeof patch === 'function' ? patch(prev) : { ...prev, ...patch };
+      storage.set(KEYS.github, next);
+      return next;
+    });
+  }, []);
+
+  const pushBank = useCallback(async () => {
+    setPushStatus({ state: 'pushing', lastAt: null, error: null });
+    try {
+      const cur = {
+        files: storage.get(KEYS.files, []),
+        extractions: storage.get(KEYS.extractions, {}),
+        questions: storage.get(KEYS.questions, {}),
+      };
+      await pushBankToGithub(github, cur);
+      setPushStatus({ state: 'idle', lastAt: Date.now(), error: null });
+      return true;
+    } catch (e) {
+      setPushStatus({ state: 'error', lastAt: null, error: e.message });
+      return false;
+    }
+  }, [github]);
+
+  const setTheme = useCallback((t) => {
+    if (!THEMES.includes(t)) return;
+    storage.set(KEYS.theme, t);
+    document.documentElement.setAttribute('data-theme', t);
+    setThemeState(t);
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+  }, [theme]);
 
   // On boot: try to fetch a static data.json next to index.html.
   // If present, expose it on context. The user can enter "shared bank" mode
@@ -387,8 +537,9 @@ function AppProvider({ children }) {
   }, []);
 
   const addAttempt = useCallback((a) => {
+    const stamped = { ...a, ts: Date.now() };
     setAttemptsState((prev) => {
-      const next = [...prev, { ...a, ts: Date.now() }];
+      const next = [...prev, stamped];
       storage.set(KEYS.attempts, next);
       return next;
     });
@@ -401,6 +552,69 @@ function AppProvider({ children }) {
 
   const client = useMemo(() => makeClient(() => storage.get(KEYS.apiKey, '')), []);
 
+  // ---- backend session ----
+  const [session, setSessionState] = useState(() => storage.get(KEYS.session, null)); // { token, username } | null
+  const [syncBusy, setSyncBusy] = useState(false);
+  const [syncError, setSyncError] = useState('');
+
+  const setSession = useCallback((s) => {
+    if (s) storage.set(KEYS.session, s); else storage.remove(KEYS.session);
+    setSessionState(s);
+  }, []);
+
+  const api = useMemo(() => makeApiClient(() => storage.get(KEYS.session, null)?.token || ''), []);
+
+  // Unsynced = any attempt without `synced: true`. The single source of truth
+  // is mcat:attempts; the old mcat:pendingSync key is unused now.
+  const pendingSync = useMemo(
+    () => attempts.filter((a) => !a.synced),
+    [attempts]
+  );
+
+  const flushSync = useCallback(async () => {
+    const s = storage.get(KEYS.session, null);
+    if (!s?.token) return { ok: false, reason: 'not signed in' };
+    if (syncBusy) return { ok: false, reason: 'busy' };
+    const queue = storage.get(KEYS.attempts, []).filter((a) => !a.synced);
+    if (!queue.length) return { ok: true, inserted: 0 };
+    setSyncBusy(true);
+    setSyncError('');
+    try {
+      // Chunk to stay well under the worker's 500-row cap.
+      const CHUNK = 200;
+      let remaining = queue.slice();
+      while (remaining.length) {
+        const chunk = remaining.slice(0, CHUNK);
+        await api.postAttempts(chunk);
+        remaining = remaining.slice(CHUNK);
+      }
+      // Mark every attempt that was in the queue as synced.
+      const queuedTs = new Set(queue.map((a) => `${a.ts}:${a.question_id}`));
+      setAttemptsState((prev) => {
+        const next = prev.map((a) =>
+          queuedTs.has(`${a.ts}:${a.question_id}`) ? { ...a, synced: true } : a
+        );
+        storage.set(KEYS.attempts, next);
+        return next;
+      });
+      return { ok: true, inserted: queue.length };
+    } catch (e) {
+      setSyncError(e.message || 'sync failed');
+      if (e.status === 401) {
+        storage.remove(KEYS.session);
+        setSessionState(null);
+      }
+      return { ok: false, reason: e.message };
+    } finally {
+      setSyncBusy(false);
+    }
+  }, [api, syncBusy]);
+
+  // On login or app load with an active session: flush any unsynced attempts.
+  useEffect(() => {
+    if (session?.token) flushSync();
+  }, [session?.token, flushSync]);
+
   const value = useMemo(
     () => ({
       apiKey, setApiKey,
@@ -410,21 +624,29 @@ function AppProvider({ children }) {
       attempts, addAttempt, clearAttempts,
       staticBank, useStaticBank,
       readOnly, setReadOnly,
+      theme, setTheme,
+      github, setGithub, pushBank, pushStatus,
+      session, setSession, api, pendingSync, flushSync, syncBusy, syncError,
       client,
     }),
     [apiKey, setApiKey, files, setFiles, extractions, setExtraction, questions, setQuestionsFor,
-     attempts, addAttempt, clearAttempts, staticBank, useStaticBank, readOnly, client]
+     attempts, addAttempt, clearAttempts, staticBank, useStaticBank, readOnly, theme, setTheme,
+     github, setGithub, pushBank, pushStatus,
+     session, setSession, api, pendingSync, flushSync, syncBusy, syncError, client]
   );
   return <AppCtx.Provider value={value}>{children}</AppCtx.Provider>;
 }
 
 // ---------- key gate ----------
 function ApiKeyGate() {
-  const { setApiKey, client, staticBank, useStaticBank } = useApp();
+  const { setApiKey, client, staticBank, useStaticBank, files, extractions, questions, setReadOnly } = useApp();
+  const hasLocalData = files.some((f) => extractions[f.file_id] && questions[f.file_id]?.mc && questions[f.file_id]?.short);
+  const localCount = files.filter((f) => extractions[f.file_id] && questions[f.file_id]?.mc && questions[f.file_id]?.short).length;
   const [val, setVal] = useState('');
   const [show, setShow] = useState(false);
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
+  const [showAccount, setShowAccount] = useState(false);
 
   const save = async () => {
     const trimmed = val.trim();
@@ -447,13 +669,13 @@ function ApiKeyGate() {
 
   return (
     <div className="min-h-full flex items-center justify-center p-6">
-      <div className="w-full max-w-md bg-slate-900/70 border border-slate-700 rounded-2xl p-6 shadow-xl">
+      <div className="w-full max-w-md bg-[var(--bg-card-strong)] border border-[var(--border)] rounded-2xl p-6 shadow-xl">
         <h1 className="text-2xl font-semibold mb-1">MCAT Study</h1>
-        <p className="text-slate-400 text-sm mb-5">
+        <p className="text-[var(--text-muted)] text-sm mb-5">
           Paste your Google AI (Gemini) API key to begin. Stored only in this browser's localStorage.
         </p>
 
-        <label className="block text-xs uppercase tracking-wide text-slate-400 mb-1">API key</label>
+        <label className="block text-xs uppercase tracking-wide text-[var(--text-muted)] mb-1">API key</label>
         <div className="flex gap-2">
           <input
             type={show ? 'text' : 'password'}
@@ -461,51 +683,76 @@ function ApiKeyGate() {
             onChange={(e) => { setVal(e.target.value); setErr(''); }}
             onKeyDown={(e) => e.key === 'Enter' && !busy && save()}
             placeholder="AIza..."
-            className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:border-indigo-500"
+            className="flex-1 bg-[var(--bg-elev)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:border-[var(--accent-border)]"
             autoFocus
           />
           <button
             type="button"
             onClick={() => setShow((s) => !s)}
-            className="px-3 text-xs text-slate-300 border border-slate-700 rounded-lg hover:bg-slate-800"
+            className="px-3 text-xs text-[var(--text)] border border-[var(--border)] rounded-lg hover:bg-[var(--bg-hover)]"
           >
             {show ? 'Hide' : 'Show'}
           </button>
         </div>
-        {err && <p className="text-red-400 text-xs mt-2">{err}</p>}
+        {err && <p className="text-[var(--danger-text)] text-xs mt-2">{err}</p>}
 
         <button
           onClick={save}
           disabled={!val.trim() || busy}
-          className="mt-4 w-full bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg py-2 text-sm font-medium"
+          className="mt-4 w-full bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] disabled:opacity-40 disabled:cursor-not-allowed rounded-lg py-2 text-sm font-medium"
         >
           {busy ? 'Verifying…' : 'Save & continue'}
         </button>
 
-        {staticBank && (
+        {(staticBank || hasLocalData) && (
           <div className="mt-4">
-            <div className="text-[11px] uppercase tracking-wide text-slate-500 mb-2 text-center">or</div>
-            <button
-              onClick={useStaticBank}
-              className="w-full border border-slate-700 hover:bg-slate-800 rounded-lg py-2 text-sm font-medium text-slate-200"
-            >
-              Use shared bank ({staticBank.files?.length || 0} chapters, no key needed)
-            </button>
-            <p className="text-[11px] text-slate-500 mt-2 text-center">
-              Quiz-only mode. Won't be able to add new chapters.
+            <div className="text-[11px] uppercase tracking-wide text-[var(--text-faint)] mb-2 text-center">or</div>
+            {hasLocalData && (
+              <button
+                onClick={() => setReadOnly(true)}
+                className="w-full border border-[var(--border)] hover:bg-[var(--bg-hover)] rounded-lg py-2 text-sm font-medium text-[var(--text-strong)]"
+              >
+                Continue with existing data ({localCount} chapter{localCount === 1 ? '' : 's'})
+              </button>
+            )}
+            {staticBank && !hasLocalData && (
+              <button
+                onClick={useStaticBank}
+                className="w-full border border-[var(--border)] hover:bg-[var(--bg-hover)] rounded-lg py-2 text-sm font-medium text-[var(--text-strong)]"
+              >
+                Use shared bank ({staticBank.files?.length || 0} chapters)
+              </button>
+            )}
+            <p className="text-[11px] text-[var(--text-faint)] mt-2 text-center">
+              Quiz-only mode. Can't add new chapters without a key.
             </p>
           </div>
         )}
 
-        <div className="mt-5 text-[11px] leading-relaxed text-slate-500 space-y-1">
+        <div className="mt-4">
+          <div className="text-[11px] uppercase tracking-wide text-[var(--text-faint)] mb-2 text-center">or</div>
+          <button
+            onClick={() => setShowAccount((s) => !s)}
+            className="w-full border border-[var(--border)] hover:bg-[var(--bg-hover)] rounded-lg py-2 text-sm font-medium text-[var(--text-strong)]"
+          >
+            Sign in / Sign up for cross-device stats
+          </button>
+          {showAccount && (
+            <div className="mt-3">
+              <AccountPanel onClose={() => setShowAccount(false)} />
+            </div>
+          )}
+        </div>
+
+        <div className="mt-5 text-[11px] leading-relaxed text-[var(--text-faint)] space-y-1">
           <p>
             Get a free key at{' '}
-            <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener" className="text-indigo-400 underline">
+            <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener" className="text-[var(--accent-text)] underline">
               aistudio.google.com/apikey
             </a>.
           </p>
           <p>
-            <span className="text-amber-400">Heads up:</span> the app calls the Gemini API directly from your browser.
+            <span className="text-[var(--warning-text-strong)]">Heads up:</span> the app calls the Gemini API directly from your browser.
             Free-tier usage may be used for training; don't upload anything you wouldn't share.
           </p>
         </div>
@@ -581,16 +828,16 @@ function UploadPanel() {
   };
 
   return (
-    <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-5">
+    <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-5">
       <div className="flex items-center justify-between mb-4">
         <h3 className="font-semibold">Upload chapter PDFs</h3>
         <div className="flex items-center gap-2 text-xs">
-          <label className="text-slate-400">Subject</label>
+          <label className="text-[var(--text-muted)]">Subject</label>
           <input
             list="subjects"
             value={subject}
             onChange={(e) => setSubject(e.target.value)}
-            className="bg-slate-950 border border-slate-700 rounded px-2 py-1 w-48"
+            className="bg-[var(--bg-elev)] border border-[var(--border)] rounded px-2 py-1 w-48"
           />
           <datalist id="subjects">
             {knownSubjects.map((s) => <option key={s} value={s} />)}
@@ -607,12 +854,12 @@ function UploadPanel() {
         }}
         onClick={() => inputRef.current?.click()}
         className={`cursor-pointer border-2 border-dashed rounded-xl p-8 text-center transition-colors ${
-          dragOver ? 'border-indigo-400 bg-indigo-950/30' : 'border-slate-700 hover:border-slate-500'
+          dragOver ? 'border-[var(--accent-border)] bg-[var(--accent-soft)]' : 'border-[var(--border)] hover:border-[var(--border-strong)]'
         }`}
       >
-        <div className="text-slate-300">Drag PDFs here, or click to select</div>
-        <div className="text-xs text-slate-500 mt-1">
-          They'll be assigned to <span className="text-slate-300">{subject}</span>. Chapter parsed
+        <div className="text-[var(--text)]">Drag PDFs here, or click to select</div>
+        <div className="text-xs text-[var(--text-faint)] mt-1">
+          They'll be assigned to <span className="text-[var(--text)]">{subject}</span>. Chapter parsed
           from filename — editable before upload.
         </div>
         <input
@@ -628,21 +875,21 @@ function UploadPanel() {
       {pending.length > 0 && (
         <div className="mt-4 space-y-2">
           {pending.map((e, i) => (
-            <div key={i} className="flex items-center gap-3 bg-slate-950/60 border border-slate-800 rounded-lg px-3 py-2">
+            <div key={i} className="flex items-center gap-3 bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg px-3 py-2">
               <div className="flex-1 min-w-0">
                 <div className="text-sm truncate">{e.name}</div>
                 <input
                   value={e.chapter}
                   onChange={(ev) => setPending((p) => p.map((x, idx) => idx === i ? { ...x, chapter: ev.target.value } : x))}
                   disabled={e.status !== 'queued'}
-                  className="mt-1 w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs disabled:opacity-60"
+                  className="mt-1 w-full bg-[var(--bg-elev)] border border-[var(--border)] rounded px-2 py-1 text-xs disabled:opacity-60"
                 />
               </div>
-              <div className="text-xs text-slate-400 w-20 text-right">{fmtBytes(e.size)}</div>
+              <div className="text-xs text-[var(--text-muted)] w-20 text-right">{fmtBytes(e.size)}</div>
               <div className={`text-xs w-32 text-right truncate ${
-                e.status === 'done' ? 'text-emerald-400' :
-                e.status === 'error' ? 'text-red-400' :
-                e.status === 'uploading' ? 'text-indigo-300' : 'text-slate-400'
+                e.status === 'done' ? 'text-[var(--success-text)]' :
+                e.status === 'error' ? 'text-[var(--danger-text)]' :
+                e.status === 'uploading' ? 'text-[var(--accent-text)]' : 'text-[var(--text-muted)]'
               }`}>
                 {e.status === 'error' ? (e.error || 'error') : e.status}
               </div>
@@ -651,14 +898,14 @@ function UploadPanel() {
           <div className="flex gap-2 justify-end pt-1">
             <button
               onClick={() => setPending([])}
-              className="text-xs px-3 py-1.5 border border-slate-700 rounded hover:bg-slate-800"
+              className="text-xs px-3 py-1.5 border border-[var(--border)] rounded hover:bg-[var(--bg-hover)]"
             >
               Clear
             </button>
             <button
               onClick={startUploads}
               disabled={pending.every((e) => e.status !== 'queued')}
-              className="text-xs px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 rounded font-medium"
+              className="text-xs px-3 py-1.5 bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] disabled:opacity-40 rounded font-medium"
             >
               Upload {pending.filter((e) => e.status === 'queued').length} file(s)
             </button>
@@ -684,13 +931,13 @@ function ExtractionPreview({ data }) {
     ['terms', `Terms (${counts.terms})`],
   ];
   return (
-    <div className="mt-3 bg-slate-950/60 border border-slate-800 rounded-lg">
-      <div className="flex border-b border-slate-800">
+    <div className="mt-3 bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg">
+      <div className="flex border-b border-[var(--border-soft)]">
         {tabs.map(([k, label]) => (
           <button
             key={k}
             onClick={() => setTab(k)}
-            className={`text-xs px-3 py-2 ${tab === k ? 'text-indigo-300 border-b border-indigo-400' : 'text-slate-400 hover:text-slate-200'}`}
+            className={`text-xs px-3 py-2 ${tab === k ? 'text-[var(--accent-text)] border-b border-[var(--accent-border)]' : 'text-[var(--text-muted)] hover:text-[var(--text-strong)]'}`}
           >
             {label}
           </button>
@@ -698,16 +945,16 @@ function ExtractionPreview({ data }) {
       </div>
       <div className="p-3 max-h-72 overflow-y-auto text-xs space-y-1">
         {tab === 'summary' && (data.summary_sentences || []).map((s, i) => (
-          <div key={i} className="text-slate-300"><span className="text-slate-600 mr-2">{i + 1}.</span>{s}</div>
+          <div key={i} className="text-[var(--text)]"><span className="text-[var(--text-fainter)] mr-2">{i + 1}.</span>{s}</div>
         ))}
         {tab === 'examples' && (data.context_examples || []).map((e, i) => (
-          <div key={i} className="text-slate-300">
-            <span className="text-indigo-300 font-medium">{e.topic}:</span> <span className="text-slate-400">{e.example}</span>
+          <div key={i} className="text-[var(--text)]">
+            <span className="text-[var(--accent-text)] font-medium">{e.topic}:</span> <span className="text-[var(--text-muted)]">{e.example}</span>
           </div>
         ))}
         {tab === 'terms' && (data.key_terms || []).map((t, i) => (
-          <div key={i} className="text-slate-300">
-            <span className="text-fuchsia-300 font-medium">{t.term}</span> — <span className="text-slate-400">{t.definition}</span>
+          <div key={i} className="text-[var(--text)]">
+            <span className="text-[var(--accent-2-text)] font-medium">{t.term}</span> — <span className="text-[var(--text-muted)]">{t.definition}</span>
           </div>
         ))}
       </div>
@@ -725,15 +972,15 @@ function FileRow({ file, extraction, qbank, busyStage, onProcess, onRemove, read
 
   let badge;
   if (busyStage) {
-    badge = { label: busyStage, cls: 'bg-indigo-900/40 text-indigo-300 animate-pulse' };
+    badge = { label: busyStage, cls: 'bg-[var(--accent-soft)] text-[var(--accent-text)] animate-pulse' };
   } else if (file.processError) {
-    badge = { label: 'error', cls: 'bg-red-900/40 text-red-300' };
+    badge = { label: 'error', cls: 'bg-[var(--danger-bg)] text-[var(--danger-text)]' };
   } else if (fullyProcessed) {
-    badge = { label: 'ready', cls: 'bg-emerald-900/40 text-emerald-300' };
+    badge = { label: 'ready', cls: 'bg-[var(--success-bg)] text-[var(--success-text)]' };
   } else if (extraction) {
-    badge = { label: 'partial', cls: 'bg-amber-900/40 text-amber-300' };
+    badge = { label: 'partial', cls: 'bg-[var(--warning-bg)] text-[var(--warning-text)]' };
   } else {
-    badge = { label: 'pending', cls: 'bg-slate-800 text-slate-400' };
+    badge = { label: 'pending', cls: 'bg-[var(--bg-hover)] text-[var(--text-muted)]' };
   }
 
   return (
@@ -741,16 +988,16 @@ function FileRow({ file, extraction, qbank, busyStage, onProcess, onRemove, read
       <div className="flex items-center gap-3">
         <div className="flex-1 min-w-0">
           <div className="text-sm">{file.chapter}</div>
-          <div className="text-xs text-slate-500 truncate">
+          <div className="text-xs text-[var(--text-faint)] truncate">
             {file.filename} · {fmtBytes(file.size_bytes)}
             {fullyProcessed && (
-              <span className="ml-2 text-slate-400">
+              <span className="ml-2 text-[var(--text-muted)]">
                 · {mcCount} MC · {shortCount} short · {termsCount} terms
               </span>
             )}
           </div>
           {file.processError && (
-            <div className="text-xs text-red-400 mt-1 truncate" title={file.processError}>
+            <div className="text-xs text-[var(--danger-text)] mt-1 truncate" title={file.processError}>
               {file.processError}
             </div>
           )}
@@ -761,7 +1008,7 @@ function FileRow({ file, extraction, qbank, busyStage, onProcess, onRemove, read
         {extraction ? (
           <button
             onClick={() => setOpen((o) => !o)}
-            className="text-xs px-2 py-1 border border-slate-700 rounded hover:bg-slate-800"
+            className="text-xs px-2 py-1 border border-[var(--border)] rounded hover:bg-[var(--bg-hover)]"
           >
             {open ? 'Hide' : 'View'}
           </button>
@@ -770,13 +1017,13 @@ function FileRow({ file, extraction, qbank, busyStage, onProcess, onRemove, read
           <button
             onClick={onProcess}
             disabled={!!busyStage}
-            className="text-xs px-2 py-1 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 rounded font-medium"
+            className="text-xs px-2 py-1 bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] disabled:opacity-40 rounded font-medium"
           >
             {extraction ? 'Finish' : 'Process'}
           </button>
         )}
         {!readOnly && (
-          <button onClick={onRemove} className="text-xs text-slate-400 hover:text-red-400 px-2" title="Remove">✕</button>
+          <button onClick={onRemove} className="text-xs text-[var(--text-muted)] hover:text-[var(--danger-text)] px-2" title="Remove">✕</button>
         )}
       </div>
       {open && extraction && <ExtractionPreview data={extraction} />}
@@ -790,7 +1037,7 @@ function FileList() {
     files, setFiles, client,
     extractions, setExtraction,
     questions, setQuestionsFor,
-    readOnly,
+    readOnly, github, pushBank,
   } = useApp();
   const [busy, setBusy] = useState({}); // { [file_id]: 'extracting' | 'generating MC' | 'generating short' }
 
@@ -836,12 +1083,18 @@ function FileList() {
       }
       setQuestionsFor(file.file_id, { mc, short, generated_at: new Date().toISOString() });
       markFile(file.file_id, { processError: null });
+      // Fire-and-forget auto-push. Don't block the UI on it.
+      if (github.autoPush && github.token) {
+        // Small delay so the most recent setQuestionsFor write lands in storage
+        // before pushBank reads from it.
+        setTimeout(() => { pushBank(); }, 250);
+      }
     } catch (e) {
       markFile(file.file_id, { processError: e.message });
     } finally {
       setBusy((b) => { const n = { ...b }; delete n[file.file_id]; return n; });
     }
-  }, [busy, client, extractions, questions, markFile, setExtraction, setQuestionsFor]);
+  }, [busy, client, extractions, questions, markFile, setExtraction, setQuestionsFor, github, pushBank]);
 
   const processAll = useCallback(async (subject) => {
     const list = grouped[subject].filter((f) => {
@@ -865,7 +1118,7 @@ function FileList() {
 
   if (!files.length) {
     return (
-      <div className="bg-slate-900/40 border border-dashed border-slate-800 rounded-2xl p-6 text-sm text-slate-400">
+      <div className="bg-[var(--bg-card-soft)] border border-dashed border-[var(--border-soft)] rounded-2xl p-6 text-sm text-[var(--text-muted)]">
         No uploads yet. Drop a PDF above to get started.
       </div>
     );
@@ -879,23 +1132,23 @@ function FileList() {
           return !(extractions[f.file_id] && q?.mc && q?.short);
         }).length;
         return (
-          <div key={subject} className="bg-slate-900/60 border border-slate-800 rounded-2xl p-5">
+          <div key={subject} className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-5">
             <div className="flex items-baseline justify-between mb-3">
               <h3 className="font-semibold">{subject}</h3>
               <div className="flex items-center gap-3">
-                <span className="text-xs text-slate-400">{items.length} file{items.length === 1 ? '' : 's'}</span>
+                <span className="text-xs text-[var(--text-muted)]">{items.length} file{items.length === 1 ? '' : 's'}</span>
                 {!readOnly && unfinished > 0 && (
                   <button
                     onClick={() => processAll(subject)}
                     disabled={Object.keys(busy).length > 0}
-                    className="text-xs px-3 py-1 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 rounded font-medium"
+                    className="text-xs px-3 py-1 bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] disabled:opacity-40 rounded font-medium"
                   >
                     Process {unfinished} chapter{unfinished === 1 ? '' : 's'}
                   </button>
                 )}
               </div>
             </div>
-            <ul className="divide-y divide-slate-800">
+            <ul className="divide-y divide-[var(--border-soft)]">
               {items.map((f) => (
                 <FileRow
                   key={f.file_id}
@@ -997,8 +1250,8 @@ function QuizLauncher({ onStart }) {
 
   if (!readyChapters.length) {
     return (
-      <div className="bg-slate-900/40 border border-dashed border-slate-800 rounded-2xl p-6 text-sm text-slate-400">
-        No chapters processed yet. Upload PDFs in the Library tab and click <span className="text-slate-200">Process</span>.
+      <div className="bg-[var(--bg-card-soft)] border border-dashed border-[var(--border-soft)] rounded-2xl p-6 text-sm text-[var(--text-muted)]">
+        No chapters processed yet. Upload PDFs in the Library tab and click <span className="text-[var(--text-strong)]">Process</span>.
       </div>
     );
   }
@@ -1010,7 +1263,7 @@ function QuizLauncher({ onStart }) {
   ];
 
   return (
-    <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-5 space-y-5">
+    <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-5 space-y-5">
       <div>
         <h2 className="font-semibold mb-3">Start a quiz</h2>
         <div className="grid grid-cols-3 gap-2">
@@ -1019,8 +1272,8 @@ function QuizLauncher({ onStart }) {
               key={k}
               onClick={() => setMode(k)}
               className={`text-sm py-2 rounded border ${mode === k
-                ? 'bg-indigo-600 border-indigo-500 text-white'
-                : 'border-slate-700 hover:bg-slate-800 text-slate-300'}`}
+                ? 'bg-[var(--accent)] text-white border-[var(--accent-border)] text-white'
+                : 'border-[var(--border)] hover:bg-[var(--bg-hover)] text-[var(--text)]'}`}
             >
               {label}
             </button>
@@ -1029,11 +1282,11 @@ function QuizLauncher({ onStart }) {
       </div>
 
       <div>
-        <div className="text-xs uppercase tracking-wide text-slate-400 mb-2">Scope</div>
+        <div className="text-xs uppercase tracking-wide text-[var(--text-muted)] mb-2">Scope</div>
         <select
           value={scope}
           onChange={(e) => setScope(e.target.value)}
-          className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-sm"
+          className="w-full bg-[var(--bg-elev)] border border-[var(--border)] rounded px-3 py-2 text-sm"
         >
           <option value="all">All ready chapters</option>
           {subjects.map((s) => (
@@ -1053,20 +1306,20 @@ function QuizLauncher({ onStart }) {
       </div>
 
       <div>
-        <div className="text-xs uppercase tracking-wide text-slate-400 mb-2">Count</div>
+        <div className="text-xs uppercase tracking-wide text-[var(--text-muted)] mb-2">Count</div>
         <div className="flex gap-2">
           {[5, 10, 20, 50].map((n) => (
             <button
               key={n}
               onClick={() => setCount(n)}
               className={`text-sm px-3 py-1.5 rounded border ${count === n
-                ? 'bg-indigo-600 border-indigo-500 text-white'
-                : 'border-slate-700 hover:bg-slate-800 text-slate-300'}`}
+                ? 'bg-[var(--accent)] text-white border-[var(--accent-border)] text-white'
+                : 'border-[var(--border)] hover:bg-[var(--bg-hover)] text-[var(--text)]'}`}
             >
               {n}
             </button>
           ))}
-          <span className="ml-auto text-xs text-slate-500 self-center">
+          <span className="ml-auto text-xs text-[var(--text-faint)] self-center">
             {pool.length} available
           </span>
         </div>
@@ -1079,7 +1332,7 @@ function QuizLauncher({ onStart }) {
           onStart(picked);
         }}
         disabled={pool.length === 0}
-        className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 rounded-lg py-2.5 font-medium"
+        className="w-full bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] disabled:opacity-40 rounded-lg py-2.5 font-medium"
       >
         Start {Math.min(count, pool.length)}-question quiz
       </button>
@@ -1110,11 +1363,11 @@ function MCQuestion({ item, onAnswer }) {
         {shuffled.map((entry, i) => {
           const isPicked = picked && entry.origIdx === picked.origIdx;
           const isCorrect = entry.origIdx === item.q.correct_index;
-          let cls = 'border-slate-700 hover:bg-slate-800';
+          let cls = 'border-[var(--border)] hover:bg-[var(--bg-hover)]';
           if (picked) {
-            if (isCorrect) cls = 'border-emerald-500 bg-emerald-900/30';
-            else if (isPicked) cls = 'border-red-500 bg-red-900/30';
-            else cls = 'border-slate-800 opacity-60';
+            if (isCorrect) cls = 'border-[var(--success-border)] bg-[var(--success-bg-strong)]';
+            else if (isPicked) cls = 'border-[var(--danger-border)] bg-[var(--danger-bg-strong)]';
+            else cls = 'border-[var(--border-soft)] opacity-60';
           }
           return (
             <button
@@ -1123,18 +1376,18 @@ function MCQuestion({ item, onAnswer }) {
               disabled={picked !== null}
               className={`w-full text-left border rounded-lg px-3 py-2.5 text-sm transition-colors ${cls}`}
             >
-              <span className="text-slate-500 mr-2">{String.fromCharCode(65 + i)}.</span>
+              <span className="text-[var(--text-faint)] mr-2">{String.fromCharCode(65 + i)}.</span>
               {entry.text}
             </button>
           );
         })}
       </div>
       {picked && (
-        <div className="mt-3 bg-slate-950/60 border border-slate-800 rounded-lg p-3 text-sm">
-          <div className={picked.origIdx === item.q.correct_index ? 'text-emerald-400 font-medium' : 'text-red-400 font-medium'}>
+        <div className="mt-3 bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg p-3 text-sm">
+          <div className={picked.origIdx === item.q.correct_index ? 'text-[var(--success-text)] font-medium' : 'text-[var(--danger-text)] font-medium'}>
             {picked.origIdx === item.q.correct_index ? 'Correct' : 'Incorrect'}
           </div>
-          <div className="text-slate-300 mt-1">{item.q.explanation}</div>
+          <div className="text-[var(--text)] mt-1">{item.q.explanation}</div>
         </div>
       )}
     </div>
@@ -1163,42 +1416,42 @@ function ShortAnswerQuestion({ item, onAnswer }) {
         disabled={revealed}
         rows={4}
         placeholder="Write your answer…"
-        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm disabled:opacity-70"
+        className="w-full bg-[var(--bg-elev)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm disabled:opacity-70"
       />
       {!revealed ? (
         <button
           onClick={submit}
           disabled={!text.trim()}
-          className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 rounded-lg px-4 py-2 text-sm font-medium"
+          className="bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] disabled:opacity-40 rounded-lg px-4 py-2 text-sm font-medium"
         >
           Reveal answer
         </button>
       ) : (
-        <div className="bg-slate-950/60 border border-slate-800 rounded-lg p-4 space-y-3">
+        <div className="bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg p-4 space-y-3">
           <div>
-            <div className="text-xs uppercase tracking-wide text-emerald-300 mb-1">Ideal answer</div>
-            <div className="text-sm text-slate-200">{item.q.ideal_answer}</div>
+            <div className="text-xs uppercase tracking-wide text-[var(--success-text)] mb-1">Ideal answer</div>
+            <div className="text-sm text-[var(--text-strong)]">{item.q.ideal_answer}</div>
           </div>
           {item.q.key_points?.length > 0 && (
             <div>
-              <div className="text-xs uppercase tracking-wide text-indigo-300 mb-1">Key points</div>
-              <ul className="text-sm text-slate-300 list-disc pl-5 space-y-0.5">
+              <div className="text-xs uppercase tracking-wide text-[var(--accent-text)] mb-1">Key points</div>
+              <ul className="text-sm text-[var(--text)] list-disc pl-5 space-y-0.5">
                 {item.q.key_points.map((p, i) => <li key={i}>{p}</li>)}
               </ul>
             </div>
           )}
           {!graded ? (
-            <div className="flex gap-2 pt-2 border-t border-slate-800">
-              <span className="text-xs text-slate-400 self-center mr-2">How did you do?</span>
-              <button onClick={() => grade(false)} className="text-sm px-3 py-1.5 border border-red-700 text-red-300 hover:bg-red-950/40 rounded">
+            <div className="flex gap-2 pt-2 border-t border-[var(--border-soft)]">
+              <span className="text-xs text-[var(--text-muted)] self-center mr-2">How did you do?</span>
+              <button onClick={() => grade(false)} className="text-sm px-3 py-1.5 border border-[var(--danger-border)] text-[var(--danger-text)] hover:bg-[var(--danger-bg)] rounded">
                 Missed it
               </button>
-              <button onClick={() => grade(true)} className="text-sm px-3 py-1.5 border border-emerald-700 text-emerald-300 hover:bg-emerald-950/40 rounded">
+              <button onClick={() => grade(true)} className="text-sm px-3 py-1.5 border border-[var(--success-border)] text-[var(--success-text)] hover:bg-[var(--success-bg)] rounded">
                 Got it
               </button>
             </div>
           ) : (
-            <div className="text-xs text-slate-500 pt-2 border-t border-slate-800">Graded.</div>
+            <div className="text-xs text-[var(--text-faint)] pt-2 border-t border-[var(--border-soft)]">Graded.</div>
           )}
         </div>
       )}
@@ -1267,19 +1520,19 @@ function MatchingQuestion({ item, onAnswer }) {
 
   return (
     <div className="space-y-4">
-      <div className="text-sm text-slate-400">Match each term to its definition.</div>
+      <div className="text-sm text-[var(--text-muted)]">Match each term to its definition.</div>
       <div className="grid grid-cols-2 gap-4">
         <div className="space-y-2">
-          <div className="text-xs uppercase tracking-wide text-slate-500">Terms</div>
+          <div className="text-xs uppercase tracking-wide text-[var(--text-faint)]">Terms</div>
           {termOrder.map((i) => {
             const paired = pairings[i] !== undefined;
             const correct = submitted && paired && pairings[i] === i;
             const wrong = submitted && paired && pairings[i] !== i;
-            let cls = 'border-slate-700 hover:bg-slate-800';
-            if (selectedTerm === i) cls = 'border-indigo-400 bg-indigo-950/40';
-            else if (correct) cls = 'border-emerald-500 bg-emerald-900/30';
-            else if (wrong) cls = 'border-red-500 bg-red-900/30';
-            else if (paired) cls = 'border-slate-600 bg-slate-800/50';
+            let cls = 'border-[var(--border)] hover:bg-[var(--bg-hover)]';
+            if (selectedTerm === i) cls = 'border-[var(--accent-border)] bg-[var(--accent-soft)]';
+            else if (correct) cls = 'border-[var(--success-border)] bg-[var(--success-bg-strong)]';
+            else if (wrong) cls = 'border-[var(--danger-border)] bg-[var(--danger-bg-strong)]';
+            else if (paired) cls = 'border-[var(--border-strong)] bg-[var(--bg-hover-soft)]';
             return (
               <button
                 key={i}
@@ -1287,10 +1540,10 @@ function MatchingQuestion({ item, onAnswer }) {
                 disabled={submitted}
                 className={`w-full text-left border rounded-lg px-3 py-2 text-sm transition-colors ${cls}`}
               >
-                <span className="text-slate-500 mr-2">{i + 1}.</span>
+                <span className="text-[var(--text-faint)] mr-2">{i + 1}.</span>
                 <span className="font-medium">{pairs[i].term}</span>
                 {paired && (
-                  <span className="text-xs text-slate-400 ml-2">
+                  <span className="text-xs text-[var(--text-muted)] ml-2">
                     → {String.fromCharCode(65 + defOrder.indexOf(pairings[i]))}
                   </span>
                 )}
@@ -1299,16 +1552,16 @@ function MatchingQuestion({ item, onAnswer }) {
           })}
         </div>
         <div className="space-y-2">
-          <div className="text-xs uppercase tracking-wide text-slate-500">Definitions</div>
+          <div className="text-xs uppercase tracking-wide text-[var(--text-faint)]">Definitions</div>
           {defOrder.map((j, displayIdx) => {
             const used = usedDefs.has(j);
             const termIdx = Object.entries(pairings).find(([, v]) => v === j)?.[0];
             const correct = submitted && termIdx !== undefined && Number(termIdx) === j;
             const wrong = submitted && termIdx !== undefined && Number(termIdx) !== j;
-            let cls = 'border-slate-700 hover:bg-slate-800';
-            if (correct) cls = 'border-emerald-500 bg-emerald-900/30';
-            else if (wrong) cls = 'border-red-500 bg-red-900/30';
-            else if (used) cls = 'border-slate-600 bg-slate-800/50';
+            let cls = 'border-[var(--border)] hover:bg-[var(--bg-hover)]';
+            if (correct) cls = 'border-[var(--success-border)] bg-[var(--success-bg-strong)]';
+            else if (wrong) cls = 'border-[var(--danger-border)] bg-[var(--danger-bg-strong)]';
+            else if (used) cls = 'border-[var(--border-strong)] bg-[var(--bg-hover-soft)]';
             return (
               <button
                 key={j}
@@ -1316,7 +1569,7 @@ function MatchingQuestion({ item, onAnswer }) {
                 disabled={submitted || (selectedTerm === null && !used)}
                 className={`w-full text-left border rounded-lg px-3 py-2 text-sm transition-colors disabled:opacity-60 ${cls}`}
               >
-                <span className="text-slate-500 mr-2">{String.fromCharCode(65 + displayIdx)}.</span>
+                <span className="text-[var(--text-faint)] mr-2">{String.fromCharCode(65 + displayIdx)}.</span>
                 {pairs[j].definition}
               </button>
             );
@@ -1327,7 +1580,7 @@ function MatchingQuestion({ item, onAnswer }) {
         <button
           onClick={submit}
           disabled={!allPaired}
-          className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 rounded-lg py-2 text-sm font-medium"
+          className="w-full bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] disabled:opacity-40 rounded-lg py-2 text-sm font-medium"
         >
           {allPaired ? 'Submit' : `Pair all ${pairs.length} terms to submit`}
         </button>
@@ -1372,26 +1625,26 @@ function QuizRunner({ items, onExit }) {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <div className="text-xs text-slate-400">
-          <span className="text-slate-200">{item.chapter}</span>
+        <div className="text-xs text-[var(--text-muted)]">
+          <span className="text-[var(--text-strong)]">{item.chapter}</span>
           <span className="ml-2">· Question {index + 1} of {items.length}</span>
         </div>
         <button
           onClick={() => onExit(results)}
-          className="text-xs text-slate-400 hover:text-red-400 border border-slate-700 rounded px-2 py-1"
+          className="text-xs text-[var(--text-muted)] hover:text-[var(--danger-text)] border border-[var(--border)] rounded px-2 py-1"
         >
           End quiz
         </button>
       </div>
 
-      <div className="h-1 bg-slate-800 rounded-full overflow-hidden">
+      <div className="h-1 bg-[var(--bg-hover)] rounded-full overflow-hidden">
         <div
-          className="h-full bg-indigo-500 transition-all"
+          className="h-full bg-[var(--accent-hover)] transition-all"
           style={{ width: `${((index + (answered ? 1 : 0)) / items.length) * 100}%` }}
         />
       </div>
 
-      <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-5">
+      <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-5">
         {item.mode === 'mc' && <MCQuestion key={item.id} item={item} onAnswer={handleAnswer} />}
         {item.mode === 'short' && <ShortAnswerQuestion key={item.id} item={item} onAnswer={handleAnswer} />}
         {item.mode === 'match' && <MatchingQuestion key={item.id} item={item} onAnswer={handleAnswer} />}
@@ -1401,7 +1654,7 @@ function QuizRunner({ items, onExit }) {
         <div className="flex justify-end">
           <button
             onClick={isLast ? () => onExit([...results]) : next}
-            className="bg-indigo-600 hover:bg-indigo-500 rounded-lg px-4 py-2 text-sm font-medium"
+            className="bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] rounded-lg px-4 py-2 text-sm font-medium"
           >
             {isLast ? 'See results' : 'Next →'}
           </button>
@@ -1420,23 +1673,23 @@ function QuizSummary({ results, onRestart, onDrillMisses }) {
 
   return (
     <div className="space-y-5">
-      <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 text-center">
-        <div className="text-xs uppercase tracking-wide text-slate-400">Quiz complete</div>
+      <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-6 text-center">
+        <div className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Quiz complete</div>
         <div className="text-5xl font-bold mt-2">{pct}%</div>
-        <div className="text-sm text-slate-400 mt-1">{correct} of {total} correct</div>
+        <div className="text-sm text-[var(--text-muted)] mt-1">{correct} of {total} correct</div>
       </div>
 
       {misses.length > 0 && (
-        <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-5">
+        <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-5">
           <h3 className="font-semibold mb-3">Missed questions</h3>
           <ul className="space-y-2 text-sm">
             {misses.map((m, i) => (
-              <li key={i} className="text-slate-300">
-                <span className="text-slate-500 mr-2">{i + 1}.</span>
+              <li key={i} className="text-[var(--text)]">
+                <span className="text-[var(--text-faint)] mr-2">{i + 1}.</span>
                 {m.item.mode === 'mc' && m.item.q.question}
                 {m.item.mode === 'short' && m.item.q.prompt}
-                {m.item.mode === 'match' && <span className="text-slate-400">Matching set · {m.user_answer}</span>}
-                <div className="text-xs text-slate-500 mt-0.5 ml-6">{m.item.chapter}</div>
+                {m.item.mode === 'match' && <span className="text-[var(--text-muted)]">Matching set · {m.user_answer}</span>}
+                <div className="text-xs text-[var(--text-faint)] mt-0.5 ml-6">{m.item.chapter}</div>
               </li>
             ))}
           </ul>
@@ -1446,14 +1699,14 @@ function QuizSummary({ results, onRestart, onDrillMisses }) {
       <div className="flex gap-2">
         <button
           onClick={onRestart}
-          className="flex-1 border border-slate-700 hover:bg-slate-800 rounded-lg py-2 text-sm"
+          className="flex-1 border border-[var(--border)] hover:bg-[var(--bg-hover)] rounded-lg py-2 text-sm"
         >
           New quiz
         </button>
         {misses.length > 0 && (
           <button
             onClick={onDrillMisses}
-            className="flex-1 bg-indigo-600 hover:bg-indigo-500 rounded-lg py-2 text-sm font-medium"
+            className="flex-1 bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] rounded-lg py-2 text-sm font-medium"
           >
             Drill {misses.length} miss{misses.length === 1 ? '' : 'es'}
           </button>
@@ -1485,6 +1738,342 @@ function StudyView() {
   return <QuizSummary results={results} onRestart={restart} onDrillMisses={drillMisses} />;
 }
 
+// ---------- github sync panel ----------
+function relativeTime(ts) {
+  if (!ts) return 'never';
+  const diff = Math.floor((Date.now() - ts) / 1000);
+  if (diff < 5) return 'just now';
+  if (diff < 60) return `${diff}s ago`;
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return `${Math.floor(diff / 86400)}d ago`;
+}
+
+function SyncPanel() {
+  const { github, setGithub, pushBank, pushStatus, files, extractions, questions } = useApp();
+  const [showToken, setShowToken] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+
+  const fullyProcessed = files.filter((f) => extractions[f.file_id] && questions[f.file_id]?.mc && questions[f.file_id]?.short).length;
+  const canPush = !!github.token && !!github.repo && !!github.path && fullyProcessed > 0;
+
+  return (
+    <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-5">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="font-semibold text-[var(--text-strong)]">GitHub sync</h3>
+          <p className="text-xs text-[var(--text-muted)] mt-1">
+            Push your question bank to <span className="font-mono">{github.repo || '(no repo)'}/{github.path}</span> so your phone can load it.
+          </p>
+        </div>
+        <button
+          onClick={() => setExpanded((x) => !x)}
+          className="text-xs px-2 py-1 border border-[var(--border)] hover:bg-[var(--bg-hover)] rounded"
+        >
+          {expanded ? 'Hide' : 'Configure'}
+        </button>
+      </div>
+
+      {expanded && (
+        <div className="mt-4 space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <label className="text-xs">
+              <span className="block uppercase tracking-wide text-[var(--text-faint)] mb-1">Repo (owner/name)</span>
+              <input
+                value={github.repo}
+                onChange={(e) => setGithub({ repo: e.target.value })}
+                placeholder="user/repo"
+                className="w-full bg-[var(--bg-elev)] border border-[var(--border)] rounded px-2 py-1.5 text-sm font-mono"
+              />
+            </label>
+            <label className="text-xs">
+              <span className="block uppercase tracking-wide text-[var(--text-faint)] mb-1">Branch</span>
+              <input
+                value={github.branch}
+                onChange={(e) => setGithub({ branch: e.target.value })}
+                placeholder="main"
+                className="w-full bg-[var(--bg-elev)] border border-[var(--border)] rounded px-2 py-1.5 text-sm font-mono"
+              />
+            </label>
+          </div>
+          <label className="text-xs block">
+            <span className="block uppercase tracking-wide text-[var(--text-faint)] mb-1">File path</span>
+            <input
+              value={github.path}
+              onChange={(e) => setGithub({ path: e.target.value })}
+              placeholder="data.json"
+              className="w-full bg-[var(--bg-elev)] border border-[var(--border)] rounded px-2 py-1.5 text-sm font-mono"
+            />
+          </label>
+          <label className="text-xs block">
+            <span className="block uppercase tracking-wide text-[var(--text-faint)] mb-1">
+              Fine-grained PAT (Contents: Read and write)
+            </span>
+            <div className="flex gap-2">
+              <input
+                type={showToken ? 'text' : 'password'}
+                value={github.token}
+                onChange={(e) => setGithub({ token: e.target.value })}
+                placeholder="github_pat_..."
+                className="flex-1 bg-[var(--bg-elev)] border border-[var(--border)] rounded px-2 py-1.5 text-sm font-mono"
+              />
+              <button
+                type="button"
+                onClick={() => setShowToken((s) => !s)}
+                className="text-xs px-2 border border-[var(--border)] hover:bg-[var(--bg-hover)] rounded"
+              >
+                {showToken ? 'Hide' : 'Show'}
+              </button>
+            </div>
+            <p className="text-[11px] text-[var(--text-faint)] mt-1">
+              Create at{' '}
+              <a
+                href="https://github.com/settings/personal-access-tokens/new"
+                target="_blank" rel="noopener"
+                className="text-[var(--accent-text)] underline"
+              >
+                github.com/settings/personal-access-tokens
+              </a>
+              . Stored only in this browser.
+            </p>
+          </label>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={github.autoPush}
+              onChange={(e) => setGithub({ autoPush: e.target.checked })}
+              className="accent-[var(--accent)]"
+            />
+            <span className="text-[var(--text)]">
+              Auto-push after each chapter finishes processing
+            </span>
+          </label>
+        </div>
+      )}
+
+      <div className="mt-4 flex items-center gap-3">
+        <button
+          onClick={pushBank}
+          disabled={!canPush || pushStatus.state === 'pushing'}
+          className="text-sm px-3 py-1.5 bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] disabled:opacity-40 rounded font-medium"
+        >
+          {pushStatus.state === 'pushing' ? 'Pushing…' : 'Push now'}
+        </button>
+        <span className="text-xs text-[var(--text-muted)]">
+          {pushStatus.state === 'error' ? (
+            <span className="text-[var(--danger-text)]" title={pushStatus.error}>
+              Error: {pushStatus.error?.slice(0, 80)}
+            </span>
+          ) : pushStatus.lastAt ? (
+            <>Last push: <span className="text-[var(--text-strong)]">{relativeTime(pushStatus.lastAt)}</span></>
+          ) : github.autoPush ? (
+            'Auto-push armed. Will fire on next chapter processed.'
+          ) : (
+            !github.token ? 'Not configured.' : 'Ready.'
+          )}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// ---------- stats ----------
+function StatBar({ correct, total, label }) {
+  const pct = total ? Math.round((correct / total) * 100) : 0;
+  return (
+    <div>
+      <div className="flex items-baseline justify-between text-sm mb-1">
+        <span className="text-[var(--text)]">{label}</span>
+        <span className="text-[var(--text-muted)] text-xs">
+          {correct}/{total} <span className="text-[var(--text-strong)] font-medium ml-1">{pct}%</span>
+        </span>
+      </div>
+      <div className="h-2 bg-[var(--bg-elev)] rounded-full overflow-hidden">
+        <div
+          className="h-full transition-all rounded-full"
+          style={{
+            width: `${pct}%`,
+            background: pct >= 80
+              ? 'var(--success-border)'
+              : pct >= 50
+              ? 'var(--accent)'
+              : 'var(--danger-border)',
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function StatsView() {
+  const { attempts, files, questions, clearAttempts } = useApp();
+
+  const stats = useMemo(() => {
+    const overall = { correct: 0, total: 0 };
+    const byMode = {};
+    const byChapter = {};
+    const bySubject = {};
+    const missByQid = {};
+    const seenByQid = {};
+
+    for (const a of attempts) {
+      overall.total++;
+      if (a.correct) overall.correct++;
+
+      const m = byMode[a.mode] ||= { correct: 0, total: 0 };
+      m.total++; if (a.correct) m.correct++;
+
+      const fkey = a.file_id;
+      const c = byChapter[fkey] ||= { correct: 0, total: 0, chapter: a.chapter, subject: a.subject };
+      c.total++; if (a.correct) c.correct++;
+
+      const s = bySubject[a.subject] ||= { correct: 0, total: 0 };
+      s.total++; if (a.correct) s.correct++;
+
+      seenByQid[a.question_id] = (seenByQid[a.question_id] || 0) + 1;
+      if (!a.correct) missByQid[a.question_id] = (missByQid[a.question_id] || 0) + 1;
+    }
+
+    // Build a question lookup so missed questions can show their text.
+    const qLookup = {};
+    for (const fid of Object.keys(questions)) {
+      const qb = questions[fid] || {};
+      for (const q of (qb.mc || [])) qLookup[q.id] = { ...q, mode: 'mc', file_id: fid };
+      for (const q of (qb.short || [])) qLookup[q.id] = { ...q, mode: 'short', file_id: fid };
+    }
+    const fileLookup = {};
+    for (const f of files) fileLookup[f.file_id] = f;
+
+    const topMisses = Object.entries(missByQid)
+      .map(([qid, misses]) => {
+        const q = qLookup[qid];
+        const text = q ? (q.mode === 'mc' ? q.question : q.prompt) : qid;
+        const chapter = q && fileLookup[q.file_id] ? fileLookup[q.file_id].chapter : '—';
+        const seen = seenByQid[qid] || misses;
+        return { qid, misses, seen, text, chapter, mode: q?.mode || 'matching' };
+      })
+      .sort((a, b) => b.misses - a.misses)
+      .slice(0, 10);
+
+    return { overall, byMode, byChapter, bySubject, topMisses };
+  }, [attempts, files, questions]);
+
+  if (attempts.length === 0) {
+    return (
+      <div className="bg-[var(--bg-card-soft)] border border-dashed border-[var(--border-soft)] rounded-2xl p-6 text-sm text-[var(--text-muted)]">
+        No quiz attempts yet. Run a quiz from the Study tab to see your stats.
+      </div>
+    );
+  }
+
+  const modeLabels = { mc: 'Multiple choice', short: 'Short answer', match: 'Matching' };
+  const overallPct = stats.overall.total
+    ? Math.round((stats.overall.correct / stats.overall.total) * 100)
+    : 0;
+
+  return (
+    <div className="space-y-5">
+      {/* Big number */}
+      <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-6 text-center">
+        <div className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Overall accuracy</div>
+        <div className="text-5xl font-bold mt-2 text-[var(--text-strong)]">{overallPct}%</div>
+        <div className="text-sm text-[var(--text-muted)] mt-1">
+          {stats.overall.correct} of {stats.overall.total} attempts correct
+        </div>
+      </div>
+
+      {/* By mode */}
+      <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-5">
+        <h3 className="font-semibold mb-3 text-[var(--text-strong)]">By mode</h3>
+        <div className="space-y-3">
+          {Object.entries(stats.byMode).map(([mode, s]) => (
+            <StatBar key={mode} label={modeLabels[mode] || mode} correct={s.correct} total={s.total} />
+          ))}
+        </div>
+      </div>
+
+      {/* By subject */}
+      {Object.keys(stats.bySubject).length > 0 && (
+        <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-5">
+          <h3 className="font-semibold mb-3 text-[var(--text-strong)]">By subject</h3>
+          <div className="space-y-3">
+            {Object.entries(stats.bySubject).map(([subject, s]) => (
+              <StatBar key={subject} label={subject} correct={s.correct} total={s.total} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* By chapter */}
+      <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-5">
+        <h3 className="font-semibold mb-3 text-[var(--text-strong)]">By chapter</h3>
+        <div className="space-y-3">
+          {Object.entries(stats.byChapter)
+            .sort(([, a], [, b]) => (a.correct / a.total) - (b.correct / b.total))
+            .map(([fid, s]) => (
+              <StatBar key={fid} label={`${s.subject} — ${s.chapter}`} correct={s.correct} total={s.total} />
+            ))}
+        </div>
+      </div>
+
+      {/* Top misses */}
+      {stats.topMisses.length > 0 && (
+        <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-5">
+          <h3 className="font-semibold mb-3 text-[var(--text-strong)]">Most-missed questions</h3>
+          <ul className="space-y-2 text-sm">
+            {stats.topMisses.map((m, i) => (
+              <li key={m.qid} className="flex gap-3">
+                <span className="text-[var(--text-faint)] w-5 text-right shrink-0">{i + 1}.</span>
+                <div className="flex-1 min-w-0">
+                  <div className="text-[var(--text)] truncate" title={m.text}>{m.text}</div>
+                  <div className="text-xs text-[var(--text-faint)] mt-0.5">
+                    {m.chapter} · {modeLabels[m.mode] || m.mode}
+                  </div>
+                </div>
+                <span className="text-xs text-[var(--danger-text)] whitespace-nowrap self-start">
+                  {m.misses}/{m.seen} missed
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <div className="flex justify-end">
+        <button
+          onClick={() => { if (confirm('Clear all quiz attempts? This cannot be undone.')) clearAttempts(); }}
+          className="text-xs px-3 py-1.5 border border-[var(--border)] text-[var(--text-muted)] hover:text-[var(--danger-text)] hover:border-[var(--danger-border)] rounded"
+        >
+          Clear all attempts
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ---------- theme switcher ----------
+function ThemeSwitcher() {
+  const { theme, setTheme } = useApp();
+  return (
+    <div className="flex items-center gap-0.5 border border-[var(--border)] rounded-full p-0.5">
+      {THEMES.map((t) => (
+        <button
+          key={t}
+          onClick={() => setTheme(t)}
+          title={`${t.charAt(0).toUpperCase()}${t.slice(1)} theme`}
+          className={`text-xs px-2.5 py-1 rounded-full transition-colors ${
+            theme === t
+              ? 'bg-[var(--accent)] text-white'
+              : 'text-[var(--text-muted)] hover:text-[var(--text-strong)]'
+          }`}
+        >
+          {t === 'dark' ? '🌙' : t === 'light' ? '☀️' : '🍂'}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 // ---------- shell ----------
 function exportBank({ files, extractions, questions }) {
   const data = {
@@ -1506,87 +2095,496 @@ function exportBank({ files, extractions, questions }) {
   URL.revokeObjectURL(url);
 }
 
-function Shell() {
-  const { apiKey, setApiKey, attempts, readOnly, files, extractions, questions } = useApp();
-  const [tab, setTab] = useState('library');
+// ---------- account ----------
+function AccountPanel({ onClose }) {
+  const { session, setSession, api } = useApp();
+  const [mode, setMode] = useState('login'); // 'login' | 'signup'
+  const [username, setUsername] = useState('');
+  const [pin, setPin] = useState('');
+  const [err, setErr] = useState('');
+  const [busy, setBusy] = useState(false);
 
+  if (session) {
+    return (
+      <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-5">
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-xs text-[var(--text-muted)]">Signed in as</div>
+            <div className="text-xl font-semibold">@{session.username}</div>
+          </div>
+          <button
+            onClick={async () => {
+              try { await api.logout(); } catch {}
+              setSession(null);
+            }}
+            className="text-xs px-3 py-1.5 border border-[var(--border)] rounded hover:bg-[var(--bg-hover)]"
+          >
+            Log out
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  const submit = async () => {
+    setErr('');
+    if (!/^[a-zA-Z0-9_]{3,20}$/.test(username)) {
+      setErr('Username must be 3-20 chars (letters, digits, underscore).');
+      return;
+    }
+    if (!/^\d{4}$/.test(pin)) {
+      setErr('PIN must be exactly 4 digits.');
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = mode === 'signup'
+        ? await api.signup({ username, pin })
+        : await api.login({ username, pin });
+      setSession({ token: res.token, username: res.username });
+      setPin('');
+      onClose?.();
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-5 max-w-sm mx-auto">
+      <div className="flex gap-1 mb-4">
+        {[['login', 'Log in'], ['signup', 'Sign up']].map(([k, label]) => (
+          <button
+            key={k}
+            onClick={() => { setMode(k); setErr(''); }}
+            className={`text-sm px-3 py-1.5 rounded flex-1 ${mode === k
+              ? 'bg-[var(--accent)] text-white'
+              : 'text-[var(--text-muted)] border border-[var(--border)] hover:text-[var(--text-strong)]'}`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      <label className="block text-xs uppercase tracking-wide text-[var(--text-muted)] mb-1">Username</label>
+      <input
+        value={username}
+        onChange={(e) => { setUsername(e.target.value.toLowerCase()); setErr(''); }}
+        placeholder="3-20 chars, a-z 0-9 _"
+        autoComplete="username"
+        className="w-full bg-[var(--bg-elev)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:border-[var(--accent-border)]"
+      />
+
+      <label className="block text-xs uppercase tracking-wide text-[var(--text-muted)] mt-3 mb-1">4-digit PIN</label>
+      <input
+        type="password"
+        inputMode="numeric"
+        maxLength={4}
+        value={pin}
+        onChange={(e) => { setPin(e.target.value.replace(/\D/g, '').slice(0, 4)); setErr(''); }}
+        onKeyDown={(e) => e.key === 'Enter' && !busy && submit()}
+        placeholder="••••"
+        autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
+        className="w-full bg-[var(--bg-elev)] border border-[var(--border)] rounded-lg px-3 py-2 text-lg font-mono tracking-widest text-center focus:outline-none focus:border-[var(--accent-border)]"
+      />
+
+      {err && <p className="text-[var(--danger-text)] text-xs mt-2">{err}</p>}
+
+      <button
+        onClick={submit}
+        disabled={busy || !username || !pin}
+        className="mt-4 w-full bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] disabled:opacity-40 rounded-lg py-2 text-sm font-medium"
+      >
+        {busy ? 'Working…' : mode === 'signup' ? 'Create account' : 'Log in'}
+      </button>
+
+      <p className="text-[11px] text-[var(--text-faint)] mt-3 text-center">
+        Stats sync across devices and show up on the leaderboard. PIN is hashed server-side. Don't reuse a sensitive PIN.
+      </p>
+    </div>
+  );
+}
+
+// ---------- leaderboard + profiles ----------
+function pct(c, t) { return t ? Math.round((c / t) * 100) : 0; }
+
+function Leaderboard({ onPickUser }) {
+  const { api } = useApp();
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    api.leaderboard()
+      .then((d) => { if (!cancelled) setData(d); })
+      .catch((e) => { if (!cancelled) setErr(e.message); });
+    return () => { cancelled = true; };
+  }, [api]);
+
+  if (err) return <div className="text-sm text-[var(--danger-text)]">Could not load leaderboard: {err}</div>;
+  if (!data) return <div className="text-sm text-[var(--text-muted)]">Loading…</div>;
+
+  if (!data.users.length) {
+    return (
+      <div className="bg-[var(--bg-card-soft)] border border-dashed border-[var(--border-soft)] rounded-2xl p-6 text-sm text-[var(--text-muted)]">
+        No one has recorded any attempts yet. Be the first.
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-5">
+      <h3 className="font-semibold mb-3 text-[var(--text-strong)]">Leaderboard — top 50 by attempts</h3>
+      <ol className="divide-y divide-[var(--border-soft)]">
+        {data.users.map((u, i) => (
+          <li key={u.username} className="py-2 flex items-center gap-3">
+            <span className="text-[var(--text-faint)] w-6 text-right">{i + 1}.</span>
+            <button
+              onClick={() => onPickUser?.(u.username)}
+              className="flex-1 text-left text-[var(--text)] hover:text-[var(--accent-text)] font-medium truncate"
+            >
+              @{u.username}
+            </button>
+            <div className="text-xs text-[var(--text-muted)] tabular-nums">
+              {u.correct}/{u.total}
+              <span className="ml-2 text-[var(--text-strong)] font-medium">{pct(u.correct, u.total)}%</span>
+            </div>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
+function ServerStatsPayload({ data }) {
+  if (!data) return null;
+  const overall = data.overall || { total: 0, correct: 0 };
+  const weekly = data.weekly || { total: 0, correct: 0 };
+  const overallPct = pct(overall.correct, overall.total);
+  const weeklyPct = pct(weekly.correct, weekly.total);
+
+  const modeLabels = { mc: 'Multiple choice', short: 'Short answer', match: 'Matching' };
+
+  // Build last-7-days bar series from data.daily (sparse — fill missing days with zero).
+  const today = Math.floor(Date.now() / 86400000);
+  const days = [];
+  for (let i = 6; i >= 0; i--) days.push(today - i);
+  const dailyByBucket = {};
+  for (const d of (data.daily || [])) dailyByBucket[d.day_bucket] = d;
+  const dailySeries = days.map((b) => {
+    const r = dailyByBucket[b];
+    return { day: b, total: r?.total || 0, correct: r?.correct || 0 };
+  });
+  const maxTotal = Math.max(1, ...dailySeries.map((d) => d.total));
+
+  return (
+    <div className="space-y-5">
+      <div className="grid grid-cols-2 gap-3 sm:gap-4">
+        <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-5 text-center">
+          <div className="text-[10px] sm:text-xs uppercase tracking-wide text-[var(--text-muted)]">All-time</div>
+          <div className="text-3xl sm:text-4xl font-bold mt-1.5 text-[var(--text-strong)]">{overallPct}%</div>
+          <div className="text-xs text-[var(--text-muted)] mt-1">{overall.correct} / {overall.total}</div>
+        </div>
+        <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-5 text-center">
+          <div className="text-[10px] sm:text-xs uppercase tracking-wide text-[var(--text-muted)]">This week</div>
+          <div className="text-3xl sm:text-4xl font-bold mt-1.5 text-[var(--text-strong)]">{weeklyPct}%</div>
+          <div className="text-xs text-[var(--text-muted)] mt-1">{weekly.correct} / {weekly.total}</div>
+        </div>
+      </div>
+
+      {data.mostStudiedSubject && (
+        <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 flex items-baseline justify-between">
+          <span className="text-sm text-[var(--text-muted)]">Most-studied subject</span>
+          <span className="text-base font-medium text-[var(--text-strong)]">{data.mostStudiedSubject}</span>
+        </div>
+      )}
+
+      {/* Daily bar chart (last 7 days) */}
+      <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-5">
+        <h3 className="font-semibold mb-3 text-[var(--text-strong)]">Last 7 days</h3>
+        <div className="flex items-end gap-1.5 h-32">
+          {dailySeries.map((d, i) => {
+            const acc = pct(d.correct, d.total);
+            const h = `${(d.total / maxTotal) * 100}%`;
+            const ok = `${d.total ? (d.correct / maxTotal) * 100 : 0}%`;
+            const dayLabel = new Date((d.day + 1) * 86400000 - 1).toLocaleDateString(undefined, { weekday: 'short' });
+            return (
+              <div key={d.day} className="flex-1 flex flex-col items-center justify-end">
+                <div className="w-full bg-[var(--bg-elev)] rounded-t flex flex-col justify-end" style={{ height: h }}>
+                  <div className="bg-[var(--success-border)] rounded-t" style={{ height: ok }} title={`${d.correct}/${d.total} (${acc}%)`} />
+                </div>
+                <div className="text-[10px] text-[var(--text-faint)] mt-1">{dayLabel}</div>
+              </div>
+            );
+          })}
+        </div>
+        <p className="text-[11px] text-[var(--text-faint)] mt-2">Full bar = total attempts that day. Filled portion = correct.</p>
+      </div>
+
+      {data.bySubject?.length > 0 && (
+        <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-5">
+          <h3 className="font-semibold mb-3 text-[var(--text-strong)]">By subject</h3>
+          <div className="space-y-3">
+            {data.bySubject.map((s) => (
+              <StatBar key={s.subject} label={s.subject} correct={s.correct} total={s.total} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {data.byChapter?.length > 0 && (
+        <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-5">
+          <h3 className="font-semibold mb-3 text-[var(--text-strong)]">By chapter (weakest first)</h3>
+          <div className="space-y-3">
+            {[...data.byChapter]
+              .sort((a, b) => (a.correct / Math.max(1, a.total)) - (b.correct / Math.max(1, b.total)))
+              .map((c) => (
+                <StatBar key={`${c.subject}/${c.chapter}`} label={`${c.subject} — ${c.chapter}`} correct={c.correct} total={c.total} />
+              ))}
+          </div>
+        </div>
+      )}
+
+      {data.byMode?.length > 0 && (
+        <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-5">
+          <h3 className="font-semibold mb-3 text-[var(--text-strong)]">By mode</h3>
+          <div className="space-y-3">
+            {data.byMode.map((m) => (
+              <StatBar key={m.mode} label={modeLabels[m.mode] || m.mode} correct={m.correct} total={m.total} />
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function UserProfile({ username, onBack }) {
+  const { api } = useApp();
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    setData(null); setErr('');
+    api.userProfile(username)
+      .then((d) => { if (!cancelled) setData(d); })
+      .catch((e) => { if (!cancelled) setErr(e.message); });
+    return () => { cancelled = true; };
+  }, [api, username]);
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-3">
+        <button onClick={onBack} className="text-xs px-3 py-1.5 border border-[var(--border)] hover:bg-[var(--bg-hover)] rounded">
+          ← Back
+        </button>
+        <h2 className="text-xl font-semibold">@{username}</h2>
+      </div>
+      {err && <div className="text-sm text-[var(--danger-text)]">{err}</div>}
+      {!data && !err && <div className="text-sm text-[var(--text-muted)]">Loading…</div>}
+      {data && <ServerStatsPayload data={data} />}
+    </div>
+  );
+}
+
+function SyncBar() {
+  const { pendingSync, syncBusy, syncError, flushSync, session } = useApp();
+  if (!session) return null;
+  const count = pendingSync.length;
+  return (
+    <div className="flex items-center justify-between gap-3 bg-[var(--bg-card-soft)] border border-[var(--border-soft)] rounded-xl px-4 py-2.5 text-sm">
+      <div className="flex items-center gap-2 min-w-0">
+        {syncBusy ? (
+          <span className="text-[var(--accent-text)]">Syncing…</span>
+        ) : syncError ? (
+          <span className="text-[var(--danger-text)] truncate" title={syncError}>Sync error: {syncError}</span>
+        ) : count > 0 ? (
+          <span className="text-[var(--warning-text-strong)]">{count} attempt{count === 1 ? '' : 's'} not yet synced</span>
+        ) : (
+          <span className="text-[var(--text-muted)]">All attempts synced</span>
+        )}
+      </div>
+      <button
+        onClick={flushSync}
+        disabled={syncBusy}
+        className="shrink-0 text-xs px-3 py-1.5 bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] disabled:opacity-40 rounded font-medium"
+      >
+        {syncBusy ? '...' : 'Sync now'}
+      </button>
+    </div>
+  );
+}
+
+function ServerStatsView() {
+  const { api, session, pendingSync, syncBusy } = useApp();
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState('');
+  const [tick, setTick] = useState(0);
+
+  useEffect(() => {
+    if (!session) return;
+    let cancelled = false;
+    setErr('');
+    api.meStats()
+      .then((d) => { if (!cancelled) setData(d); })
+      .catch((e) => { if (!cancelled) setErr(e.message); });
+    return () => { cancelled = true; };
+    // refetch when sync queue drains or user manually re-triggers
+  }, [api, session?.username, pendingSync.length, syncBusy, tick]);
+
+  if (!session) return null;
+
+  return (
+    <div className="space-y-4">
+      <SyncBar />
+      {err ? (
+        <div className="flex items-center justify-between gap-3 bg-[var(--danger-bg)] border border-[var(--danger-border)] rounded-xl px-4 py-2.5 text-sm">
+          <span className="text-[var(--danger-text)]">Could not load stats: {err}</span>
+          <button onClick={() => setTick((t) => t + 1)} className="text-xs px-3 py-1 border border-[var(--danger-border)] text-[var(--danger-text)] rounded hover:bg-[var(--danger-bg-strong)]">
+            Retry
+          </button>
+        </div>
+      ) : !data ? (
+        <div className="text-sm text-[var(--text-muted)]">Loading server stats…</div>
+      ) : (
+        <ServerStatsPayload data={data} />
+      )}
+    </div>
+  );
+}
+
+function Shell() {
+  const { apiKey, setApiKey, attempts, readOnly, files, extractions, questions, session, setSession, pendingSync, syncBusy } = useApp();
+  const [tab, setTab] = useState('library');
+  const [showAccount, setShowAccount] = useState(false);
+  const [profileUser, setProfileUser] = useState(null);
+
+  const hasLibrary = apiKey || readOnly;
   const tabs = readOnly
-    ? [['study', 'Study'], ['library', 'Library']]
-    : [['library', 'Library'], ['study', 'Study']];
-  useEffect(() => { if (readOnly) setTab('study'); }, [readOnly]);
+    ? [['study', 'Study'], ['stats', 'Stats'], ['leaderboard', 'Leaderboard'], ['library', 'Library']]
+    : hasLibrary
+      ? [['library', 'Library'], ['study', 'Study'], ['stats', 'Stats'], ['leaderboard', 'Leaderboard']]
+      : [['stats', 'Stats'], ['leaderboard', 'Leaderboard'], ['study', 'Study']];
+  useEffect(() => { if (readOnly) setTab('study'); else if (!hasLibrary) setTab('stats'); }, [readOnly, hasLibrary]);
+  useEffect(() => { setProfileUser(null); }, [tab]);
 
   const fullyProcessed = files.filter((f) => extractions[f.file_id] && questions[f.file_id]?.mc && questions[f.file_id]?.short).length;
 
   return (
     <div className="min-h-full flex flex-col">
-      <header className="border-b border-slate-800 px-5 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-7 h-7 rounded bg-gradient-to-br from-indigo-500 to-fuchsia-500" />
-          <div className="font-semibold">MCAT Study</div>
+      <header className="border-b border-[var(--border-soft)] px-3 sm:px-5 py-2.5 sm:py-3 flex flex-wrap items-center justify-between gap-y-2 gap-x-3">
+        <div className="flex items-center gap-2 sm:gap-3 order-1">
+          <div className="w-7 h-7 rounded bg-gradient-to-br from-[var(--accent)] to-[var(--accent-2)]" />
+          <div className="font-semibold text-sm sm:text-base">MCAT Study</div>
           {readOnly
-            ? <span className="text-xs text-emerald-300 bg-emerald-900/40 rounded px-2 py-0.5">read-only</span>
-            : <span className="text-xs text-slate-500 font-mono">{MODEL}</span>}
+            ? <span className="text-[10px] sm:text-xs text-[var(--success-text)] bg-[var(--success-bg)] rounded px-1.5 sm:px-2 py-0.5">read-only</span>
+            : <span className="hidden sm:inline text-xs text-[var(--text-faint)] font-mono">{MODEL}</span>}
         </div>
-        <nav className="flex items-center gap-1">
+        <nav className="flex items-center gap-1 overflow-x-auto -mx-1 px-1 order-3 sm:order-2 w-full sm:w-auto">
           {tabs.map(([k, label]) => (
             <button
               key={k}
               onClick={() => setTab(k)}
-              className={`text-sm px-3 py-1.5 rounded ${tab === k
-                ? 'bg-slate-800 text-white'
-                : 'text-slate-400 hover:text-slate-200'}`}
+              className={`text-sm px-3 py-2 sm:py-1.5 rounded whitespace-nowrap shrink-0 ${tab === k
+                ? 'bg-[var(--bg-hover)] text-[var(--text-strong)]'
+                : 'text-[var(--text-muted)] hover:text-[var(--text-strong)]'}`}
             >
               {label}
             </button>
           ))}
         </nav>
-        <div className="flex items-center gap-3 text-xs text-slate-400">
-          <span>{attempts.length} attempt{attempts.length === 1 ? '' : 's'}</span>
-          {!readOnly && (
+        <div className="flex items-center gap-2 sm:gap-3 text-xs text-[var(--text-muted)] order-2 sm:order-3">
+          <ThemeSwitcher />
+          {session ? (
+            <button
+              onClick={() => setShowAccount((s) => !s)}
+              className="px-2 py-1 border border-[var(--border)] rounded hover:bg-[var(--bg-hover)] flex items-center gap-1.5"
+              title={pendingSync.length ? `${pendingSync.length} attempts pending sync` : 'Signed in'}
+            >
+              <span className="text-[var(--text-strong)]">@{session.username}</span>
+              {(pendingSync.length > 0 || syncBusy) && (
+                <span className="w-1.5 h-1.5 rounded-full bg-[var(--warning-text-strong)]" />
+              )}
+            </button>
+          ) : (
+            <button
+              onClick={() => setShowAccount((s) => !s)}
+              className="px-2 py-1 border border-[var(--border)] rounded hover:bg-[var(--bg-hover)] text-[var(--text-strong)]"
+            >
+              Sign in
+            </button>
+          )}
+          {!readOnly && apiKey && (
             <>
-              <span>key: <span className="font-mono">…{apiKey.slice(-6)}</span></span>
+              <span className="hidden md:inline">key: <span className="font-mono">…{apiKey.slice(-6)}</span></span>
               <button
                 onClick={() => { if (confirm('Forget the saved API key?')) setApiKey(''); }}
-                className="px-2 py-1 border border-slate-700 rounded hover:bg-slate-800"
+                className="px-2 py-1 border border-[var(--border)] rounded hover:bg-[var(--bg-hover)]"
+                title="Forget API key"
               >
-                Forget key
+                <span className="hidden sm:inline">Forget key</span>
+                <span className="sm:hidden">🔑</span>
               </button>
             </>
           )}
         </div>
       </header>
 
-      <main className="flex-1 p-6">
-        <div className="max-w-3xl mx-auto space-y-5">
+      <main className="flex-1 p-3 sm:p-6">
+        <div className="max-w-3xl mx-auto space-y-4 sm:space-y-5">
           {tab === 'library' && (
             <>
               {!readOnly && <UploadPanel />}
-              {!readOnly && fullyProcessed > 0 && (
-                <div className="flex items-center justify-between bg-slate-900/40 border border-slate-800 rounded-xl px-4 py-3">
-                  <div className="text-sm text-slate-300">
-                    Export the {fullyProcessed} ready chapter{fullyProcessed === 1 ? '' : 's'} as <span className="font-mono text-xs">data.json</span> — drop it next to <span className="font-mono text-xs">index.html</span> on a static host so others can quiz without a key.
+              {fullyProcessed > 0 && (
+                <>
+                  <SyncPanel />
+                  <div className="flex justify-end">
+                    <button
+                      onClick={() => exportBank({ files, extractions, questions })}
+                      className="text-xs px-3 py-1.5 border border-[var(--border)] hover:bg-[var(--bg-hover)] text-[var(--text-muted)] rounded"
+                    >
+                      Export data.json locally
+                    </button>
                   </div>
-                  <button
-                    onClick={() => exportBank({ files, extractions, questions })}
-                    className="ml-3 text-xs px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 rounded font-medium whitespace-nowrap"
-                  >
-                    Export bank
-                  </button>
-                </div>
+                </>
               )}
               <FileList />
             </>
           )}
           {tab === 'study' && <StudyView />}
+          {tab === 'stats' && (
+            <>
+              {session && <ServerStatsView />}
+              <StatsView />
+            </>
+          )}
+          {tab === 'leaderboard' && (
+            profileUser
+              ? <UserProfile username={profileUser} onBack={() => setProfileUser(null)} />
+              : <Leaderboard onPickUser={(u) => setProfileUser(u)} />
+          )}
         </div>
       </main>
+
+      {showAccount && (
+        <div
+          className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-start justify-center p-6 pt-24"
+          onClick={() => setShowAccount(false)}
+        >
+          <div className="w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+            <AccountPanel onClose={() => setShowAccount(false)} />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 function Root() {
-  const { apiKey, readOnly } = useApp();
-  return (apiKey || readOnly) ? <Shell /> : <ApiKeyGate />;
+  const { apiKey, readOnly, session } = useApp();
+  return (apiKey || readOnly || session) ? <Shell /> : <ApiKeyGate />;
 }
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
