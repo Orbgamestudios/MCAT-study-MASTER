@@ -372,9 +372,64 @@ function makeClient(getKey) {
     }));
   }
 
+  // ---- term coverage MC ----
+  // Generates one MC question PER key_term so the quiz covers every term in the chapter,
+  // even terms the chapter didn't directly quiz. Distractors should come from OTHER terms'
+  // definitions so wrong answers are plausibly close-but-wrong.
+  async function generateTermQuestions(extraction, chapterLabel) {
+    const terms = extraction?.key_terms || [];
+    if (!terms.length) return [];
+
+    // Batch in groups of 12 so any single call stays under output limits and respects
+    // per-minute rate caps (each batch ~ one API call).
+    const BATCH = 12;
+    const all = [];
+    for (let i = 0; i < terms.length; i += BATCH) {
+      const batch = terms.slice(i, i + BATCH);
+      const resp = await generate({
+        maxOutputTokens: 16384,
+        disableThinking: true,
+        systemInstruction:
+          'You generate MCAT-style multiple-choice questions, one per assigned term. ' +
+          'For each term, write a question that tests understanding of that term — definition, application, ' +
+          'or recognition in a scenario. Vary phrasing across terms; avoid the pattern "What is the X?" for every item. ' +
+          'Exactly 4 choices. correct_index is 0-3. Distractors must be plausible and ideally drawn from ' +
+          'definitions of OTHER terms in the chapter so a student who half-remembers can be steered wrong. ' +
+          'Explanations are 1-2 sentences justifying the correct answer.',
+        contents: [{
+          role: 'user',
+          parts: [{
+            text:
+              `Chapter: ${chapterLabel}\n\n` +
+              `Assigned terms (write ONE question for each):\n` +
+              batch.map((t, idx) => `${idx + 1}. ${t.term} — ${t.definition}`).join('\n') +
+              `\n\nOther terms in the chapter (use definitions as distractor material; do NOT write questions about these):\n` +
+              terms.filter((_, idx) => idx < i || idx >= i + BATCH)
+                .slice(0, 30)
+                .map((t) => `- ${t.term}: ${t.definition}`).join('\n') +
+              `\n\nReturn exactly ${batch.length} questions, in the same order as the assigned terms above.`,
+          }],
+        }],
+        responseSchema: MC_SCHEMA,
+      });
+      const data = extractJson(resp);
+      const qs = (data.questions || []).slice(0, batch.length);
+      qs.forEach((q, idx) => {
+        all.push({
+          id: `term_${Date.now()}_${i + idx}`,
+          mode: 'mc',
+          from: 'term',
+          term: batch[idx].term,
+          ...q,
+        });
+      });
+    }
+    return all;
+  }
+
   return {
     uploadFile, deleteFile, generate, ping,
-    extractFromPdf, generateMCQuestions, generateShortAnswers,
+    extractFromPdf, generateMCQuestions, generateShortAnswers, generateTermQuestions,
   };
 }
 
@@ -986,7 +1041,9 @@ function FileRow({ file, extraction, qbank, busyStage, onProcess, onRemove, read
   const mcCount = qbank?.mc?.length || 0;
   const shortCount = qbank?.short?.length || 0;
   const termsCount = extraction?.key_terms?.length || 0;
-  const fullyProcessed = extraction && qbank?.mc && qbank?.short;
+  const termCovered = qbank?.mc ? new Set(qbank.mc.filter((q) => q.from === 'term').map((q) => q.term)) : new Set();
+  const termsNeeded = (extraction?.key_terms || []).filter((t) => !termCovered.has(t.term)).length;
+  const fullyProcessed = extraction && qbank?.mc && qbank?.short && termsNeeded === 0;
 
   let badge;
   if (busyStage) {
@@ -1008,9 +1065,12 @@ function FileRow({ file, extraction, qbank, busyStage, onProcess, onRemove, read
           <div className="text-sm">{file.chapter}</div>
           <div className="text-xs text-[var(--text-faint)] truncate">
             {file.filename} · {fmtBytes(file.size_bytes)}
-            {fullyProcessed && (
+            {qbank?.mc && (
               <span className="ml-2 text-[var(--text-muted)]">
                 · {mcCount} MC · {shortCount} short · {termsCount} terms
+                {termsNeeded > 0 && (
+                  <span className="text-[var(--warning-text-strong)]"> · {termsNeeded} terms need coverage</span>
+                )}
               </span>
             )}
           </div>
@@ -1093,7 +1153,21 @@ function FileList() {
         setBusy((b) => ({ ...b, [file.file_id]: 'generating MC' }));
         mc = await client.generateMCQuestions(file.file_uri, file.mime_type, ext, file.chapter);
       }
-      // Step 3: short answer bank
+      // Step 3: term-coverage MC (one question per key_term). Skip if we've already
+      // covered all current terms, or if a term run was already merged in mc.
+      const haveTermFor = new Set(mc.filter((q) => q.from === 'term').map((q) => q.term));
+      const allTerms = (ext.key_terms || []).map((t) => t.term);
+      const missingTerms = allTerms.filter((t) => !haveTermFor.has(t));
+      if (missingTerms.length > 0) {
+        setBusy((b) => ({ ...b, [file.file_id]: `term coverage (${missingTerms.length})` }));
+        const termExtraction = {
+          ...ext,
+          key_terms: (ext.key_terms || []).filter((t) => missingTerms.includes(t.term)),
+        };
+        const termQs = await client.generateTermQuestions(termExtraction, file.chapter);
+        mc = [...mc, ...termQs];
+      }
+      // Step 4: short answer bank
       let short = existingQ.short;
       if (!short) {
         setBusy((b) => ({ ...b, [file.file_id]: 'generating short' }));
@@ -1226,16 +1300,12 @@ function buildPool({ files, questions, extractions, attempts }, mode, scope) {
       }
     }
   }
-  if (scope.startsWith('subject:')) {
-    const subj = scope.slice(8);
-    pool = pool.filter((x) => x.subject === subj);
-  } else if (scope.startsWith('chapter:')) {
-    const id = scope.slice(8);
-    pool = pool.filter((x) => x.file_id === id);
-  } else if (scope === 'misses') {
+  if (scope?.misses) {
     const wrong = new Set();
     for (const a of attempts) if (!a.correct) wrong.add(a.question_id);
     pool = pool.filter((x) => wrong.has(x.id));
+  } else if (scope?.fileIds instanceof Set) {
+    pool = pool.filter((x) => scope.fileIds.has(x.file_id));
   }
   return pool;
 }
@@ -1245,31 +1315,54 @@ function QuizLauncher({ onStart }) {
   const ctx = useApp();
   const { files, questions, extractions, attempts } = ctx;
   const [mode, setMode] = useState('mc');
-  const [scope, setScope] = useState('all');
   const [count, setCount] = useState(10);
-
-  const subjects = useMemo(() => {
-    const s = new Set();
-    files.forEach((f) => s.add(f.subject));
-    return Array.from(s);
-  }, [files]);
+  const [drillMisses, setDrillMisses] = useState(false);
 
   const readyChapters = useMemo(
     () => files.filter((f) => extractions[f.file_id] && questions[f.file_id]?.mc && questions[f.file_id]?.short),
     [files, extractions, questions]
   );
 
-  const pool = useMemo(() => buildPool(ctx, mode, scope), [ctx, mode, scope]);
+  // Tree: { [subject]: { chapters: [file] } }
+  const grouped = useMemo(() => {
+    const g = {};
+    for (const f of readyChapters) {
+      if (!g[f.subject]) g[f.subject] = [];
+      g[f.subject].push(f);
+    }
+    for (const k of Object.keys(g)) {
+      g[k].sort((a, b) => a.chapter.localeCompare(b.chapter, undefined, { numeric: true }));
+    }
+    return g;
+  }, [readyChapters]);
+
+  // Selected file_ids — default to all ready chapters.
+  const [selected, setSelected] = useState(() => new Set(readyChapters.map((f) => f.file_id)));
+  // Re-sync selection if the set of ready chapters changes (e.g. user pulled a new bank).
+  useEffect(() => {
+    setSelected((prev) => {
+      const valid = new Set(readyChapters.map((f) => f.file_id));
+      const next = new Set();
+      for (const id of prev) if (valid.has(id)) next.add(id);
+      // If nothing is left selected (e.g. first load), default to all.
+      if (next.size === 0) for (const id of valid) next.add(id);
+      return next;
+    });
+  }, [readyChapters]);
+
   const wrongCount = useMemo(() => {
     const w = new Set();
     for (const a of attempts) if (!a.correct) w.add(a.question_id);
     return w.size;
   }, [attempts]);
 
+  const scope = drillMisses ? { misses: true } : { fileIds: selected };
+  const pool = useMemo(() => buildPool(ctx, mode, scope), [ctx, mode, drillMisses, selected]);
+
   if (!readyChapters.length) {
     return (
       <div className="bg-[var(--bg-card-soft)] border border-dashed border-[var(--border-soft)] rounded-2xl p-6 text-sm text-[var(--text-muted)]">
-        No chapters processed yet. Upload PDFs in the Library tab and click <span className="text-[var(--text-strong)]">Process</span>.
+        No chapters processed yet. Upload PDFs in the Library tab and click <span className="text-[var(--text-strong)]">Process</span>, or pull a published bank from the Cloud bank panel.
       </div>
     );
   }
@@ -1280,8 +1373,31 @@ function QuizLauncher({ onStart }) {
     ['match', 'Matching'],
   ];
 
+  const subjectFileIds = (subject) => grouped[subject].map((f) => f.file_id);
+  const isSubjectFully = (subject) => subjectFileIds(subject).every((id) => selected.has(id));
+  const isSubjectPartial = (subject) => !isSubjectFully(subject) && subjectFileIds(subject).some((id) => selected.has(id));
+  const toggleChapter = (fileId) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(fileId)) next.delete(fileId); else next.add(fileId);
+      return next;
+    });
+  };
+  const toggleSubject = (subject) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      const ids = subjectFileIds(subject);
+      const allOn = ids.every((id) => next.has(id));
+      if (allOn) for (const id of ids) next.delete(id);
+      else for (const id of ids) next.add(id);
+      return next;
+    });
+  };
+  const selectAll = () => setSelected(new Set(readyChapters.map((f) => f.file_id)));
+  const selectNone = () => setSelected(new Set());
+
   return (
-    <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-5 space-y-5">
+    <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-5 space-y-5">
       <div>
         <h2 className="font-semibold mb-3">Start a quiz</h2>
         <div className="grid grid-cols-3 gap-2">
@@ -1300,32 +1416,73 @@ function QuizLauncher({ onStart }) {
       </div>
 
       <div>
-        <div className="text-xs uppercase tracking-wide text-[var(--text-muted)] mb-2">Scope</div>
-        <select
-          value={scope}
-          onChange={(e) => setScope(e.target.value)}
-          className="w-full bg-[var(--bg-elev)] border border-[var(--border)] rounded px-3 py-2 text-sm"
-        >
-          <option value="all">All ready chapters</option>
-          {subjects.map((s) => (
-            <option key={s} value={`subject:${s}`}>{s} (all chapters)</option>
-          ))}
-          <optgroup label="Single chapter">
-            {readyChapters.map((f) => (
-              <option key={f.file_id} value={`chapter:${f.file_id}`}>
-                {f.subject} — {f.chapter}
-              </option>
+        <div className="flex items-center justify-between mb-2">
+          <div className="text-xs uppercase tracking-wide text-[var(--text-muted)]">
+            {drillMisses ? 'Drilling missed questions' : 'Scope'}
+          </div>
+          {!drillMisses && (
+            <div className="flex gap-2 text-xs">
+              <button onClick={selectAll} className="text-[var(--accent-text)] hover:underline">All</button>
+              <span className="text-[var(--text-fainter)]">·</span>
+              <button onClick={selectNone} className="text-[var(--text-muted)] hover:underline">None</button>
+            </div>
+          )}
+        </div>
+
+        {drillMisses ? (
+          <div className="text-sm text-[var(--text-muted)] bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg p-3">
+            Pool draws only from your {wrongCount} previously-missed question{wrongCount === 1 ? '' : 's'}.
+          </div>
+        ) : (
+          <div className="border border-[var(--border-soft)] rounded-lg divide-y divide-[var(--border-soft)] max-h-72 overflow-y-auto">
+            {Object.entries(grouped).map(([subject, items]) => (
+              <div key={subject}>
+                <label className="flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-[var(--bg-hover-soft)]">
+                  <input
+                    type="checkbox"
+                    checked={isSubjectFully(subject)}
+                    ref={(el) => { if (el) el.indeterminate = isSubjectPartial(subject); }}
+                    onChange={() => toggleSubject(subject)}
+                    className="w-4 h-4 accent-[var(--accent)]"
+                  />
+                  <span className="font-medium text-[var(--text-strong)] flex-1">{subject}</span>
+                  <span className="text-xs text-[var(--text-faint)]">{items.length}</span>
+                </label>
+                <div className="pl-7 pb-1">
+                  {items.map((f) => (
+                    <label key={f.file_id} className="flex items-center gap-3 px-3 py-1.5 cursor-pointer hover:bg-[var(--bg-hover-soft)] rounded">
+                      <input
+                        type="checkbox"
+                        checked={selected.has(f.file_id)}
+                        onChange={() => toggleChapter(f.file_id)}
+                        className="w-4 h-4 accent-[var(--accent)]"
+                      />
+                      <span className="text-sm text-[var(--text)] flex-1">{f.chapter}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
             ))}
-          </optgroup>
-          <option value="misses" disabled={wrongCount === 0}>
+          </div>
+        )}
+
+        <label className="flex items-center gap-2 mt-3 text-sm cursor-pointer">
+          <input
+            type="checkbox"
+            checked={drillMisses}
+            disabled={wrongCount === 0}
+            onChange={(e) => setDrillMisses(e.target.checked)}
+            className="w-4 h-4 accent-[var(--accent)]"
+          />
+          <span className={wrongCount === 0 ? 'text-[var(--text-faint)]' : 'text-[var(--text)]'}>
             Drill my misses ({wrongCount} question{wrongCount === 1 ? '' : 's'})
-          </option>
-        </select>
+          </span>
+        </label>
       </div>
 
       <div>
         <div className="text-xs uppercase tracking-wide text-[var(--text-muted)] mb-2">Count</div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
           {[5, 10, 20, 50].map((n) => (
             <button
               key={n}
@@ -1350,7 +1507,7 @@ function QuizLauncher({ onStart }) {
           onStart(picked);
         }}
         disabled={pool.length === 0}
-        className="w-full bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] disabled:opacity-40 rounded-lg py-2.5 font-medium"
+        className="w-full bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] disabled:opacity-40 rounded-lg py-3 sm:py-2.5 font-medium"
       >
         Start {Math.min(count, pool.length)}-question quiz
       </button>
