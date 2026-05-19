@@ -414,6 +414,24 @@ function makeApiClient(getToken) {
     meStats: () => call('/me/stats', { auth: true }),
     leaderboard: () => call('/leaderboard'),
     userProfile: (username) => call(`/u/${encodeURIComponent(username)}`),
+
+    // Bank publish + pull. body for putBank is the raw JSON string of the bank.
+    putBank: async (bankJson) => {
+      const t = getToken();
+      if (!t) throw new ApiError(401, 'not signed in');
+      const res = await fetch(`${API_BASE}/bank`, {
+        method: 'PUT',
+        headers: { 'Authorization': `Bearer ${t}`, 'Content-Type': 'application/json' },
+        body: bankJson,
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new ApiError(res.status, data?.error || `HTTP ${res.status}`);
+      return data;
+    },
+    getMyBank: () => call('/bank', { auth: true }),
+    getUserBank: (username) => call(`/bank/${encodeURIComponent(username)}`),
+    bankMeta: (username) => call(`/bank/${encodeURIComponent(username)}/meta`),
+    deleteMyBank: () => call('/bank', { method: 'DELETE', auth: true }),
   };
 }
 
@@ -2075,6 +2093,135 @@ function ThemeSwitcher() {
 }
 
 // ---------- shell ----------
+function CloudBankPanel() {
+  const { session, api, files, extractions, questions, setFiles, setExtraction, setQuestionsFor } = useApp();
+  const [status, setStatus] = useState({ state: 'idle', message: '' });
+  const [remote, setRemote] = useState(null); // { size_bytes, updated_at } | null
+  const [busy, setBusy] = useState(false);
+
+  // On mount / login: probe whether the user has a published bank already.
+  useEffect(() => {
+    if (!session) { setRemote(null); return; }
+    let cancelled = false;
+    api.bankMeta(session.username)
+      .then((m) => { if (!cancelled) setRemote(m); })
+      .catch(() => { if (!cancelled) setRemote(null); });
+    return () => { cancelled = true; };
+  }, [api, session?.username]);
+
+  if (!session) {
+    return (
+      <div className="bg-[var(--bg-card-soft)] border border-dashed border-[var(--border-soft)] rounded-2xl px-4 py-3 text-sm text-[var(--text-muted)]">
+        Sign in to publish your question bank to the cloud — then any device (including your phone) can pull it down.
+      </div>
+    );
+  }
+
+  const hasLocal = files.length > 0 && files.some((f) => extractions[f.file_id] && questions[f.file_id]?.mc);
+
+  const publish = async () => {
+    setBusy(true);
+    setStatus({ state: 'pushing', message: 'Uploading…' });
+    try {
+      const bank = JSON.stringify({
+        version: 1,
+        exported_at: new Date().toISOString(),
+        model: MODEL,
+        files,
+        extractions,
+        questions,
+      });
+      const res = await api.putBank(bank);
+      setRemote({ size_bytes: res.size_bytes, updated_at: res.updated_at, username: session.username });
+      setStatus({ state: 'ok', message: `Published ${(res.size_bytes / 1024).toFixed(1)} KB` });
+    } catch (e) {
+      setStatus({ state: 'err', message: e.message });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const pull = async () => {
+    if (!confirm('Replace your local question bank with the cloud copy?')) return;
+    setBusy(true);
+    setStatus({ state: 'pulling', message: 'Downloading…' });
+    try {
+      const bank = await api.getMyBank();
+      setFiles(bank.files || []);
+      // setExtraction / setQuestionsFor write per-key; bulk-replace via direct storage.
+      storage.set(KEYS.extractions, bank.extractions || {});
+      storage.set(KEYS.questions, bank.questions || {});
+      // Force a state refresh by setting each one (cheap).
+      for (const fid of Object.keys(bank.extractions || {})) setExtraction(fid, bank.extractions[fid]);
+      for (const fid of Object.keys(bank.questions || {})) setQuestionsFor(fid, bank.questions[fid]);
+      const n = (bank.files || []).length;
+      setStatus({ state: 'ok', message: `Pulled ${n} chapter${n === 1 ? '' : 's'}` });
+    } catch (e) {
+      setStatus({ state: 'err', message: e.message });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remoteAge = remote
+    ? (() => {
+        const ago = Date.now() - remote.updated_at;
+        const min = Math.round(ago / 60000);
+        if (min < 1) return 'just now';
+        if (min < 60) return `${min} min ago`;
+        const hr = Math.round(min / 60);
+        if (hr < 24) return `${hr} hr ago`;
+        return `${Math.round(hr / 24)} d ago`;
+      })()
+    : null;
+
+  return (
+    <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-5 space-y-3">
+      <div className="flex items-baseline justify-between gap-2">
+        <h3 className="font-semibold text-[var(--text-strong)]">Cloud bank</h3>
+        {remote && (
+          <span className="text-xs text-[var(--text-faint)]">
+            {(remote.size_bytes / 1024).toFixed(1)} KB · {remoteAge}
+          </span>
+        )}
+      </div>
+      <p className="text-sm text-[var(--text-muted)]">
+        {remote
+          ? <>Your bank is published. Other devices signed in as <span className="font-mono">@{session.username}</span> can pull it down.</>
+          : <>Publish your processed chapters to the cloud so your phone (or any other device) can quiz from them without re-processing.</>
+        }
+      </p>
+      <div className="flex flex-col sm:flex-row gap-2">
+        <button
+          onClick={publish}
+          disabled={busy || !hasLocal}
+          className="flex-1 bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] disabled:opacity-40 rounded-lg py-2 text-sm font-medium"
+        >
+          {busy && status.state === 'pushing' ? 'Uploading…' : remote ? 'Update cloud bank' : 'Publish to cloud'}
+        </button>
+        {remote && (
+          <button
+            onClick={pull}
+            disabled={busy}
+            className="flex-1 border border-[var(--border)] hover:bg-[var(--bg-hover)] disabled:opacity-40 rounded-lg py-2 text-sm font-medium"
+          >
+            {busy && status.state === 'pulling' ? 'Downloading…' : 'Pull cloud bank to this device'}
+          </button>
+        )}
+      </div>
+      {status.state === 'ok' && (
+        <p className="text-xs text-[var(--success-text)]">✓ {status.message}</p>
+      )}
+      {status.state === 'err' && (
+        <p className="text-xs text-[var(--danger-text)]">{status.message}</p>
+      )}
+      {!hasLocal && (
+        <p className="text-xs text-[var(--text-faint)]">No locally processed chapters — process some in the Library, or pull from cloud if you have one.</p>
+      )}
+    </div>
+  );
+}
+
 function exportBank({ files, extractions, questions }) {
   const data = {
     version: 1,
@@ -2461,7 +2608,7 @@ function Shell() {
   const [showAccount, setShowAccount] = useState(false);
   const [profileUser, setProfileUser] = useState(null);
 
-  const hasLibrary = apiKey || readOnly;
+  const hasLibrary = apiKey || readOnly || session;
   const tabs = readOnly
     ? [['study', 'Study'], ['stats', 'Stats'], ['leaderboard', 'Leaderboard'], ['library', 'Library']]
     : hasLibrary
@@ -2536,7 +2683,8 @@ function Shell() {
         <div className="max-w-3xl mx-auto space-y-4 sm:space-y-5">
           {tab === 'library' && (
             <>
-              {!readOnly && <UploadPanel />}
+              {!readOnly && apiKey && <UploadPanel />}
+              {session && <CloudBankPanel />}
               {fullyProcessed > 0 && (
                 <>
                   <SyncPanel />
