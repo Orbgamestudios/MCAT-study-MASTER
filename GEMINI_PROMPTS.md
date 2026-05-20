@@ -56,6 +56,27 @@ that responses don't truncate even for chapters with many terms.
 
 ---
 
+## Choice formatting & correctness rules (applies to all MC stages)
+
+Every MC stage (2, 3, 4) must follow these rules. They are appended to each stage's
+system instruction in `app.js`.
+
+> **CHOICE FORMATTING RULES:**
+> - Each choice must be SHORT — just the concept name, term, value, or brief phrase.
+> - NEVER add explanatory text, justifications, or definitions after a dash, colon, or
+>   parenthetical in a choice.
+>   Bad: `"Associative learning — both involve linking two events"`.
+>   Good: `"Associative learning"`.
+> - All four choices should be roughly the same length and style so the correct answer
+>   does not stand out visually.
+>
+> **CORRECTNESS CHECK:**
+> - Before finalizing, verify that the choice at `correct_index` is genuinely and
+>   unambiguously the best answer. If two choices could plausibly be correct, rewrite
+>   the stem to disambiguate or pick a different topic.
+
+---
+
 ## Stage 2 — General Multiple Choice
 
 **Input:** PDF + extraction JSON.
@@ -264,6 +285,13 @@ update this document to match. Increment the `?v=N` cache-bust on `app.js` in
 `index.html` so contributors fetch the new version on their next visit. Existing
 generated questions are not retroactively updated; only new generation calls use the new
 prompt.
+
+## Question audit
+
+After questions are generated, they can be audited for quality via the **Audit** button
+in the Bank tab. See `QUESTION_AUDIT.md` for the full pipeline — pass 1 strips
+explanatory text from choices (client-side, free), pass 2 uses Gemini to verify that
+`correct_index` actually points to the right answer.
 
 ## Out-of-band processing (Claude Code, etc.)
 

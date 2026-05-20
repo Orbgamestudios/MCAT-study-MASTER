@@ -315,7 +315,15 @@ function makeClient(getKey) {
         'Distractors must be plausible — pull from common misconceptions, related-but-wrong concepts, or other key_terms in the same chapter. ' +
         'Cover the chapter broadly across summary_sentences. ' +
         'Explanations are 1-2 sentences and justify the correct answer (and ideally why the most tempting distractor is wrong). ' +
-        'Do not duplicate questions. Do not include questions whose answer is not directly supported by the chapter.',
+        'Do not duplicate questions. Do not include questions whose answer is not directly supported by the chapter.\n\n' +
+        'CHOICE FORMATTING RULES:\n' +
+        '- Each choice must be SHORT — just the concept name, term, value, or brief phrase.\n' +
+        '- NEVER add explanatory text, justifications, or definitions after a dash, colon, or parenthetical in a choice. ' +
+        'Bad: "Associative learning — both involve linking two events". Good: "Associative learning".\n' +
+        '- All four choices should be roughly the same length and style so the correct answer does not stand out visually.\n\n' +
+        'CORRECTNESS CHECK:\n' +
+        '- Before finalizing, verify that the choice at correct_index is genuinely and unambiguously the best answer. ' +
+        'If two choices could plausibly be correct, rewrite the stem to disambiguate or pick a different topic.',
       contents: [{ role: 'user', parts }],
       responseSchema: MC_SCHEMA,
     });
@@ -409,7 +417,14 @@ function makeClient(getKey) {
           '- Include at least one distractor that is technically true but does NOT answer the question.\n' +
           '- Avoid "obviously wrong" distractors (unrelated facts, gibberish, definitions of trivial items). Every distractor should make a half-prepared student hesitate.\n' +
           '- Don\'t pad with "all/none of the above" filler.\n\n' +
-          'Explanations are 1-2 sentences and should briefly call out why the most tempting distractor is wrong.',
+          'Explanations are 1-2 sentences and should briefly call out why the most tempting distractor is wrong.\n\n' +
+          'CHOICE FORMATTING RULES:\n' +
+          '- Each choice must be SHORT — just the concept name, term, value, or brief phrase.\n' +
+          '- NEVER add explanatory text, justifications, or definitions after a dash, colon, or parenthetical in a choice. ' +
+          'Bad: "Habituation — both show decreased responding". Good: "Habituation".\n' +
+          '- All four choices should be roughly the same length and style so the correct answer does not stand out visually.\n\n' +
+          'CORRECTNESS CHECK:\n' +
+          '- Before finalizing, verify that the choice at correct_index is genuinely and unambiguously the best answer.',
         contents: [{
           role: 'user',
           parts: [{
@@ -486,7 +501,12 @@ function makeClient(getKey) {
         'The two parts share a "theme" (the broader area the student must navigate) but probe DISTINCT concepts so a student who has them blurred together will miss one. ' +
         'Each part has exactly 4 choices, correct_index 0-3, and a 1-2 sentence explanation. ' +
         'Distractors should be tough — sibling concepts, near-misses, things the student would plausibly pick if they\'re half-prepared. ' +
-        'Avoid trivial filler distractors.',
+        'Avoid trivial filler distractors.\n\n' +
+        'CHOICE FORMATTING RULES:\n' +
+        '- Each choice must be SHORT — just the concept name, term, or brief phrase. ' +
+        'NEVER add explanatory text after a dash, colon, or parenthetical. ' +
+        'All four choices should look similar in length and style.\n\n' +
+        'CORRECTNESS CHECK: verify correct_index points to the genuinely best answer before returning.',
       contents: [{
         role: 'user',
         parts: [{
@@ -508,9 +528,65 @@ function makeClient(getKey) {
     }));
   }
 
+  // ---- audit: verify correct_index via Gemini ----
+  const AUDIT_SCHEMA = {
+    type: 'OBJECT',
+    properties: {
+      results: {
+        type: 'ARRAY',
+        items: {
+          type: 'OBJECT',
+          properties: {
+            index: { type: 'INTEGER' },
+            correct: { type: 'BOOLEAN' },
+            suggested_index: { type: 'INTEGER' },
+            reason: { type: 'STRING' },
+          },
+          required: ['index', 'correct', 'suggested_index', 'reason'],
+        },
+      },
+    },
+    required: ['results'],
+  };
+
+  async function auditQuestions(questions) {
+    const BATCH = 8;
+    const all = [];
+    for (let i = 0; i < questions.length; i += BATCH) {
+      const batch = questions.slice(i, i + BATCH);
+      const listing = batch.map((q, idx) => {
+        const letter = ['A', 'B', 'C', 'D'][q.correct_index] || '?';
+        return `--- Question ${i + idx + 1} ---\n` +
+          `Stem: ${q.question}\n` +
+          `A. ${q.choices[0]}\nB. ${q.choices[1]}\nC. ${q.choices[2]}\nD. ${q.choices[3]}\n` +
+          `Claimed correct: ${letter} (index ${q.correct_index})\n` +
+          `Explanation: ${q.explanation}`;
+      }).join('\n\n');
+      const resp = await generate({
+        maxOutputTokens: 8192,
+        disableThinking: true,
+        systemInstruction:
+          'You are a meticulous MCAT question reviewer. For each question, evaluate whether the choice at correct_index ' +
+          'is genuinely and unambiguously the best answer. Consider whether the stem is clear, whether any distractor ' +
+          'could also be correct, and whether the explanation matches the indicated answer. ' +
+          'Return one result per question in the same order.',
+        contents: [{ role: 'user', parts: [{ text:
+          `Review these ${batch.length} MC questions. For each, say whether the claimed correct answer is actually correct.\n\n${listing}`,
+        }] }],
+        responseSchema: AUDIT_SCHEMA,
+      });
+      const data = extractJson(resp);
+      (data.results || []).forEach((r, idx) => {
+        all.push({ ...r, index: i + idx });
+      });
+    }
+    return all;
+  }
+
   return {
     uploadFile, deleteFile, generate, ping,
     extractFromPdf, generateMCQuestions, generateShortAnswers, generateTermQuestions, generateTwoPartQuestions,
+    auditQuestions,
   };
 }
 
@@ -3309,6 +3385,247 @@ function ServerStatsPayload({ data }) {
   );
 }
 
+// ---------- question audit (pass 1: client-side) ----------
+function trimChoiceExplanations(choices) {
+  return choices.map((c) => {
+    // Strip " — explanation", " - explanation", ": explanation" patterns
+    // but only if what remains is still at least 3 chars (not just a letter).
+    const trimmed = c.replace(/\s*[—–]\s+.+$/, '').replace(/\s+-\s+.+$/, '');
+    return trimmed.length >= 3 ? trimmed : c;
+  });
+}
+
+function auditPass1(mcQuestions) {
+  let trimCount = 0;
+  const cleaned = mcQuestions.map((q) => {
+    if (!q.choices?.length) return q;
+    const trimmed = trimChoiceExplanations(q.choices);
+    const changed = trimmed.some((c, i) => c !== q.choices[i]);
+    if (changed) trimCount++;
+    return changed ? { ...q, choices: trimmed } : q;
+  });
+  return { cleaned, trimCount };
+}
+
+// ---------- question audit modal ----------
+function AuditModal({ chapter, onClose }) {
+  const { api, client, apiKey } = useApp();
+  const [phase, setPhase] = useState('loading'); // loading | pass1 | verifying | done
+  const [mc, setMc] = useState([]);
+  const [twoPart, setTwoPart] = useState([]);
+  const [trimCount, setTrimCount] = useState(0);
+  const [flags, setFlags] = useState([]); // [{index, suggested_index, reason, q}]
+  const [verifyProgress, setVerifyProgress] = useState('');
+  const [status, setStatus] = useState(null);
+  const [applied, setApplied] = useState(new Set());
+
+  useEffect(() => {
+    let cancelled = false;
+    api.getChapter(chapter.id).then((full) => {
+      if (cancelled) return;
+      const allMc = Array.isArray(full.mc) ? full.mc : [];
+      // Also collect MC questions embedded in two-part items for auditing
+      const tp = Array.isArray(full.two_part) ? full.two_part : [];
+      setMc(allMc);
+      setTwoPart(tp);
+      const { cleaned, trimCount: tc } = auditPass1(allMc);
+      setTrimCount(tc);
+      setMc(cleaned);
+      // Also trim two-part choices
+      const cleanedTp = tp.map((item) => {
+        if (!item.parts) return item;
+        let changed = false;
+        const newParts = item.parts.map((p) => {
+          if (!p.choices?.length) return p;
+          const trimmed = trimChoiceExplanations(p.choices);
+          if (trimmed.some((c, i) => c !== p.choices[i])) { changed = true; return { ...p, choices: trimmed }; }
+          return p;
+        });
+        return changed ? { ...item, parts: newParts } : item;
+      });
+      const tpTrimmed = cleanedTp.filter((t, i) => t !== tp[i]).length;
+      setTwoPart(cleanedTp);
+      setTrimCount((prev) => prev + tpTrimmed);
+      setPhase('pass1');
+    }).catch((e) => {
+      setStatus({ kind: 'err', msg: e.message });
+      setPhase('pass1');
+    });
+    return () => { cancelled = true; };
+  }, [chapter.id, api]);
+
+  const applyTrims = async () => {
+    setStatus({ kind: 'info', msg: 'Pushing trimmed choices…' });
+    try {
+      await api.putChapterStage(chapter.id, 'mc', mc);
+      if (twoPart.length) await api.putChapterStage(chapter.id, 'two_part', twoPart);
+      setStatus({ kind: 'ok', msg: `Trimmed ${trimCount} question(s). Saved.` });
+      setTrimCount(0);
+    } catch (e) {
+      setStatus({ kind: 'err', msg: e.message });
+    }
+  };
+
+  const runVerify = async () => {
+    if (!apiKey) { setStatus({ kind: 'err', msg: 'Set a Gemini API key in Settings first.' }); return; }
+    setPhase('verifying');
+    setFlags([]);
+    try {
+      const mcOnly = mc.filter((q) => q.mode === 'mc' && q.choices?.length === 4);
+      setVerifyProgress(`Checking ${mcOnly.length} MC questions…`);
+      const results = await client.auditQuestions(mcOnly);
+      const flagged = results.filter((r) => !r.correct).map((r) => ({
+        ...r,
+        q: mcOnly[r.index],
+      }));
+      setFlags(flagged);
+      setPhase('done');
+      setVerifyProgress('');
+      if (!flagged.length) setStatus({ kind: 'ok', msg: 'All questions verified — no issues found!' });
+    } catch (e) {
+      setStatus({ kind: 'err', msg: e.message });
+      setPhase('pass1');
+    }
+  };
+
+  const acceptFix = async (flag) => {
+    const updated = mc.map((q) =>
+      q === flag.q ? { ...q, correct_index: flag.suggested_index } : q
+    );
+    setMc(updated);
+    try {
+      await api.putChapterStage(chapter.id, 'mc', updated);
+      setApplied((s) => new Set(s).add(flag.q.id));
+      setStatus({ kind: 'ok', msg: `Fixed "${flag.q.question.slice(0, 50)}…"` });
+    } catch (e) {
+      setStatus({ kind: 'err', msg: e.message });
+    }
+  };
+
+  const deleteQuestion = async (flag) => {
+    const updated = mc.filter((q) => q !== flag.q);
+    setMc(updated);
+    try {
+      await api.putChapterStage(chapter.id, 'mc', updated);
+      setApplied((s) => new Set(s).add(flag.q.id));
+      setStatus({ kind: 'ok', msg: `Deleted question.` });
+    } catch (e) {
+      setStatus({ kind: 'err', msg: e.message });
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-start justify-center p-3 sm:p-6 pt-10 sm:pt-16 overflow-y-auto"
+      onClick={onClose}
+    >
+      <div className="w-full max-w-2xl bg-[var(--bg)] border border-[var(--border)] rounded-2xl p-4 sm:p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between">
+          <h2 className="font-semibold text-[var(--text-strong)]">Audit: {chapter.title}</h2>
+          <button onClick={onClose} className="text-xs px-2 py-1 border border-[var(--border)] rounded hover:bg-[var(--bg-hover)]">Close</button>
+        </div>
+
+        {status && (
+          <div className={`text-sm rounded-lg px-3 py-2 ${
+            status.kind === 'ok' ? 'bg-[var(--success-bg)] text-[var(--success-text)]'
+              : status.kind === 'err' ? 'bg-[var(--danger-bg)] text-[var(--danger-text)]'
+              : 'bg-[var(--accent-soft)] text-[var(--accent-text)]'
+          }`}>
+            {status.msg}
+          </div>
+        )}
+
+        {phase === 'loading' && <div className="text-sm text-[var(--text-muted)]">Loading chapter data…</div>}
+
+        {(phase === 'pass1' || phase === 'done') && (
+          <div className="space-y-3">
+            <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-xl p-4">
+              <h3 className="text-sm font-semibold mb-1">Pass 1 — Choice trimming</h3>
+              <p className="text-sm text-[var(--text-muted)]">
+                {trimCount > 0
+                  ? `Found ${trimCount} question(s) with explanatory text in choices.`
+                  : 'All choices look clean — no trimming needed.'}
+              </p>
+              {trimCount > 0 && (
+                <button
+                  onClick={applyTrims}
+                  className="mt-2 text-xs bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] rounded px-3 py-1.5"
+                >
+                  Apply trims
+                </button>
+              )}
+            </div>
+
+            <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-xl p-4">
+              <h3 className="text-sm font-semibold mb-1">Pass 2 — Gemini verification</h3>
+              {phase === 'pass1' && (
+                <>
+                  <p className="text-sm text-[var(--text-muted)]">
+                    Send {mc.filter((q) => q.mode === 'mc' && q.choices?.length === 4).length} MC questions to Gemini to check if correct_index is right.
+                  </p>
+                  <button
+                    onClick={runVerify}
+                    disabled={!apiKey}
+                    className={`mt-2 text-xs rounded px-3 py-1.5 ${apiKey
+                      ? 'bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)]'
+                      : 'bg-[var(--bg-elev)] text-[var(--text-faint)] cursor-not-allowed'}`}
+                  >
+                    {apiKey ? 'Verify with Gemini' : 'Needs API key'}
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
+        {phase === 'verifying' && (
+          <div className="text-sm text-[var(--accent-text)]">… {verifyProgress}</div>
+        )}
+
+        {phase === 'done' && flags.length > 0 && (
+          <div className="space-y-3">
+            <h3 className="text-sm font-semibold text-[var(--warning-text)]">{flags.length} flagged question(s)</h3>
+            {flags.map((flag, i) => {
+              const done = applied.has(flag.q.id);
+              const letters = ['A', 'B', 'C', 'D'];
+              return (
+                <div key={i} className={`bg-[var(--bg-card)] border rounded-xl p-4 text-sm space-y-2 ${done ? 'border-[var(--success-border)] opacity-60' : 'border-[var(--warning-text)]'}`}>
+                  <p className="font-medium">{flag.q.question}</p>
+                  <div className="grid grid-cols-2 gap-1 text-xs">
+                    {flag.q.choices.map((c, ci) => (
+                      <div key={ci} className={`px-2 py-1 rounded ${
+                        ci === flag.q.correct_index ? 'bg-[var(--danger-bg)] line-through' :
+                        ci === flag.suggested_index ? 'bg-[var(--success-bg)] font-semibold' : 'bg-[var(--bg-elev)]'
+                      }`}>
+                        {letters[ci]}. {c}
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-xs text-[var(--text-muted)]">
+                    <span className="text-[var(--danger-text)]">Stored: {letters[flag.q.correct_index]}</span>
+                    {' → '}
+                    <span className="text-[var(--success-text)]">Suggested: {letters[flag.suggested_index]}</span>
+                    {' · '}{flag.reason}
+                  </p>
+                  {!done && (
+                    <div className="flex gap-2">
+                      <button onClick={() => acceptFix(flag)} className="text-xs bg-[var(--success-bg)] text-[var(--success-text)] border border-[var(--success-border)] rounded px-2 py-1 hover:opacity-80">Accept fix</button>
+                      <button onClick={() => deleteQuestion(flag)} className="text-xs bg-[var(--danger-bg)] text-[var(--danger-text)] border border-[var(--danger-border)] rounded px-2 py-1 hover:opacity-80">Delete</button>
+                      <button onClick={() => setApplied((s) => new Set(s).add(flag.q.id))} className="text-xs text-[var(--text-muted)] border border-[var(--border)] rounded px-2 py-1 hover:bg-[var(--bg-hover)]">Skip</button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        <div className="text-xs text-[var(--text-faint)]">{mc.length} MC · {twoPart.length} two-part</div>
+      </div>
+    </div>
+  );
+}
+
 // ---------- collaborative bank (chapters) ----------
 function StageDot({ stage, label }) {
   const done = stage?.done;
@@ -3332,7 +3649,7 @@ function StageDot({ stage, label }) {
   );
 }
 
-function ChapterRow({ chapter, onDownload, onContribute, busy, downloaded, canContribute }) {
+function ChapterRow({ chapter, onDownload, onContribute, onAudit, busy, downloaded, canContribute }) {
   const ago = (() => {
     const ms = Date.now() - chapter.updated_at;
     const m = Math.round(ms / 60000);
@@ -3408,6 +3725,16 @@ function ChapterRow({ chapter, onDownload, onContribute, busy, downloaded, canCo
             </span>
           )
         )}
+        {chapter.stages.mc.done && canContribute && (
+          <button
+            onClick={onAudit}
+            disabled={!!busy}
+            title="Check questions for errors and strip explanatory text from choices"
+            className="text-xs px-3 py-1.5 border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--bg-hover)] disabled:opacity-40 rounded whitespace-nowrap"
+          >
+            Audit
+          </button>
+        )}
       </div>
     </li>
   );
@@ -3417,6 +3744,7 @@ function BankTab() {
   const { api, session, apiKey, client, setFiles, setExtraction, setQuestionsFor, files } = useApp();
   const [data, setData] = useState(null);
   const [err, setErr] = useState('');
+  const [auditChapter, setAuditChapter] = useState(null);
   const [tick, setTick] = useState(0);
   const [busyId, setBusyId] = useState(null); // chapter id currently working
   const [busyKind, setBusyKind] = useState(null); // 'downloading' | 'contributing'
@@ -3622,6 +3950,7 @@ function BankTab() {
                   chapter={ch}
                   onDownload={() => downloadChapter(ch)}
                   onContribute={(stages) => contributeChapter(ch, stages)}
+                  onAudit={() => setAuditChapter(ch)}
                   busy={busyId === ch.id ? busyKind : null}
                   downloaded={localChapterIds.has(ch.id)}
                   canContribute={!!session && !!apiKey}
@@ -3631,6 +3960,10 @@ function BankTab() {
           </div>
         );
       })}
+
+      {auditChapter && (
+        <AuditModal chapter={auditChapter} onClose={() => { setAuditChapter(null); setTick((t) => t + 1); }} />
+      )}
     </div>
   );
 }
