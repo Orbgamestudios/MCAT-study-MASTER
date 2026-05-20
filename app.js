@@ -25,6 +25,7 @@ const KEYS = {
   pendingSync: 'mcat:pendingSync',
   flagQueue: 'mcat:flagQueue', // Flagged questions awaiting Gemini fix (rate-limit safe)
   reaudit: 'mcat:reaudit', // boolean — show Audit button on already-audited chapters
+  volume: 'mcat:volume', // 0-1, global SFX volume multiplier (default 1)
 };
 
 const THEMES = ['dark', 'light', 'warm', 'green'];
@@ -112,16 +113,25 @@ async function pushBankToGithub(github, { files, extractions, questions }) {
 }
 
 // ---------- sound effects ----------
+// User-adjustable master volume (0..1), persisted in localStorage. Multiplies every sfx.
+function _vol() {
+  try {
+    const raw = localStorage.getItem('mcat:volume');
+    if (raw == null) return 1;
+    const v = JSON.parse(raw);
+    return typeof v === 'number' && v >= 0 && v <= 1 ? v : 1;
+  } catch { return 1; }
+}
 const _sfxCache = {};
 function playSfx(name) {
   try {
     if (!_sfxCache[name]) {
       _sfxCache[name] = new Audio(`assets/${name}.mp3`);
       _sfxCache[name].preload = 'auto';
-      _sfxCache[name].volume = 0.75; // 25% softer than file's native level
     }
     const a = _sfxCache[name];
     a.currentTime = 0;
+    a.volume = 0.75 * _vol(); // MP3s are baseline-25%-quieter, then scaled by user volume
     a.play().catch(() => {});
   } catch {}
 }
@@ -138,13 +148,14 @@ function _ctx() {
 function _beep(freq, durMs, { vol = 0.08, type = 'sine', startAt = 0 } = {}) {
   const ctx = _ctx();
   if (!ctx) return;
+  const peak = Math.max(0.0001, vol * _vol());
   const t0 = ctx.currentTime + startAt;
   const osc = ctx.createOscillator();
   const gain = ctx.createGain();
   osc.type = type;
   osc.frequency.setValueAtTime(freq, t0);
   gain.gain.setValueAtTime(0, t0);
-  gain.gain.linearRampToValueAtTime(vol, t0 + 0.005);
+  gain.gain.linearRampToValueAtTime(peak, t0 + 0.005);
   gain.gain.exponentialRampToValueAtTime(0.0001, t0 + durMs / 1000);
   osc.connect(gain).connect(ctx.destination);
   osc.start(t0);
@@ -167,7 +178,7 @@ function sfxTap() {
   filter.frequency.value = 2800;
   filter.Q.value = 3;
   const gain = ctx.createGain();
-  gain.gain.setValueAtTime(0.18, t0);
+  gain.gain.setValueAtTime(Math.max(0.0001, 0.18 * _vol()), t0);
   gain.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
   src.connect(filter).connect(gain).connect(ctx.destination);
   src.start(t0);
@@ -854,6 +865,15 @@ function AppProvider({ children }) {
     storage.set(KEYS.reaudit, !!v);
     setReauditEnabledState(!!v);
   }, []);
+  const [volume, setVolumeState] = useState(() => {
+    const v = storage.get(KEYS.volume, 1);
+    return typeof v === 'number' && v >= 0 && v <= 1 ? v : 1;
+  });
+  const setVolume = useCallback((v) => {
+    const clamped = Math.min(1, Math.max(0, Number(v) || 0));
+    storage.set(KEYS.volume, clamped);
+    setVolumeState(clamped);
+  }, []);
 
   const setGithub = useCallback((patch) => {
     setGithubState((prev) => {
@@ -1051,12 +1071,13 @@ function AppProvider({ children }) {
       session, setSession, api, pendingSync, flushSync, syncBusy, syncError,
       client,
       reauditEnabled, setReauditEnabled,
+      volume, setVolume,
     }),
     [apiKey, setApiKey, files, setFiles, extractions, setExtraction, questions, setQuestionsFor,
      attempts, addAttempt, clearAttempts, staticBank, useStaticBank, readOnly, theme, setTheme,
      github, setGithub, pushBank, pushStatus,
      session, setSession, api, pendingSync, flushSync, syncBusy, syncError, client,
-     reauditEnabled, setReauditEnabled]
+     reauditEnabled, setReauditEnabled, volume, setVolume]
   );
   return <AppCtx.Provider value={value}>{children}</AppCtx.Provider>;
 }
@@ -3140,7 +3161,7 @@ function ThemeSwitcher() {
 
 // ---------- settings ----------
 function SettingsPanel({ onClose }) {
-  const { theme, setTheme, apiKey, setApiKey, client, session, pendingSync, syncBusy, syncError, flushSync, reauditEnabled, setReauditEnabled } = useApp();
+  const { theme, setTheme, apiKey, setApiKey, client, session, pendingSync, syncBusy, syncError, flushSync, reauditEnabled, setReauditEnabled, volume, setVolume } = useApp();
   const [keyVal, setKeyVal] = useState(apiKey || '');
   const [keyShow, setKeyShow] = useState(false);
   const [keyErr, setKeyErr] = useState('');
@@ -3272,6 +3293,26 @@ function SettingsPanel({ onClose }) {
         <p className="text-[11px] text-[var(--text-faint)] mt-2">
           Get a free key at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener" className="text-[var(--accent-text)] underline">aistudio.google.com/apikey</a>. Stored only in this browser.
         </p>
+      </div>
+
+      <div>
+        <div className="text-xs uppercase tracking-wide text-[var(--text-muted)] mb-2">Sound</div>
+        <div className="bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg px-3 py-2.5">
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-[var(--text)]">Volume</span>
+            <span className="text-[var(--text-muted)] tabular-nums">{Math.round(volume * 100)}%</span>
+          </div>
+          <input
+            type="range"
+            min="0"
+            max="1"
+            step="0.05"
+            value={volume}
+            onChange={(e) => setVolume(parseFloat(e.target.value))}
+            className="w-full mt-2 accent-[var(--accent)]"
+          />
+          <div className="text-[11px] text-[var(--text-faint)] mt-1">Affects answer sounds, HUD ticks, and quiz-start chime.</div>
+        </div>
       </div>
 
       <div>
