@@ -316,11 +316,12 @@ function makeClient(getKey) {
         'Cover the chapter broadly across summary_sentences. ' +
         'Explanations are 1-2 sentences and justify the correct answer (and ideally why the most tempting distractor is wrong). ' +
         'Do not duplicate questions. Do not include questions whose answer is not directly supported by the chapter.\n\n' +
-        'CHOICE FORMATTING RULES:\n' +
-        '- Each choice must be SHORT — just the concept name, term, value, or brief phrase.\n' +
-        '- NEVER add explanatory text, justifications, or definitions after a dash, colon, or parenthetical in a choice. ' +
-        'Bad: "Associative learning — both involve linking two events". Good: "Associative learning".\n' +
-        '- All four choices should be roughly the same length and style so the correct answer does not stand out visually.\n\n' +
+        'CHOICE FORMATTING RULES (hint system):\n' +
+        '- Format each choice as: "Term — brief explanatory hint" (using an em-dash). ' +
+        'The app hides the text after the dash behind a Hint button; using it costs half credit.\n' +
+        '- The hint portion should be a short clause that helps a struggling student (e.g. "Associative learning — linking two events via stimulus-response pairing"). ' +
+        'It must NOT make the correct answer obvious by itself — all four hints should sound plausible.\n' +
+        '- All four choices (including hint text) should be roughly the same length so the correct answer does not stand out visually.\n\n' +
         'CORRECTNESS CHECK:\n' +
         '- Before finalizing, verify that the choice at correct_index is genuinely and unambiguously the best answer. ' +
         'If two choices could plausibly be correct, rewrite the stem to disambiguate or pick a different topic.',
@@ -418,11 +419,10 @@ function makeClient(getKey) {
           '- Avoid "obviously wrong" distractors (unrelated facts, gibberish, definitions of trivial items). Every distractor should make a half-prepared student hesitate.\n' +
           '- Don\'t pad with "all/none of the above" filler.\n\n' +
           'Explanations are 1-2 sentences and should briefly call out why the most tempting distractor is wrong.\n\n' +
-          'CHOICE FORMATTING RULES:\n' +
-          '- Each choice must be SHORT — just the concept name, term, value, or brief phrase.\n' +
-          '- NEVER add explanatory text, justifications, or definitions after a dash, colon, or parenthetical in a choice. ' +
-          'Bad: "Habituation — both show decreased responding". Good: "Habituation".\n' +
-          '- All four choices should be roughly the same length and style so the correct answer does not stand out visually.\n\n' +
+          'CHOICE FORMATTING RULES (hint system):\n' +
+          '- Format each choice as: "Term — brief explanatory hint" (em-dash). The hint is hidden behind a Hint button; using it costs half credit.\n' +
+          '- All four hints should sound equally plausible so the hint narrows but does not give away the answer.\n' +
+          '- All four choices should be roughly the same length.\n\n' +
           'CORRECTNESS CHECK:\n' +
           '- Before finalizing, verify that the choice at correct_index is genuinely and unambiguously the best answer.',
         contents: [{
@@ -502,10 +502,9 @@ function makeClient(getKey) {
         'Each part has exactly 4 choices, correct_index 0-3, and a 1-2 sentence explanation. ' +
         'Distractors should be tough — sibling concepts, near-misses, things the student would plausibly pick if they\'re half-prepared. ' +
         'Avoid trivial filler distractors.\n\n' +
-        'CHOICE FORMATTING RULES:\n' +
-        '- Each choice must be SHORT — just the concept name, term, or brief phrase. ' +
-        'NEVER add explanatory text after a dash, colon, or parenthetical. ' +
-        'All four choices should look similar in length and style.\n\n' +
+        'CHOICE FORMATTING RULES (hint system):\n' +
+        '- Format each choice as: "Term — brief explanatory hint" (em-dash). The hint is hidden behind a Hint button; using it costs half credit. ' +
+        'All four hints should sound equally plausible. All choices should be roughly the same length.\n\n' +
         'CORRECTNESS CHECK: verify correct_index points to the genuinely best answer before returning.',
       contents: [{
         role: 'user',
@@ -1804,22 +1803,39 @@ function QuizLauncher({ onStart }) {
 // ---------- quiz: MC ----------
 function MCQuestion({ item, onAnswer, nextSlot }) {
   const [picked, setPicked] = useState(null);
-  // shuffle choices, but remember original index for grading
+  const [hintUsed, setHintUsed] = useState(false);
   const shuffled = useMemo(() => {
-    const arr = item.q.choices.map((text, origIdx) => ({ text, origIdx }));
+    const arr = item.q.choices.map((text, origIdx) => ({ text, origIdx, ...splitHint(text) }));
     return shuffle(arr);
   }, [item.id]);
+  const hasHints = shuffled.some((e) => e.hint);
+
+  const revealHint = () => { if (!picked) setHintUsed(true); };
 
   const submit = (entry) => {
     if (picked !== null) return;
     setPicked(entry);
     const correct = entry.origIdx === item.q.correct_index;
-    onAnswer({ correct, user_answer: entry.text });
+    onAnswer({ correct, user_answer: entry.text, half: hintUsed && correct });
   };
 
   return (
     <div className="space-y-4">
-      <p className="text-base leading-relaxed">{item.q.question}</p>
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-base leading-relaxed flex-1">{item.q.question}</p>
+        {hasHints && !picked && !hintUsed && (
+          <button
+            onClick={revealHint}
+            className="text-xs px-2.5 py-1.5 border border-[var(--warning-text)] text-[var(--warning-text)] rounded hover:bg-[var(--warning-bg)] shrink-0"
+            title="Show hint text for each choice (half credit)"
+          >
+            Hint
+          </button>
+        )}
+        {hintUsed && !picked && (
+          <span className="text-[10px] uppercase tracking-wide text-[var(--warning-text)]">½ credit</span>
+        )}
+      </div>
       <div className="space-y-2">
         {shuffled.map((entry, i) => {
           const isPicked = picked && entry.origIdx === picked.origIdx;
@@ -1838,7 +1854,10 @@ function MCQuestion({ item, onAnswer, nextSlot }) {
               className={`w-full text-left border rounded-lg px-3 py-2.5 text-sm transition-colors ${cls}`}
             >
               <span className="text-[var(--text-faint)] mr-2">{String.fromCharCode(65 + i)}.</span>
-              {entry.text}
+              {(hintUsed || picked) ? entry.text : entry.base}
+              {!hintUsed && !picked && entry.hint && (
+                <span className="text-[var(--text-fainter)]"> …</span>
+              )}
             </button>
           );
         })}
@@ -1846,8 +1865,12 @@ function MCQuestion({ item, onAnswer, nextSlot }) {
       {picked && (
         <>
           <div className="flex items-center justify-between gap-3 mt-3">
-            <div className={picked.origIdx === item.q.correct_index ? 'text-[var(--success-text)] font-medium' : 'text-[var(--danger-text)] font-medium'}>
-              {picked.origIdx === item.q.correct_index ? 'Correct' : 'Incorrect'}
+            <div className={picked.origIdx === item.q.correct_index
+              ? `text-[var(--success-text)] font-medium${hintUsed ? '' : ''}`
+              : 'text-[var(--danger-text)] font-medium'}>
+              {picked.origIdx === item.q.correct_index
+                ? (hintUsed ? 'Correct (½ credit — hint used)' : 'Correct')
+                : 'Incorrect'}
             </div>
             {nextSlot}
           </div>
@@ -1948,9 +1971,11 @@ function TwoPartQuestion({ item, onAnswer, nextSlot }) {
       setPartIdx((i) => i + 1);
     } else {
       const allCorrect = nextResults.every((r) => r.correct);
+      const anyHalf = nextResults.some((r) => r.half);
       setDone(true);
       onAnswer({
         correct: allCorrect,
+        half: allCorrect && anyHalf,
         user_answer: nextResults.map((r, i) => `P${i + 1}: ${r.user_answer}`).join(' | '),
       });
     }
@@ -1980,10 +2005,14 @@ function TwoPartQuestion({ item, onAnswer, nextSlot }) {
 function SinglePart({ part, onAnswer, nextSlot, continueLabel }) {
   const [picked, setPicked] = useState(null);
   const [advanced, setAdvanced] = useState(false);
+  const [hintUsed, setHintUsed] = useState(false);
   const shuffled = useMemo(() => {
-    const arr = (part.choices || []).map((text, origIdx) => ({ text, origIdx }));
+    const arr = (part.choices || []).map((text, origIdx) => ({ text, origIdx, ...splitHint(text) }));
     return shuffle(arr);
   }, [part]);
+  const hasHints = shuffled.some((e) => e.hint);
+
+  const revealHint = () => { if (!picked) setHintUsed(true); };
 
   const submit = (entry) => {
     if (picked !== null) return;
@@ -1994,12 +2023,26 @@ function SinglePart({ part, onAnswer, nextSlot, continueLabel }) {
     if (picked === null || advanced) return;
     setAdvanced(true);
     const correct = picked.origIdx === part.correct_index;
-    onAnswer({ correct, user_answer: picked.text });
+    onAnswer({ correct, user_answer: picked.text, half: hintUsed && correct });
   };
 
   return (
     <div className="space-y-4">
-      <p className="text-base leading-relaxed">{part.question}</p>
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-base leading-relaxed flex-1">{part.question}</p>
+        {hasHints && !picked && !hintUsed && (
+          <button
+            onClick={revealHint}
+            className="text-xs px-2.5 py-1.5 border border-[var(--warning-text)] text-[var(--warning-text)] rounded hover:bg-[var(--warning-bg)] shrink-0"
+            title="Show hint text for each choice (half credit)"
+          >
+            Hint
+          </button>
+        )}
+        {hintUsed && !picked && (
+          <span className="text-[10px] uppercase tracking-wide text-[var(--warning-text)]">½ credit</span>
+        )}
+      </div>
       <div className="space-y-2">
         {shuffled.map((entry, i) => {
           const isPicked = picked && entry.origIdx === picked.origIdx;
@@ -2018,7 +2061,10 @@ function SinglePart({ part, onAnswer, nextSlot, continueLabel }) {
               className={`w-full text-left border rounded-lg px-3 py-2.5 text-sm transition-colors ${cls}`}
             >
               <span className="text-[var(--text-faint)] mr-2">{String.fromCharCode(65 + i)}.</span>
-              {entry.text}
+              {(hintUsed || picked) ? entry.text : entry.base}
+              {!hintUsed && !picked && entry.hint && (
+                <span className="text-[var(--text-fainter)]"> …</span>
+              )}
             </button>
           );
         })}
@@ -2027,7 +2073,9 @@ function SinglePart({ part, onAnswer, nextSlot, continueLabel }) {
         <>
           <div className="flex items-center justify-between gap-3 mt-3">
             <div className={picked.origIdx === part.correct_index ? 'text-[var(--success-text)] font-medium' : 'text-[var(--danger-text)] font-medium'}>
-              {picked.origIdx === part.correct_index ? 'Correct' : 'Incorrect'}
+              {picked.origIdx === part.correct_index
+                ? (hintUsed ? 'Correct (½ credit)' : 'Correct')
+                : 'Incorrect'}
             </div>
             {!advanced && (
               <button
@@ -2231,7 +2279,7 @@ function QuizRunner({ items, onExit, onPause }) {
   const item = items[index];
   const isLast = index === items.length - 1;
 
-  const handleAnswer = ({ correct, user_answer, isInterim }) => {
+  const handleAnswer = ({ correct, user_answer, isInterim, half }) => {
     if (isInterim) return; // two-part items emit interim results between parts; only score the final
     if (answered) return;
     setAnswered(true);
@@ -2242,9 +2290,10 @@ function QuizRunner({ items, onExit, onPause }) {
       chapter: item.chapter,
       subject: item.subject,
       correct,
+      half: !!half,
       user_answer,
     });
-    setResults((r) => [...r, { item, correct, user_answer }]);
+    setResults((r) => [...r, { item, correct, half: !!half, user_answer }]);
   };
 
   const next = () => {
@@ -2304,9 +2353,9 @@ function QuizRunner({ items, onExit, onPause }) {
 
 // ---------- quiz: summary ----------
 function QuizSummary({ results, elapsedTime, onRestart, onDrillMisses }) {
-  const correct = results.filter((r) => r.correct).length;
+  const score = results.reduce((sum, r) => sum + (r.correct ? (r.half ? 0.5 : 1) : 0), 0);
   const total = results.length;
-  const pct = total ? Math.round((correct / total) * 100) : 0;
+  const pct = total ? Math.round((score / total) * 100) : 0;
   const misses = results.filter((r) => !r.correct);
 
   return (
@@ -2314,7 +2363,7 @@ function QuizSummary({ results, elapsedTime, onRestart, onDrillMisses }) {
       <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-6 text-center">
         <div className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Quiz complete</div>
         <div className="text-5xl font-bold mt-2">{pct}%</div>
-        <div className="text-sm text-[var(--text-muted)] mt-1">{correct} of {total} correct</div>
+        <div className="text-sm text-[var(--text-muted)] mt-1">{score % 1 === 0 ? score : score.toFixed(1)} of {total} correct</div>
         {elapsedTime && <div className="text-xs text-[var(--text-faint)] mt-1 font-mono">{elapsedTime}</div>}
       </div>
 
@@ -2583,18 +2632,19 @@ function StatsView() {
     const seenByQid = {};
 
     for (const a of attempts) {
+      const credit = a.correct ? (a.half ? 0.5 : 1) : 0;
       overall.total++;
-      if (a.correct) overall.correct++;
+      overall.correct += credit;
 
       const m = byMode[a.mode] ||= { correct: 0, total: 0 };
-      m.total++; if (a.correct) m.correct++;
+      m.total++; m.correct += credit;
 
       const fkey = a.file_id;
       const c = byChapter[fkey] ||= { correct: 0, total: 0, chapter: a.chapter, subject: a.subject };
-      c.total++; if (a.correct) c.correct++;
+      c.total++; c.correct += credit;
 
       const s = bySubject[a.subject] ||= { correct: 0, total: 0 };
-      s.total++; if (a.correct) s.correct++;
+      s.total++; s.correct += credit;
 
       seenByQid[a.question_id] = (seenByQid[a.question_id] || 0) + 1;
       if (!a.correct) missByQid[a.question_id] = (missByQid[a.question_id] || 0) + 1;
@@ -3385,26 +3435,30 @@ function ServerStatsPayload({ data }) {
   );
 }
 
-// ---------- question audit (pass 1: client-side) ----------
-function trimChoiceExplanations(choices) {
-  return choices.map((c) => {
-    // Strip " — explanation", " - explanation", ": explanation" patterns
-    // but only if what remains is still at least 3 chars (not just a letter).
-    const trimmed = c.replace(/\s*[—–]\s+.+$/, '').replace(/\s+-\s+.+$/, '');
-    return trimmed.length >= 3 ? trimmed : c;
-  });
+// ---------- hint system: split "Term — explanation" into base + hint ----------
+function splitHint(text) {
+  // Match " — explanation", " – explanation", or " - explanation"
+  // but only if what's before the separator is at least 3 chars.
+  const match = text.match(/^(.{3,}?)\s+[—–]\s+(.+)$/) || text.match(/^(.{3,}?)\s+-\s+(.+)$/);
+  if (match) return { base: match[1].trim(), hint: match[2].trim() };
+  return { base: text, hint: null };
 }
 
+function choiceHasHint(text) {
+  return splitHint(text).hint !== null;
+}
+
+// ---------- question audit (pass 1: client-side) ----------
 function auditPass1(mcQuestions) {
-  let trimCount = 0;
-  const cleaned = mcQuestions.map((q) => {
-    if (!q.choices?.length) return q;
-    const trimmed = trimChoiceExplanations(q.choices);
-    const changed = trimmed.some((c, i) => c !== q.choices[i]);
-    if (changed) trimCount++;
-    return changed ? { ...q, choices: trimmed } : q;
-  });
-  return { cleaned, trimCount };
+  let withHints = 0;
+  let withoutHints = 0;
+  for (const q of mcQuestions) {
+    if (!q.choices?.length) continue;
+    const hasAny = q.choices.some(choiceHasHint);
+    if (hasAny) withHints++;
+    else withoutHints++;
+  }
+  return { withHints, withoutHints };
 }
 
 // ---------- question audit modal ----------
@@ -3413,7 +3467,7 @@ function AuditModal({ chapter, onClose }) {
   const [phase, setPhase] = useState('loading'); // loading | pass1 | verifying | done
   const [mc, setMc] = useState([]);
   const [twoPart, setTwoPart] = useState([]);
-  const [trimCount, setTrimCount] = useState(0);
+  const [hintStats, setHintStats] = useState(null); // { withHints, withoutHints }
   const [flags, setFlags] = useState([]); // [{index, suggested_index, reason, q}]
   const [verifyProgress, setVerifyProgress] = useState('');
   const [status, setStatus] = useState(null);
@@ -3424,28 +3478,10 @@ function AuditModal({ chapter, onClose }) {
     api.getChapter(chapter.id).then((full) => {
       if (cancelled) return;
       const allMc = Array.isArray(full.mc) ? full.mc : [];
-      // Also collect MC questions embedded in two-part items for auditing
       const tp = Array.isArray(full.two_part) ? full.two_part : [];
       setMc(allMc);
       setTwoPart(tp);
-      const { cleaned, trimCount: tc } = auditPass1(allMc);
-      setTrimCount(tc);
-      setMc(cleaned);
-      // Also trim two-part choices
-      const cleanedTp = tp.map((item) => {
-        if (!item.parts) return item;
-        let changed = false;
-        const newParts = item.parts.map((p) => {
-          if (!p.choices?.length) return p;
-          const trimmed = trimChoiceExplanations(p.choices);
-          if (trimmed.some((c, i) => c !== p.choices[i])) { changed = true; return { ...p, choices: trimmed }; }
-          return p;
-        });
-        return changed ? { ...item, parts: newParts } : item;
-      });
-      const tpTrimmed = cleanedTp.filter((t, i) => t !== tp[i]).length;
-      setTwoPart(cleanedTp);
-      setTrimCount((prev) => prev + tpTrimmed);
+      setHintStats(auditPass1(allMc));
       setPhase('pass1');
     }).catch((e) => {
       setStatus({ kind: 'err', msg: e.message });
@@ -3453,18 +3489,6 @@ function AuditModal({ chapter, onClose }) {
     });
     return () => { cancelled = true; };
   }, [chapter.id, api]);
-
-  const applyTrims = async () => {
-    setStatus({ kind: 'info', msg: 'Pushing trimmed choices…' });
-    try {
-      await api.putChapterStage(chapter.id, 'mc', mc);
-      if (twoPart.length) await api.putChapterStage(chapter.id, 'two_part', twoPart);
-      setStatus({ kind: 'ok', msg: `Trimmed ${trimCount} question(s). Saved.` });
-      setTrimCount(0);
-    } catch (e) {
-      setStatus({ kind: 'err', msg: e.message });
-    }
-  };
 
   const runVerify = async () => {
     if (!apiKey) { setStatus({ kind: 'err', msg: 'Set a Gemini API key in Settings first.' }); return; }
@@ -3540,19 +3564,16 @@ function AuditModal({ chapter, onClose }) {
         {(phase === 'pass1' || phase === 'done') && (
           <div className="space-y-3">
             <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-xl p-4">
-              <h3 className="text-sm font-semibold mb-1">Pass 1 — Choice trimming</h3>
-              <p className="text-sm text-[var(--text-muted)]">
-                {trimCount > 0
-                  ? `Found ${trimCount} question(s) with explanatory text in choices.`
-                  : 'All choices look clean — no trimming needed.'}
-              </p>
-              {trimCount > 0 && (
-                <button
-                  onClick={applyTrims}
-                  className="mt-2 text-xs bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] rounded px-3 py-1.5"
-                >
-                  Apply trims
-                </button>
+              <h3 className="text-sm font-semibold mb-1">Pass 1 — Hint coverage</h3>
+              {hintStats && (
+                <div className="text-sm text-[var(--text-muted)] space-y-1">
+                  <p>
+                    <span className="text-[var(--success-text)]">{hintStats.withHints}</span> question{hintStats.withHints === 1 ? '' : 's'} have hint text (Term — explanation).
+                  </p>
+                  <p>
+                    <span className={hintStats.withoutHints > 0 ? 'text-[var(--warning-text)]' : 'text-[var(--text-faint)]'}>{hintStats.withoutHints}</span> question{hintStats.withoutHints === 1 ? '' : 's'} have no hint — Hint button won't appear for these.
+                  </p>
+                </div>
               )}
             </div>
 

@@ -56,19 +56,26 @@ that responses don't truncate even for chapters with many terms.
 
 ---
 
-## Choice formatting & correctness rules (applies to all MC stages)
+## Choice formatting & hint system (applies to all MC stages)
 
 Every MC stage (2, 3, 4) must follow these rules. They are appended to each stage's
 system instruction in `app.js`.
 
-> **CHOICE FORMATTING RULES:**
-> - Each choice must be SHORT — just the concept name, term, value, or brief phrase.
-> - NEVER add explanatory text, justifications, or definitions after a dash, colon, or
->   parenthetical in a choice.
->   Bad: `"Associative learning — both involve linking two events"`.
->   Good: `"Associative learning"`.
-> - All four choices should be roughly the same length and style so the correct answer
->   does not stand out visually.
+The app has a **hint system**: the text after an em-dash (`—`) in each choice is hidden by
+default. Students see only the term/concept name. If they tap the **Hint** button, all
+four hints are revealed — but getting the answer right after using a hint only earns
+**half credit**. This makes the hints valuable for learning without giving away free
+points.
+
+> **CHOICE FORMATTING RULES (hint system):**
+> - Format each choice as: `"Term — brief explanatory hint"` (using an em-dash `—`).
+> - The hint portion should be a short clause that helps a struggling student. Example:
+>   `"Associative learning — linking two events via stimulus-response pairing"`.
+> - **All four hints must sound equally plausible.** The hint text must NOT make the
+>   correct answer obvious by itself — a half-prepared student should still have to
+>   think even after reading the hints.
+> - All four choices (including hint text) should be roughly the same length and style
+>   so the correct answer does not stand out visually.
 >
 > **CORRECTNESS CHECK:**
 > - Before finalizing, verify that the choice at `correct_index` is genuinely and
