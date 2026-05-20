@@ -1847,8 +1847,10 @@ function FlagQuestionModal({ item, onClose }) {
     setBusy(true); setStatus(null);
     try {
       if (session && chapterId) {
-        // Push to the chapter's server-side flags list.
-        await api.addChapterFlag(chapterId, { question_id: item.id, description: description.trim() });
+        // Push to the chapter's server-side flags list. Best-effort — the local
+        // queue is the source of truth, so we don't fail the flag if this 404s
+        // (e.g. server hasn't deployed the flag endpoints yet).
+        try { await api.addChapterFlag(chapterId, { question_id: item.id, description: description.trim() }); } catch {}
       }
       // Also queue locally so the user can process flags on their own copy even
       // without a chapter on the server. Pipeline reads from both.
