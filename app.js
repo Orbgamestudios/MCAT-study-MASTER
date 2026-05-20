@@ -118,6 +118,7 @@ function playSfx(name) {
     if (!_sfxCache[name]) {
       _sfxCache[name] = new Audio(`assets/${name}.mp3`);
       _sfxCache[name].preload = 'auto';
+      _sfxCache[name].volume = 0.75; // 25% softer than file's native level
     }
     const a = _sfxCache[name];
     a.currentTime = 0;
@@ -150,8 +151,28 @@ function _beep(freq, durMs, { vol = 0.08, type = 'sine', startAt = 0 } = {}) {
   osc.stop(t0 + durMs / 1000 + 0.02);
 }
 
-// Soft "tick" for any HUD button tap.
-function sfxTap() { _beep(900, 50, { vol: 0.05, type: 'triangle' }); }
+// Percussive "tick" for any HUD button tap — short band-pass-filtered noise burst.
+function sfxTap() {
+  const ctx = _ctx();
+  if (!ctx) return;
+  const t0 = ctx.currentTime;
+  const dur = 0.035;
+  const buf = ctx.createBuffer(1, Math.max(1, Math.floor(ctx.sampleRate * dur)), ctx.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / data.length);
+  const src = ctx.createBufferSource();
+  src.buffer = buf;
+  const filter = ctx.createBiquadFilter();
+  filter.type = 'bandpass';
+  filter.frequency.value = 2800;
+  filter.Q.value = 3;
+  const gain = ctx.createGain();
+  gain.gain.setValueAtTime(0.18, t0);
+  gain.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+  src.connect(filter).connect(gain).connect(ctx.destination);
+  src.start(t0);
+  src.stop(t0 + dur + 0.01);
+}
 
 // Ascending 3-note arpeggio when a quiz starts.
 function sfxQuizStart() {
@@ -2729,55 +2750,30 @@ function HomeView({ onGoToStudy }) {
   return (
     <div className="space-y-4">
       {/* Speech-bubble + bird hero. Bird is intentionally large and overlaps the
-          bottom-right; bubble tail points to its mouth. */}
-      <div className="relative bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl px-4 sm:px-6 pt-5 sm:pt-6 pb-2 sm:pb-3 overflow-hidden min-h-[280px] sm:min-h-[340px]">
+          bottom-right corner of the card. */}
+      <div className="relative bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl px-4 sm:px-6 pt-5 sm:pt-6 pb-2 sm:pb-3 overflow-hidden min-h-[520px] sm:min-h-[620px]">
         <div className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Welcome back</div>
         <h1 className="text-2xl sm:text-3xl font-bold text-[var(--text-strong)] mb-3">@{username}</h1>
 
-        {/* Speech bubble — sits in upper-left, ~60% width, tail points down-right toward bird */}
+        {/* Speech bubble — upper-left, ~60% width, soft border matching other cards,
+            with the bottom-right corner cut square so it visually "points" toward the bird. */}
         <div className="relative w-[78%] sm:w-[62%] max-w-md">
-          <div className="bg-[var(--bg-elev)] border-2 border-[var(--text-strong)] rounded-3xl px-4 py-3 sm:px-5 sm:py-4 text-[var(--text)] text-sm sm:text-base leading-relaxed shadow-sm">
+          <div className="bg-[var(--bg-elev)] border border-[var(--border-soft)] rounded-2xl rounded-br-none px-4 py-3 sm:px-5 sm:py-4 text-[var(--text)] text-sm sm:text-base leading-relaxed">
             {quote}
           </div>
-          {/* Tail: black outline triangle + inner fill triangle, pointing toward bird (down-right). */}
-          <div
-            aria-hidden="true"
-            className="absolute"
-            style={{
-              right: '-2px',
-              bottom: '-22px',
-              width: 0,
-              height: 0,
-              borderTop: '24px solid var(--text-strong)',
-              borderLeft: '14px solid transparent',
-              borderRight: '0 solid transparent',
-            }}
-          />
-          <div
-            aria-hidden="true"
-            className="absolute"
-            style={{
-              right: '4px',
-              bottom: '-15px',
-              width: 0,
-              height: 0,
-              borderTop: '18px solid var(--bg-elev)',
-              borderLeft: '10px solid transparent',
-              borderRight: '0 solid transparent',
-            }}
-          />
         </div>
 
-        {/* Bird — large, anchored bottom-right, partially extending below the card edge */}
+        {/* Bird — 2.5× the previous size, anchored bottom-right, extends past the card edge */}
         <img
           src="assets/bird.png"
           alt=""
           draggable="false"
           className="absolute select-none pointer-events-none"
           style={{
-            right: '-18px',
-            bottom: '-30px',
-            width: 'clamp(180px, 42vw, 260px)',
+            right: '-40px',
+            bottom: '-60px',
+            width: 'clamp(450px, 105vw, 650px)',
+            maxWidth: 'none',
           }}
         />
       </div>
