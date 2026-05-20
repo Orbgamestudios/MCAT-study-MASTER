@@ -24,6 +24,7 @@ const KEYS = {
   session: 'mcat:session',
   pendingSync: 'mcat:pendingSync',
   flagQueue: 'mcat:flagQueue', // Flagged questions awaiting Gemini fix (rate-limit safe)
+  reaudit: 'mcat:reaudit', // boolean — show Audit button on already-audited chapters
 };
 
 const THEMES = ['dark', 'light', 'warm'];
@@ -519,7 +520,7 @@ function makeClient(getKey) {
   const FIX_SCHEMA = {
     type: 'OBJECT',
     properties: {
-      action: { type: 'STRING' }, // 'edit' | 'delete' | 'skip'
+      action: { type: 'STRING' }, // 'edit' | 'skip' (no delete — every question must stay)
       question: { type: 'STRING' },
       choices: { type: 'ARRAY', items: { type: 'STRING' } },
       correct_index: { type: 'INTEGER' },
@@ -540,9 +541,12 @@ function makeClient(getKey) {
       systemInstruction:
         'You are a meticulous MCAT question editor. A user has flagged an MC question as having a problem. ' +
         'Read their description carefully and apply the smallest fix that addresses it. ' +
-        'Set action to "edit" if you can fix the question (return the full corrected question, all four choices, the corrected ' +
-        'correct_index, and a 1-2 sentence explanation). Set action to "delete" if the question is irredeemable. ' +
-        'Set action to "skip" if the flag does not describe a real problem. Always provide a short rationale.',
+        'Set action to "edit" and return the full corrected question (stem, all four choices, the corrected ' +
+        'correct_index, and a 1-2 sentence explanation). ' +
+        'NEVER delete questions — every question must be preserved (especially term-coverage questions). ' +
+        'If the flag does not describe a real problem, set action to "skip". ' +
+        'If a question seems irredeemable, still edit it into something usable rather than deleting. ' +
+        'Always provide a short rationale.',
       contents: [{ role: 'user', parts: [{ text:
         `Chapter: ${chapterContext || '(unknown)'}\n\n` +
         `--- Flagged question ---\n` +
@@ -550,17 +554,73 @@ function makeClient(getKey) {
         `Current correct: ${currentCorrect} (index ${question.correct_index})\n` +
         `Current explanation: ${question.explanation || '(none)'}\n\n` +
         `--- User's flag ---\n${flagDescription}\n\n` +
-        `Decide on action and (if editing) return the full corrected question.`,
+        `Decide on action ("edit" or "skip" only — never delete) and return the full corrected question if editing.`,
       }] }],
       responseSchema: FIX_SCHEMA,
     });
     return extractJson(resp);
   }
 
+  // ---- audit: batch correctness check via Gemini ----
+  const AUDIT_SCHEMA = {
+    type: 'OBJECT',
+    properties: {
+      results: {
+        type: 'ARRAY',
+        items: {
+          type: 'OBJECT',
+          properties: {
+            index: { type: 'INTEGER' },
+            correct: { type: 'BOOLEAN' },
+            suggested_index: { type: 'INTEGER' },
+            reason: { type: 'STRING' },
+          },
+          required: ['index', 'correct', 'suggested_index', 'reason'],
+        },
+      },
+    },
+    required: ['results'],
+  };
+
+  async function auditQuestions(questions) {
+    const BATCH = 8;
+    const all = [];
+    for (let i = 0; i < questions.length; i += BATCH) {
+      const batch = questions.slice(i, i + BATCH);
+      const listing = batch.map((q, idx) => {
+        const letter = ['A', 'B', 'C', 'D'][q.correct_index] || '?';
+        return `--- Question ${i + idx + 1} ---\n` +
+          `Stem: ${q.question}\n` +
+          `A. ${q.choices[0]}\nB. ${q.choices[1]}\nC. ${q.choices[2]}\nD. ${q.choices[3]}\n` +
+          `Claimed correct: ${letter} (index ${q.correct_index})\n` +
+          `Explanation: ${q.explanation}`;
+      }).join('\n\n');
+      const resp = await generate({
+        maxOutputTokens: 8192,
+        disableThinking: true,
+        systemInstruction:
+          'You are a meticulous MCAT question reviewer. For each question, evaluate whether the choice at correct_index ' +
+          'is genuinely and unambiguously the best answer. Consider whether the stem is clear, whether any distractor ' +
+          'could also be correct, and whether the explanation matches the indicated answer. ' +
+          'Return one result per question in the same order. NEVER suggest deletion — at worst suggest a different ' +
+          'correct_index, since every question must be preserved.',
+        contents: [{ role: 'user', parts: [{ text:
+          `Review these ${batch.length} MC questions. For each, say whether the claimed correct answer is actually correct.\n\n${listing}`,
+        }] }],
+        responseSchema: AUDIT_SCHEMA,
+      });
+      const data = extractJson(resp);
+      (data.results || []).forEach((r, idx) => {
+        all.push({ ...r, index: i + idx });
+      });
+    }
+    return all;
+  }
+
   return {
     uploadFile, deleteFile, generate, ping,
     extractFromPdf, generateMCQuestions, generateShortAnswers, generateTermQuestions, generateTwoPartQuestions,
-    fixFlaggedQuestion,
+    fixFlaggedQuestion, auditQuestions,
   };
 }
 
@@ -689,6 +749,11 @@ function AppProvider({ children }) {
   const [theme, setThemeState] = useState(() => storage.get(KEYS.theme, 'dark'));
   const [github, setGithubState] = useState(() => ({ ...DEFAULT_GITHUB, ...(storage.get(KEYS.github, {}) || {}) }));
   const [pushStatus, setPushStatus] = useState({ state: 'idle', lastAt: null, error: null });
+  const [reauditEnabled, setReauditEnabledState] = useState(() => !!storage.get(KEYS.reaudit, false));
+  const setReauditEnabled = useCallback((v) => {
+    storage.set(KEYS.reaudit, !!v);
+    setReauditEnabledState(!!v);
+  }, []);
 
   const setGithub = useCallback((patch) => {
     setGithubState((prev) => {
@@ -885,11 +950,13 @@ function AppProvider({ children }) {
       github, setGithub, pushBank, pushStatus,
       session, setSession, api, pendingSync, flushSync, syncBusy, syncError,
       client,
+      reauditEnabled, setReauditEnabled,
     }),
     [apiKey, setApiKey, files, setFiles, extractions, setExtraction, questions, setQuestionsFor,
      attempts, addAttempt, clearAttempts, staticBank, useStaticBank, readOnly, theme, setTheme,
      github, setGithub, pushBank, pushStatus,
-     session, setSession, api, pendingSync, flushSync, syncBusy, syncError, client]
+     session, setSession, api, pendingSync, flushSync, syncBusy, syncError, client,
+     reauditEnabled, setReauditEnabled]
   );
   return <AppCtx.Provider value={value}>{children}</AppCtx.Provider>;
 }
@@ -2856,7 +2923,7 @@ function ThemeSwitcher() {
 
 // ---------- settings ----------
 function SettingsPanel({ onClose }) {
-  const { theme, setTheme, apiKey, setApiKey, client, session, pendingSync, syncBusy, syncError, flushSync } = useApp();
+  const { theme, setTheme, apiKey, setApiKey, client, session, pendingSync, syncBusy, syncError, flushSync, reauditEnabled, setReauditEnabled } = useApp();
   const [keyVal, setKeyVal] = useState(apiKey || '');
   const [keyShow, setKeyShow] = useState(false);
   const [keyErr, setKeyErr] = useState('');
@@ -2987,6 +3054,22 @@ function SettingsPanel({ onClose }) {
         <p className="text-[11px] text-[var(--text-faint)] mt-2">
           Get a free key at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener" className="text-[var(--accent-text)] underline">aistudio.google.com/apikey</a>. Stored only in this browser.
         </p>
+      </div>
+
+      <div>
+        <div className="text-xs uppercase tracking-wide text-[var(--text-muted)] mb-2">Audit</div>
+        <label className="flex items-center justify-between gap-3 bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg px-3 py-2.5 cursor-pointer">
+          <div className="text-sm min-w-0">
+            <div className="text-[var(--text)]">Allow re-auditing</div>
+            <div className="text-[11px] text-[var(--text-faint)] mt-0.5">Show the Audit button on chapters that have already been audited.</div>
+          </div>
+          <input
+            type="checkbox"
+            checked={reauditEnabled}
+            onChange={(e) => setReauditEnabled(e.target.checked)}
+            className="w-4 h-4 shrink-0"
+          />
+        </label>
       </div>
     </div>
   );
@@ -3140,9 +3223,8 @@ function FlagFixesPanel() {
               correct_index: Number.isInteger(fix.correct_index) ? fix.correct_index : q.correct_index,
               explanation: fix.explanation || q.explanation,
             } : q);
-          } else if (fix.action === 'delete') {
-            nextMc = qbank.mc.filter((q) => q.id !== flag.question_id);
           }
+          // No delete branch — every question (especially term-coverage) must be preserved.
           if (nextMc !== qbank.mc) {
             setQuestionsFor(fileId, { ...qbank, mc: nextMc });
             // Push to server too if this chapter lives on the cloud bank.
@@ -3154,7 +3236,7 @@ function FlagFixesPanel() {
 
         const updated = current.find((f) => f.id === flag.id);
         if (updated) {
-          updated.status = fix.action === 'skip' ? 'skipped' : (fix.action + 'd');
+          updated.status = fix.action === 'edit' ? 'edited' : 'skipped';
           updated.rationale = fix.rationale;
           updated.resolved_at = Date.now();
         }
@@ -3657,6 +3739,152 @@ function ServerStatsPayload({ data }) {
 }
 
 
+// ---------- audit modal: Gemini correctness check (no deletion) ----------
+function AuditModal({ chapter, onClose }) {
+  const { api, client, apiKey, files, setQuestionsFor, questions } = useApp();
+  const [phase, setPhase] = useState('loading'); // loading | ready | verifying | done
+  const [mc, setMc] = useState([]);
+  const [flags, setFlags] = useState([]); // [{index, suggested_index, reason, q}]
+  const [status, setStatus] = useState(null);
+  const [applied, setApplied] = useState(new Set());
+
+  useEffect(() => {
+    let cancelled = false;
+    api.getChapter(chapter.id).then((full) => {
+      if (cancelled) return;
+      setMc(Array.isArray(full.mc) ? full.mc : []);
+      setPhase('ready');
+    }).catch((e) => {
+      setStatus({ kind: 'err', msg: e.message });
+      setPhase('ready');
+    });
+    return () => { cancelled = true; };
+  }, [chapter.id, api]);
+
+  const localFile = files.find((f) => f.chapter_id === chapter.id);
+
+  const runVerify = async () => {
+    if (!apiKey) { setStatus({ kind: 'err', msg: 'Add a Gemini API key in Settings first.' }); return; }
+    setPhase('verifying'); setFlags([]); setStatus({ kind: 'info', msg: `Checking ${mc.length} MC questions…` });
+    try {
+      const mcOnly = mc.filter((q) => q.mode === 'mc' && q.choices?.length === 4);
+      const results = await client.auditQuestions(mcOnly);
+      const flagged = results.filter((r) => !r.correct).map((r) => ({ ...r, q: mcOnly[r.index] }));
+      setFlags(flagged);
+      setPhase('done');
+      // Mark the chapter as audited even if no issues found.
+      try { await api.putChapterStage(chapter.id, 'audited', { ts: Date.now() }); } catch {}
+      if (!flagged.length) setStatus({ kind: 'ok', msg: 'All questions verified — no issues found!' });
+      else setStatus({ kind: 'warn', msg: `${flagged.length} question(s) may have wrong correct_index.` });
+    } catch (e) {
+      setStatus({ kind: 'err', msg: e.message });
+      setPhase('ready');
+    }
+  };
+
+  const acceptFix = async (flag) => {
+    const updated = mc.map((q) => q === flag.q ? { ...q, correct_index: flag.suggested_index } : q);
+    setMc(updated);
+    try {
+      await api.putChapterStage(chapter.id, 'mc', updated);
+      // Also patch the local library copy if the user has this chapter downloaded.
+      if (localFile) {
+        const qbank = questions[localFile.file_id];
+        if (qbank?.mc) {
+          const localUpdated = qbank.mc.map((q) =>
+            q.id === flag.q.id ? { ...q, correct_index: flag.suggested_index } : q
+          );
+          setQuestionsFor(localFile.file_id, { ...qbank, mc: localUpdated });
+        }
+      }
+      setApplied((s) => new Set(s).add(flag.q.id));
+      setStatus({ kind: 'ok', msg: `Fixed correct_index for "${flag.q.question.slice(0, 50)}…"` });
+    } catch (e) {
+      setStatus({ kind: 'err', msg: e.message });
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-start justify-center p-3 sm:p-6 pt-10 sm:pt-16 overflow-y-auto" onClick={onClose}>
+      <div className="w-full max-w-2xl bg-[var(--bg)] border border-[var(--border)] rounded-2xl p-4 sm:p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between">
+          <h2 className="font-semibold text-[var(--text-strong)]">Audit: {chapter.title}</h2>
+          <button onClick={onClose} className="text-xs px-2 py-1 border border-[var(--border)] rounded hover:bg-[var(--bg-hover)]">Close</button>
+        </div>
+
+        {status && (
+          <div className={`text-sm rounded-lg px-3 py-2 ${
+            status.kind === 'ok' ? 'bg-[var(--success-bg)] text-[var(--success-text)]' :
+            status.kind === 'err' ? 'bg-[var(--danger-bg)] text-[var(--danger-text)]' :
+            status.kind === 'warn' ? 'bg-[var(--warning-bg)] text-[var(--warning-text)]' :
+            'bg-[var(--accent-soft)] text-[var(--accent-text)]'
+          }`}>{status.msg}</div>
+        )}
+
+        {phase === 'loading' && <div className="text-sm text-[var(--text-muted)]">Loading chapter…</div>}
+
+        {phase === 'ready' && (
+          <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-xl p-4">
+            <p className="text-sm text-[var(--text-muted)] mb-2">
+              Send {mc.filter((q) => q.mode === 'mc' && q.choices?.length === 4).length} MC questions to Gemini to verify that <code>correct_index</code> is right. Questions are never deleted — at worst the correct answer index is changed.
+            </p>
+            <button
+              onClick={runVerify}
+              disabled={!apiKey}
+              className={`text-xs rounded px-3 py-1.5 ${apiKey
+                ? 'bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)]'
+                : 'bg-[var(--bg-elev)] text-[var(--text-faint)] cursor-not-allowed'}`}
+            >
+              {apiKey ? 'Run audit' : 'Needs API key'}
+            </button>
+          </div>
+        )}
+
+        {phase === 'verifying' && <div className="text-sm text-[var(--accent-text)]">… running audit, this may take a minute.</div>}
+
+        {phase === 'done' && flags.length > 0 && (
+          <div className="space-y-3">
+            <h3 className="text-sm font-semibold text-[var(--warning-text)]">{flags.length} flagged question(s)</h3>
+            {flags.map((flag, i) => {
+              const done = applied.has(flag.q.id);
+              const letters = ['A', 'B', 'C', 'D'];
+              return (
+                <div key={i} className={`bg-[var(--bg-card)] border rounded-xl p-4 text-sm space-y-2 ${done ? 'border-[var(--success-border)] opacity-60' : 'border-[var(--warning-text)]'}`}>
+                  <p className="font-medium">{flag.q.question}</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 text-xs">
+                    {flag.q.choices.map((c, ci) => (
+                      <div key={ci} className={`px-2 py-1 rounded ${
+                        ci === flag.q.correct_index ? 'bg-[var(--danger-bg)] line-through' :
+                        ci === flag.suggested_index ? 'bg-[var(--success-bg)] font-semibold' : 'bg-[var(--bg-elev)]'
+                      }`}>
+                        {letters[ci]}. {c}
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-xs text-[var(--text-muted)]">
+                    <span className="text-[var(--danger-text)]">Stored: {letters[flag.q.correct_index]}</span>
+                    {' → '}
+                    <span className="text-[var(--success-text)]">Suggested: {letters[flag.suggested_index]}</span>
+                    {' · '}{flag.reason}
+                  </p>
+                  {!done && (
+                    <div className="flex gap-2">
+                      <button onClick={() => acceptFix(flag)} className="text-xs bg-[var(--success-bg)] text-[var(--success-text)] border border-[var(--success-border)] rounded px-2 py-1 hover:opacity-80">Accept fix</button>
+                      <button onClick={() => setApplied((s) => new Set(s).add(flag.q.id))} className="text-xs text-[var(--text-muted)] border border-[var(--border)] rounded px-2 py-1 hover:bg-[var(--bg-hover)]">Skip</button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        <div className="text-xs text-[var(--text-faint)]">{mc.length} MC question(s)</div>
+      </div>
+    </div>
+  );
+}
+
 // ---------- collaborative bank (chapters) ----------
 function StageDot({ stage, label }) {
   const done = stage?.done;
@@ -3680,7 +3908,7 @@ function StageDot({ stage, label }) {
   );
 }
 
-function ChapterRow({ chapter, onDownload, onContribute, busy, downloaded, canContribute }) {
+function ChapterRow({ chapter, onDownload, onContribute, onAudit, busy, downloaded, canContribute, reauditEnabled }) {
   const ago = (() => {
     const ms = Date.now() - chapter.updated_at;
     const m = Math.round(ms / 60000);
@@ -3756,15 +3984,31 @@ function ChapterRow({ chapter, onDownload, onContribute, busy, downloaded, canCo
             </span>
           )
         )}
+        {chapter.stages.mc.done && canContribute && (!chapter.audited_at || reauditEnabled) && (
+          <button
+            onClick={onAudit}
+            disabled={!!busy}
+            title={chapter.audited_at ? `Already audited by @${chapter.audited_by}. Re-audit enabled in Settings.` : 'Check that correct_index is right for every MC question'}
+            className="text-xs px-3 py-1.5 border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--bg-hover)] disabled:opacity-40 rounded whitespace-nowrap"
+          >
+            {chapter.audited_at ? 'Re-audit' : 'Audit'}
+          </button>
+        )}
+        {chapter.audited_at && !reauditEnabled && (
+          <span className="text-[10px] uppercase tracking-wide text-[var(--success-text)]" title={`Audited by @${chapter.audited_by}`}>
+            ✓ audited
+          </span>
+        )}
       </div>
     </li>
   );
 }
 
 function BankTab() {
-  const { api, session, apiKey, client, setFiles, setExtraction, setQuestionsFor, files } = useApp();
+  const { api, session, apiKey, client, setFiles, setExtraction, setQuestionsFor, files, reauditEnabled } = useApp();
   const [data, setData] = useState(null);
   const [err, setErr] = useState('');
+  const [auditChapter, setAuditChapter] = useState(null);
   const [tick, setTick] = useState(0);
   const [busyId, setBusyId] = useState(null); // chapter id currently working
   const [busyKind, setBusyKind] = useState(null); // 'downloading' | 'contributing'
@@ -3970,9 +4214,11 @@ function BankTab() {
                   chapter={ch}
                   onDownload={() => downloadChapter(ch)}
                   onContribute={(stages) => contributeChapter(ch, stages)}
+                  onAudit={() => setAuditChapter(ch)}
                   busy={busyId === ch.id ? busyKind : null}
                   downloaded={localChapterIds.has(ch.id)}
                   canContribute={!!session && !!apiKey}
+                  reauditEnabled={reauditEnabled}
                 />
               ))}
             </ul>
@@ -3980,6 +4226,9 @@ function BankTab() {
         );
       })}
 
+      {auditChapter && (
+        <AuditModal chapter={auditChapter} onClose={() => { setAuditChapter(null); setTick((t) => t + 1); }} />
+      )}
     </div>
   );
 }

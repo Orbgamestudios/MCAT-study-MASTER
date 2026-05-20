@@ -29,13 +29,16 @@ queue has entries. Tapping **Run pipeline** processes each pending flag in seque
 the user's Gemini key.
 
 For each flag, Gemini receives the original question, the flag description, and the
-chapter label, then returns one of three actions:
+chapter label, then returns one of two actions:
 
 | action | meaning |
 | --- | --- |
 | `edit` | Returns a corrected stem / choices / correct_index / explanation. |
-| `delete` | The question is irredeemable — remove it from the chapter entirely. |
 | `skip` | The flag does not describe a real problem; leave the question unchanged. |
+
+**Questions are never deleted.** Term-coverage MC questions in particular must stay so
+that every key term in a chapter remains testable. If a question seems irredeemable,
+Gemini is instructed to edit it into something usable rather than delete.
 
 The fix is applied locally to the user's library, and if the chapter exists on the cloud
 bank, also pushed via `PUT /chapters/{id}/stage/mc`.
@@ -53,10 +56,11 @@ re-run.
 
 > You are a meticulous MCAT question editor. A user has flagged an MC question as having
 > a problem. Read their description carefully and apply the smallest fix that addresses
-> it. Set action to "edit" if you can fix the question (return the full corrected
-> question, all four choices, the corrected correct_index, and a 1-2 sentence
-> explanation). Set action to "delete" if the question is irredeemable. Set action to
-> "skip" if the flag does not describe a real problem. Always provide a short rationale.
+> it. Set action to "edit" and return the full corrected question (stem, all four choices,
+> the corrected correct_index, and a 1-2 sentence explanation). NEVER delete questions —
+> every question must be preserved (especially term-coverage questions). If the flag does
+> not describe a real problem, set action to "skip". If a question seems irredeemable,
+> still edit it into something usable rather than deleting. Always provide a short rationale.
 
 **User message:**
 
@@ -80,7 +84,7 @@ re-run.
 
 ```json
 {
-  "action": "edit | delete | skip",
+  "action": "edit | skip",
   "question": "string (only if action=edit)",
   "choices": ["A", "B", "C", "D"] /* only if action=edit */,
   "correct_index": 0,

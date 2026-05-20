@@ -280,12 +280,17 @@ update this document to match. Increment the `?v=N` cache-bust on `app.js` in
 generated questions are not retroactively updated; only new generation calls use the new
 prompt.
 
-## Fixing flagged questions
+## Two correction pipelines
 
-While taking a quiz, the user can flag any MC question with a short description of what's
-wrong with it. A separate pipeline (see `FLAG_FIXES.md`) feeds each flag to Gemini, which
-returns either an edit, a delete, or a skip. The pipeline is rate-limit aware — unprocessed
-flags stay queued in `localStorage` and can be retried the next day.
+There are two ways questions get fixed after generation, both Gemini-powered, neither
+ever deletes:
+
+- **Audit** (one-shot per chapter, from the Bank tab) — sweeps every MC question and
+  flags any where `correct_index` looks wrong. See `QUESTION_AUDIT.md`. Once a chapter is
+  audited, the button is hidden unless re-auditing is enabled in Settings.
+- **Flag pipeline** (per-question, user-driven) — students flag problems they encounter
+  during a quiz; Gemini edits each flagged question individually. See `FLAG_FIXES.md`.
+  Rate-limit aware: unprocessed flags stay queued in `localStorage` for the next session.
 
 ## Out-of-band processing (Claude Code, etc.)
 
