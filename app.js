@@ -1214,10 +1214,13 @@ function FileRow({ file, extraction, qbank, busyStage, onProcess, onRemove, read
   const [open, setOpen] = useState(false);
   const mcCount = qbank?.mc?.length || 0;
   const shortCount = qbank?.short?.length || 0;
+  const twoPartCount = qbank?.twoPart?.length || 0;
   const termsCount = extraction?.key_terms?.length || 0;
   const termCovered = qbank?.mc ? new Set(qbank.mc.filter((q) => q.from === 'term').map((q) => q.term)) : new Set();
   const termsNeeded = (extraction?.key_terms || []).filter((t) => !termCovered.has(t.term)).length;
-  const fullyProcessed = extraction && qbank?.mc && qbank?.short && qbank?.twoPart && termsNeeded === 0;
+  // Require non-empty arrays — an empty twoPart/mc/short means generation silently returned
+  // nothing (rate limit, malformed response), and the chapter still needs that stage.
+  const fullyProcessed = !!(extraction && mcCount > 0 && shortCount > 0 && twoPartCount > 0 && termsNeeded === 0);
 
   let badge;
   if (busyStage) {
@@ -1241,9 +1244,15 @@ function FileRow({ file, extraction, qbank, busyStage, onProcess, onRemove, read
             {file.filename} · {fmtBytes(file.size_bytes)}
             {qbank?.mc && (
               <span className="ml-2 text-[var(--text-muted)]">
-                · {mcCount} MC · {shortCount} short · {termsCount} terms
+                · {mcCount} MC · {shortCount} short · {twoPartCount} two-part · {termsCount} terms
                 {termsNeeded > 0 && (
                   <span className="text-[var(--warning-text-strong)]"> · {termsNeeded} terms need coverage</span>
+                )}
+                {twoPartCount === 0 && (
+                  <span className="text-[var(--warning-text-strong)]"> · two-part missing</span>
+                )}
+                {shortCount === 0 && (
+                  <span className="text-[var(--warning-text-strong)]"> · short missing</span>
                 )}
               </span>
             )}
@@ -1322,11 +1331,12 @@ function FileList() {
         ext = await client.extractFromPdf(file.file_uri, file.mime_type, `${file.subject} — ${file.chapter}`);
         setExtraction(file.file_id, ext);
       }
-      // Step 2: MC bank (skip if already cached)
+      // Step 2: MC bank (skip if already cached and non-empty)
       let mc = existingQ.mc;
-      if (!mc) {
+      if (!mc || !mc.length) {
         setBusy((b) => ({ ...b, [file.file_id]: 'generating MC' }));
         mc = await client.generateMCQuestions(file.file_uri, file.mime_type, ext, file.chapter);
+        if (!mc || !mc.length) throw new Error('MC generation returned no questions — try again');
       }
       // Step 3: term-coverage MC (one question per key_term). Skip if we've already
       // covered all current terms, or if a term run was already merged in mc.
@@ -1344,15 +1354,18 @@ function FileList() {
       }
       // Step 4: short answer bank
       let short = existingQ.short;
-      if (!short) {
+      if (!short || !short.length) {
         setBusy((b) => ({ ...b, [file.file_id]: 'generating short' }));
         short = await client.generateShortAnswers(file.file_uri, file.mime_type, ext, file.chapter);
+        if (!short || !short.length) throw new Error('Short-answer generation returned no questions — try again');
       }
-      // Step 5: two-part bank (skip if already cached)
+      // Step 5: two-part bank (regenerate if missing OR empty — earlier runs sometimes
+      // returned [] silently due to Gemini rate limits or malformed responses).
       let twoPart = existingQ.twoPart;
-      if (!twoPart) {
+      if (!twoPart || !twoPart.length) {
         setBusy((b) => ({ ...b, [file.file_id]: 'generating two-part' }));
         twoPart = await client.generateTwoPartQuestions(ext, file.chapter);
+        if (!twoPart || !twoPart.length) throw new Error('Two-part generation returned no questions — try again');
       }
       setQuestionsFor(file.file_id, { mc, short, twoPart, generated_at: new Date().toISOString() });
       markFile(file.file_id, { processError: null });
