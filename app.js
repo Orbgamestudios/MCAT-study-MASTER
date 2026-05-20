@@ -2813,6 +2813,99 @@ function StudyView() {
   return <QuizSummary results={results} elapsedTime={elapsedTime} onRestart={restart} onDrillMisses={drillMisses} />;
 }
 
+// ---------- home: bird hero (draggable for positioning, then locked) ----------
+const BIRD_POS_KEY = 'mcat:birdPos';
+const BIRD_DEFAULT = { right: -40, bottom: -60 }; // px, relative to card
+
+function BirdHero({ username, quote }) {
+  const cardRef = useRef(null);
+  const [pos, setPos] = useState(() => storage.get(BIRD_POS_KEY, BIRD_DEFAULT));
+  const dragStateRef = useRef(null);
+
+  const persist = (p) => { storage.set(BIRD_POS_KEY, p); };
+  const reset = () => { setPos(BIRD_DEFAULT); persist(BIRD_DEFAULT); };
+
+  // Pointer events unify touch + mouse on modern mobile browsers.
+  const onPointerDown = (e) => {
+    e.preventDefault();
+    dragStateRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      startRight: pos.right,
+      startBottom: pos.bottom,
+      moved: false,
+    };
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
+  };
+  const onPointerMove = (e) => {
+    const s = dragStateRef.current;
+    if (!s) return;
+    const dx = e.clientX - s.startX;
+    const dy = e.clientY - s.startY;
+    if (Math.abs(dx) + Math.abs(dy) > 3) s.moved = true;
+    // right grows when dragging LEFT (away from right edge)
+    // bottom grows when dragging UP
+    setPos({ right: Math.round(s.startRight - dx), bottom: Math.round(s.startBottom - dy) });
+  };
+  const onPointerUp = (e) => {
+    const s = dragStateRef.current;
+    if (s?.moved) persist(pos);
+    dragStateRef.current = null;
+    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch {}
+  };
+
+  return (
+    <div ref={cardRef} className="relative bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl px-4 sm:px-6 pt-5 sm:pt-6 pb-2 sm:pb-3 overflow-hidden min-h-[400px] sm:min-h-[460px]">
+      <div className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Welcome back</div>
+      <h1 className="text-2xl sm:text-3xl font-bold text-[var(--text-strong)] mb-3">@{username}</h1>
+
+      {/* Bird — BEHIND the speech bubble (z-0). */}
+      <img
+        src="assets/bird.png"
+        alt=""
+        draggable="false"
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
+        data-no-haptic
+        className="absolute select-none cursor-grab active:cursor-grabbing"
+        style={{
+          right: `${pos.right}px`,
+          bottom: `${pos.bottom}px`,
+          width: 'clamp(450px, 105vw, 650px)',
+          maxWidth: 'none',
+          touchAction: 'none',
+          zIndex: 0,
+          userSelect: 'none',
+          WebkitUserSelect: 'none',
+        }}
+      />
+
+      {/* Speech bubble — ABOVE the bird (z-10). */}
+      <div className="relative w-[78%] sm:w-[62%] max-w-md" style={{ zIndex: 10 }}>
+        <div className="bg-[var(--bg-elev)] border border-[var(--border-soft)] rounded-2xl rounded-br-none px-4 py-3 sm:px-5 sm:py-4 text-[var(--text)] text-sm sm:text-base leading-relaxed">
+          {quote}
+        </div>
+      </div>
+
+      {/* Coordinate readout — temporary; tells you what to send back so we can lock the bird. */}
+      <div className="absolute top-2 right-2 z-20 flex items-center gap-1">
+        <div className="bg-[var(--bg-elev)] border border-[var(--border-soft)] rounded-md px-2 py-1 text-[10px] font-mono text-[var(--text-muted)]">
+          right:{pos.right} · bottom:{pos.bottom}
+        </div>
+        <button
+          onClick={reset}
+          className="bg-[var(--bg-elev)] border border-[var(--border-soft)] rounded-md px-2 py-1 text-[10px] text-[var(--text-muted)] hover:bg-[var(--bg-hover)]"
+          title="Reset bird position"
+        >
+          reset
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ---------- home: recent activity feed ----------
 function HomeActivity() {
   const { api, session } = useApp();
@@ -2908,32 +3001,8 @@ function HomeView({ onGoToStudy }) {
 
   return (
     <div className="space-y-4">
-      {/* Speech-bubble + bird hero. */}
-      <div className="relative bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl px-4 sm:px-6 pt-5 sm:pt-6 pb-2 sm:pb-3 overflow-hidden min-h-[400px] sm:min-h-[460px]">
-        <div className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Welcome back</div>
-        <h1 className="text-2xl sm:text-3xl font-bold text-[var(--text-strong)] mb-3">@{username}</h1>
+      <BirdHero username={username} quote={quote} />
 
-        {/* Speech bubble — upper-left, ~60% width, soft border, bottom-right corner cut square. */}
-        <div className="relative w-[78%] sm:w-[62%] max-w-md">
-          <div className="bg-[var(--bg-elev)] border border-[var(--border-soft)] rounded-2xl rounded-br-none px-4 py-3 sm:px-5 sm:py-4 text-[var(--text)] text-sm sm:text-base leading-relaxed">
-            {quote}
-          </div>
-        </div>
-
-        {/* Bird — anchored higher in the card now (~180px above the bottom). */}
-        <img
-          src="assets/bird.png"
-          alt=""
-          draggable="false"
-          className="absolute select-none pointer-events-none"
-          style={{
-            right: '-40px',
-            bottom: '140px',
-            width: 'clamp(450px, 105vw, 650px)',
-            maxWidth: 'none',
-          }}
-        />
-      </div>
 
       <HomeActivity />
 
