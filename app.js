@@ -27,7 +27,26 @@ const KEYS = {
   reaudit: 'mcat:reaudit', // boolean — show Audit button on already-audited chapters
 };
 
-const THEMES = ['dark', 'light', 'warm'];
+const THEMES = ['dark', 'light', 'warm', 'green'];
+
+// Random motivational quotes — one is picked when the Home tab mounts.
+const QUOTES = [
+  "The MCAT doesn't reward perfection — it rewards persistence. Show up again today.",
+  "Every wrong answer today is a right answer locked in for test day.",
+  "You're not behind. You're exactly where the studying happens.",
+  "Small reps, every day. That's how 528s are built.",
+  "The best students aren't the smartest — they're the ones who came back tomorrow.",
+  "Confused is the feeling of learning. Lean into it.",
+  "Future-you, the one in the white coat, is grateful you opened this app.",
+  "One chapter at a time. One question at a time. That's the whole game.",
+  "Discomfort is the price of growth. Pay it gladly.",
+  "Mastery is just confusion that didn't quit.",
+  "Test day will reward the work nobody saw you do.",
+  "If it were easy, everyone would have an MD.",
+  "You don't need motivation — you need a streak. Start one today.",
+  "The brain that learns biochem is the same brain that built it. Trust it.",
+  "Slow is smooth. Smooth is fast. Smooth is a great MCAT score.",
+];
 
 const DEFAULT_GITHUB = {
   token: '',
@@ -90,6 +109,20 @@ async function pushBankToGithub(github, { files, extractions, questions }) {
   const sha = await ghGetSha(github);
   const msg = `Update bank: ${files.length} files (${new Date().toISOString().slice(0, 10)})`;
   return ghPutFile(github, content, sha, msg);
+}
+
+// ---------- sound effects ----------
+const _sfxCache = {};
+function playSfx(name) {
+  try {
+    if (!_sfxCache[name]) {
+      _sfxCache[name] = new Audio(`assets/${name}.mp3`);
+      _sfxCache[name].preload = 'auto';
+    }
+    const a = _sfxCache[name];
+    a.currentTime = 0;
+    a.play().catch(() => {}); // user-gesture / autoplay errors are non-fatal
+  } catch {}
 }
 
 const storage = {
@@ -1984,6 +2017,7 @@ function MCQuestion({ item, onAnswer, nextSlot, onFlag }) {
     if (picked !== null) return;
     setPicked(entry);
     const correct = entry.origIdx === item.q.correct_index;
+    playSfx(correct ? 'correct' : 'wrong');
     onAnswer({ correct, user_answer: entry.text });
   };
 
@@ -2165,6 +2199,7 @@ function SinglePart({ part, onAnswer, nextSlot, continueLabel }) {
   const submit = (entry) => {
     if (picked !== null) return;
     setPicked(entry);
+    playSfx(entry.origIdx === part.correct_index ? 'correct' : 'wrong');
   };
 
   const onContinue = () => {
@@ -2547,6 +2582,16 @@ function StudyView() {
   const timerRefHolder = useRef(null);
 
   const start = (picked) => { setItems(picked); setResults([]); setElapsedTime('0:00'); setPhase('active'); };
+
+  // Allow HomeView (or any other view) to launch a quiz inside this StudyView via event.
+  useEffect(() => {
+    const onLaunch = (e) => {
+      const picked = e.detail?.items;
+      if (Array.isArray(picked) && picked.length) start(picked);
+    };
+    window.addEventListener('mcat:startQuiz', onLaunch);
+    return () => window.removeEventListener('mcat:startQuiz', onLaunch);
+  }, []);
   const end = (r, time) => { setResults(r); setElapsedTime(time || '0:00'); setPhase('summary'); };
   const restart = () => { setItems([]); setResults([]); setPhase('launcher'); timerRefHolder.current = null; };
   const drillMisses = () => {
@@ -2583,6 +2628,96 @@ function StudyView() {
     );
   }
   return <QuizSummary results={results} elapsedTime={elapsedTime} onRestart={restart} onDrillMisses={drillMisses} />;
+}
+
+// ---------- home view ----------
+function HomeView({ onGoToStudy }) {
+  const { session, files, questions, extractions, attempts } = useApp();
+  const username = session?.username || 'student';
+
+  // Quote rotates once per page load. useMemo on [] freezes it for the session.
+  const quote = useMemo(() => QUOTES[Math.floor(Math.random() * QUOTES.length)], []);
+
+  // Pick 10 questions: missed ones from chapters with the lowest accuracy.
+  const suggested = useMemo(() => {
+    // Per-chapter accuracy from attempts.
+    const byChapter = {};
+    for (const a of attempts) {
+      const key = a.file_id;
+      if (!byChapter[key]) byChapter[key] = { correct: 0, total: 0 };
+      byChapter[key].total++;
+      if (a.correct) byChapter[key].correct++;
+    }
+    const chapterAcc = Object.entries(byChapter).map(([fid, s]) => ({
+      fid, acc: s.total ? s.correct / s.total : 1, total: s.total,
+    }));
+    chapterAcc.sort((a, b) => a.acc - b.acc);
+    const weakestIds = new Set(chapterAcc.slice(0, 3).map((c) => c.fid));
+
+    const fullPool = buildPool({ files, questions, extractions, attempts }, 'mc');
+    const wrongIds = new Set();
+    for (const a of attempts) if (!a.correct) wrongIds.add(a.question_id);
+
+    // Priority: missed questions from weakest chapters → other misses → weakest chapter fillers
+    const missesFromWeak = fullPool.filter((x) => wrongIds.has(x.id) && weakestIds.has(x.file_id));
+    const otherMisses = fullPool.filter((x) => wrongIds.has(x.id) && !weakestIds.has(x.file_id));
+    const weakFiller = fullPool.filter((x) => weakestIds.has(x.file_id) && !wrongIds.has(x.id));
+
+    const combined = [...shuffle(missesFromWeak), ...shuffle(otherMisses), ...shuffle(weakFiller)];
+    return combined.slice(0, 10);
+  }, [files, questions, extractions, attempts]);
+
+  const launch = () => {
+    if (!suggested.length) return;
+    window.dispatchEvent(new CustomEvent('mcat:startQuiz', { detail: { items: suggested } }));
+    onGoToStudy?.();
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="relative bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-6 overflow-hidden">
+        <div className="flex items-start gap-3 sm:gap-5">
+          <div className="flex-1 min-w-0 space-y-3">
+            <div>
+              <div className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Welcome back</div>
+              <h1 className="text-2xl sm:text-3xl font-bold text-[var(--text-strong)]">@{username}</h1>
+            </div>
+            {/* Speech bubble */}
+            <div className="relative bg-[var(--bg-elev)] border border-[var(--border)] rounded-2xl rounded-bl-sm px-4 py-3 text-[var(--text)] text-sm sm:text-base leading-relaxed">
+              {quote}
+            </div>
+          </div>
+          <img
+            src="assets/bird.png"
+            alt=""
+            className="w-24 sm:w-32 md:w-40 shrink-0 select-none"
+            draggable="false"
+          />
+        </div>
+      </div>
+
+      {suggested.length > 0 ? (
+        <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-5 space-y-3">
+          <div>
+            <h2 className="font-semibold text-[var(--text-strong)]">Suggested quiz</h2>
+            <p className="text-sm text-[var(--text-muted)]">
+              10 questions you've missed or that come from your weakest chapters. The best way to use ten minutes.
+            </p>
+          </div>
+          <button
+            onClick={launch}
+            className="w-full bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] rounded-lg py-3 text-sm font-semibold"
+          >
+            Start 10-question quiz →
+          </button>
+        </div>
+      ) : (
+        <div className="bg-[var(--bg-card-soft)] border border-dashed border-[var(--border-soft)] rounded-2xl p-5 text-sm text-[var(--text-muted)]">
+          Process a chapter in the Library tab and answer some questions — once you do, this is where your daily suggested quiz will live.
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ---------- github sync panel ----------
@@ -2953,6 +3088,7 @@ function SettingsPanel({ onClose }) {
     ['dark', '🌙', 'Dark'],
     ['light', '☀️', 'Light'],
     ['warm', '🍂', 'Warm'],
+    ['green', '🦉', 'Green'],
   ];
 
   return (
@@ -2964,7 +3100,7 @@ function SettingsPanel({ onClose }) {
 
       <div>
         <div className="text-xs uppercase tracking-wide text-[var(--text-muted)] mb-2">Appearance</div>
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-4 gap-2">
           {themeOpts.map(([k, emoji, label]) => (
             <button
               key={k}
@@ -3613,7 +3749,7 @@ function Leaderboard({ onPickUser }) {
 
   return (
     <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-5">
-      <h3 className="font-semibold mb-3 text-[var(--text-strong)]">Leaderboard — top 50 by attempts</h3>
+      <h3 className="font-semibold mb-3 text-[var(--text-strong)]">Leaderboard — accuracy on last {data.window || 100} attempts</h3>
       <ol className="divide-y divide-[var(--border-soft)]">
         {data.users.map((u, i) => (
           <li key={u.username} className="py-2 flex items-center gap-3">
@@ -4442,11 +4578,11 @@ function Shell() {
 
   const hasLibrary = apiKey || readOnly || session;
   const tabs = readOnly
-    ? [['study', 'Study'], ['stats', 'Stats'], ['leaderboard', 'Leaderboard'], ['banks', 'Bank'], ['library', 'Library']]
+    ? [['study', 'Study'], ['home', 'Home'], ['stats', 'Stats'], ['banks', 'Bank'], ['library', 'Library']]
     : hasLibrary
-      ? [['library', 'Library'], ['study', 'Study'], ['stats', 'Stats'], ['leaderboard', 'Leaderboard'], ['banks', 'Bank']]
-      : [['stats', 'Stats'], ['leaderboard', 'Leaderboard'], ['banks', 'Bank'], ['study', 'Study']];
-  useEffect(() => { if (readOnly) setTab('study'); else if (!hasLibrary) setTab('stats'); }, [readOnly, hasLibrary]);
+      ? [['library', 'Library'], ['study', 'Study'], ['home', 'Home'], ['stats', 'Stats'], ['banks', 'Bank']]
+      : [['home', 'Home'], ['stats', 'Stats'], ['banks', 'Bank'], ['study', 'Study']];
+  useEffect(() => { if (readOnly) setTab('home'); else if (!hasLibrary) setTab('home'); }, [readOnly, hasLibrary]);
   useEffect(() => { setProfileUser(null); }, [tab]);
 
   const fullyProcessed = files.filter((f) => extractions[f.file_id] && questions[f.file_id]?.mc && questions[f.file_id]?.short).length;
@@ -4532,16 +4668,17 @@ function Shell() {
             </>
           )}
           <div style={{ display: tab === 'study' ? undefined : 'none' }}><StudyView /></div>
+          {tab === 'home' && <HomeView onGoToStudy={() => setTab('study')} />}
           {tab === 'stats' && (
-            <>
-              {session && <ServerStatsView />}
-              <StatsView />
-            </>
-          )}
-          {tab === 'leaderboard' && (
             profileUser
               ? <UserProfile username={profileUser} onBack={() => setProfileUser(null)} />
-              : <Leaderboard onPickUser={(u) => setProfileUser(u)} />
+              : (
+                <>
+                  <Leaderboard onPickUser={(u) => setProfileUser(u)} />
+                  {session && <ServerStatsView />}
+                  <StatsView />
+                </>
+              )
           )}
           {tab === 'banks' && <BankTab />}
         </div>
