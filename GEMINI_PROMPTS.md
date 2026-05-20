@@ -56,31 +56,18 @@ that responses don't truncate even for chapters with many terms.
 
 ---
 
-## Choice formatting & hint system (applies to all MC stages)
+## Correctness check (applies to all MC stages)
 
-Every MC stage (2, 3, 4) must follow these rules. They are appended to each stage's
-system instruction in `app.js`.
+Every MC stage (2, 3, 4) appends this rule to its system instruction:
 
-The app has a **hint system**: the text after an em-dash (`—`) in each choice is hidden by
-default. Students see only the term/concept name. If they tap the **Hint** button, all
-four hints are revealed — but getting the answer right after using a hint only earns
-**half credit**. This makes the hints valuable for learning without giving away free
-points.
+> **CORRECTNESS CHECK:** Before finalizing, verify that the choice at `correct_index` is
+> genuinely and unambiguously the best answer. If two choices could plausibly be correct,
+> rewrite the stem to disambiguate or pick a different topic. All four choices should look
+> similar in length and style so the correct answer does not stand out visually.
 
-> **CHOICE FORMATTING RULES (hint system):**
-> - Format each choice as: `"Term — brief explanatory hint"` (using an em-dash `—`).
-> - The hint portion should be a short clause that helps a struggling student. Example:
->   `"Associative learning — linking two events via stimulus-response pairing"`.
-> - **All four hints must sound equally plausible.** The hint text must NOT make the
->   correct answer obvious by itself — a half-prepared student should still have to
->   think even after reading the hints.
-> - All four choices (including hint text) should be roughly the same length and style
->   so the correct answer does not stand out visually.
->
-> **CORRECTNESS CHECK:**
-> - Before finalizing, verify that the choice at `correct_index` is genuinely and
->   unambiguously the best answer. If two choices could plausibly be correct, rewrite
->   the stem to disambiguate or pick a different topic.
+Choices are written naturally — short term, definition, scenario fragment, whatever fits.
+There is no hint/dash convention; em-dashes in choices are fine when needed for normal
+punctuation (e.g. `"long-term potentiation — LTP — strengthens..."`).
 
 ---
 
@@ -293,12 +280,12 @@ update this document to match. Increment the `?v=N` cache-bust on `app.js` in
 generated questions are not retroactively updated; only new generation calls use the new
 prompt.
 
-## Question audit
+## Fixing flagged questions
 
-After questions are generated, they can be audited for quality via the **Audit** button
-in the Bank tab. See `QUESTION_AUDIT.md` for the full pipeline — pass 1 strips
-explanatory text from choices (client-side, free), pass 2 uses Gemini to verify that
-`correct_index` actually points to the right answer.
+While taking a quiz, the user can flag any MC question with a short description of what's
+wrong with it. A separate pipeline (see `FLAG_FIXES.md`) feeds each flag to Gemini, which
+returns either an edit, a delete, or a skip. The pipeline is rate-limit aware — unprocessed
+flags stay queued in `localStorage` and can be retried the next day.
 
 ## Out-of-band processing (Claude Code, etc.)
 

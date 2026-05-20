@@ -23,6 +23,7 @@ const KEYS = {
   github: 'mcat:github',
   session: 'mcat:session',
   pendingSync: 'mcat:pendingSync',
+  flagQueue: 'mcat:flagQueue', // Flagged questions awaiting Gemini fix (rate-limit safe)
 };
 
 const THEMES = ['dark', 'light', 'warm'];
@@ -316,15 +317,9 @@ function makeClient(getKey) {
         'Cover the chapter broadly across summary_sentences. ' +
         'Explanations are 1-2 sentences and justify the correct answer (and ideally why the most tempting distractor is wrong). ' +
         'Do not duplicate questions. Do not include questions whose answer is not directly supported by the chapter.\n\n' +
-        'CHOICE FORMATTING RULES (hint system):\n' +
-        '- Format each choice as: "Term — brief explanatory hint" (using an em-dash). ' +
-        'The app hides the text after the dash behind a Hint button; using it costs half credit.\n' +
-        '- The hint portion should be a short clause that helps a struggling student (e.g. "Associative learning — linking two events via stimulus-response pairing"). ' +
-        'It must NOT make the correct answer obvious by itself — all four hints should sound plausible.\n' +
-        '- All four choices (including hint text) should be roughly the same length so the correct answer does not stand out visually.\n\n' +
-        'CORRECTNESS CHECK:\n' +
-        '- Before finalizing, verify that the choice at correct_index is genuinely and unambiguously the best answer. ' +
-        'If two choices could plausibly be correct, rewrite the stem to disambiguate or pick a different topic.',
+        'CORRECTNESS CHECK: Before finalizing, verify that the choice at correct_index is genuinely and unambiguously ' +
+        'the best answer. If two choices could plausibly be correct, rewrite the stem to disambiguate or pick a different ' +
+        'topic. All four choices should look similar in length and style so the correct answer does not stand out.',
       contents: [{ role: 'user', parts }],
       responseSchema: MC_SCHEMA,
     });
@@ -419,12 +414,8 @@ function makeClient(getKey) {
           '- Avoid "obviously wrong" distractors (unrelated facts, gibberish, definitions of trivial items). Every distractor should make a half-prepared student hesitate.\n' +
           '- Don\'t pad with "all/none of the above" filler.\n\n' +
           'Explanations are 1-2 sentences and should briefly call out why the most tempting distractor is wrong.\n\n' +
-          'CHOICE FORMATTING RULES (hint system):\n' +
-          '- Format each choice as: "Term — brief explanatory hint" (em-dash). The hint is hidden behind a Hint button; using it costs half credit.\n' +
-          '- All four hints should sound equally plausible so the hint narrows but does not give away the answer.\n' +
-          '- All four choices should be roughly the same length.\n\n' +
-          'CORRECTNESS CHECK:\n' +
-          '- Before finalizing, verify that the choice at correct_index is genuinely and unambiguously the best answer.',
+          'CORRECTNESS CHECK: Before finalizing, verify that the choice at correct_index is genuinely and unambiguously ' +
+          'the best answer. All four choices should look similar in length and style.',
         contents: [{
           role: 'user',
           parts: [{
@@ -501,10 +492,7 @@ function makeClient(getKey) {
         'The two parts share a "theme" (the broader area the student must navigate) but probe DISTINCT concepts so a student who has them blurred together will miss one. ' +
         'Each part has exactly 4 choices, correct_index 0-3, and a 1-2 sentence explanation. ' +
         'Distractors should be tough — sibling concepts, near-misses, things the student would plausibly pick if they\'re half-prepared. ' +
-        'Avoid trivial filler distractors.\n\n' +
-        'CHOICE FORMATTING RULES (hint system):\n' +
-        '- Format each choice as: "Term — brief explanatory hint" (em-dash). The hint is hidden behind a Hint button; using it costs half credit. ' +
-        'All four hints should sound equally plausible. All choices should be roughly the same length.\n\n' +
+        'Avoid trivial filler distractors. All four choices should be roughly the same length and style.\n\n' +
         'CORRECTNESS CHECK: verify correct_index points to the genuinely best answer before returning.',
       contents: [{
         role: 'user',
@@ -527,65 +515,52 @@ function makeClient(getKey) {
     }));
   }
 
-  // ---- audit: verify correct_index via Gemini ----
-  const AUDIT_SCHEMA = {
+  // ---- flag fix: take a user's flag description and produce an updated question ----
+  const FIX_SCHEMA = {
     type: 'OBJECT',
     properties: {
-      results: {
-        type: 'ARRAY',
-        items: {
-          type: 'OBJECT',
-          properties: {
-            index: { type: 'INTEGER' },
-            correct: { type: 'BOOLEAN' },
-            suggested_index: { type: 'INTEGER' },
-            reason: { type: 'STRING' },
-          },
-          required: ['index', 'correct', 'suggested_index', 'reason'],
-        },
-      },
+      action: { type: 'STRING' }, // 'edit' | 'delete' | 'skip'
+      question: { type: 'STRING' },
+      choices: { type: 'ARRAY', items: { type: 'STRING' } },
+      correct_index: { type: 'INTEGER' },
+      explanation: { type: 'STRING' },
+      rationale: { type: 'STRING' },
     },
-    required: ['results'],
+    required: ['action', 'rationale'],
   };
 
-  async function auditQuestions(questions) {
-    const BATCH = 8;
-    const all = [];
-    for (let i = 0; i < questions.length; i += BATCH) {
-      const batch = questions.slice(i, i + BATCH);
-      const listing = batch.map((q, idx) => {
-        const letter = ['A', 'B', 'C', 'D'][q.correct_index] || '?';
-        return `--- Question ${i + idx + 1} ---\n` +
-          `Stem: ${q.question}\n` +
-          `A. ${q.choices[0]}\nB. ${q.choices[1]}\nC. ${q.choices[2]}\nD. ${q.choices[3]}\n` +
-          `Claimed correct: ${letter} (index ${q.correct_index})\n` +
-          `Explanation: ${q.explanation}`;
-      }).join('\n\n');
-      const resp = await generate({
-        maxOutputTokens: 8192,
-        disableThinking: true,
-        systemInstruction:
-          'You are a meticulous MCAT question reviewer. For each question, evaluate whether the choice at correct_index ' +
-          'is genuinely and unambiguously the best answer. Consider whether the stem is clear, whether any distractor ' +
-          'could also be correct, and whether the explanation matches the indicated answer. ' +
-          'Return one result per question in the same order.',
-        contents: [{ role: 'user', parts: [{ text:
-          `Review these ${batch.length} MC questions. For each, say whether the claimed correct answer is actually correct.\n\n${listing}`,
-        }] }],
-        responseSchema: AUDIT_SCHEMA,
-      });
-      const data = extractJson(resp);
-      (data.results || []).forEach((r, idx) => {
-        all.push({ ...r, index: i + idx });
-      });
-    }
-    return all;
+  async function fixFlaggedQuestion({ question, flagDescription, chapterContext }) {
+    const letters = ['A', 'B', 'C', 'D'];
+    const stem = question.question || '(no stem)';
+    const choices = (question.choices || []).map((c, i) => `${letters[i]}. ${c}`).join('\n');
+    const currentCorrect = letters[question.correct_index] || '?';
+    const resp = await generate({
+      maxOutputTokens: 4096,
+      disableThinking: true,
+      systemInstruction:
+        'You are a meticulous MCAT question editor. A user has flagged an MC question as having a problem. ' +
+        'Read their description carefully and apply the smallest fix that addresses it. ' +
+        'Set action to "edit" if you can fix the question (return the full corrected question, all four choices, the corrected ' +
+        'correct_index, and a 1-2 sentence explanation). Set action to "delete" if the question is irredeemable. ' +
+        'Set action to "skip" if the flag does not describe a real problem. Always provide a short rationale.',
+      contents: [{ role: 'user', parts: [{ text:
+        `Chapter: ${chapterContext || '(unknown)'}\n\n` +
+        `--- Flagged question ---\n` +
+        `Stem: ${stem}\n${choices}\n` +
+        `Current correct: ${currentCorrect} (index ${question.correct_index})\n` +
+        `Current explanation: ${question.explanation || '(none)'}\n\n` +
+        `--- User's flag ---\n${flagDescription}\n\n` +
+        `Decide on action and (if editing) return the full corrected question.`,
+      }] }],
+      responseSchema: FIX_SCHEMA,
+    });
+    return extractJson(resp);
   }
 
   return {
     uploadFile, deleteFile, generate, ping,
     extractFromPdf, generateMCQuestions, generateShortAnswers, generateTermQuestions, generateTwoPartQuestions,
-    auditQuestions,
+    fixFlaggedQuestion,
   };
 }
 
@@ -659,6 +634,20 @@ function makeApiClient(getToken) {
         method: 'PUT',
         headers: { 'Authorization': `Bearer ${t}`, 'Content-Type': 'application/json' },
         body,
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new ApiError(res.status, data?.error || `HTTP ${res.status}`);
+      return data;
+    },
+    addChapterFlag: (id, { question_id, description }) =>
+      call(`/chapters/${encodeURIComponent(id)}/flags`, { method: 'POST', body: { question_id, description }, auth: true }),
+    setChapterFlags: async (id, flags) => {
+      const t = getToken();
+      if (!t) throw new ApiError(401, 'not signed in');
+      const res = await fetch(`${API_BASE}/chapters/${encodeURIComponent(id)}/flags`, {
+        method: 'PUT',
+        headers: { 'Authorization': `Bearer ${t}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(flags),
       });
       const data = await res.json().catch(() => null);
       if (!res.ok) throw new ApiError(res.status, data?.error || `HTTP ${res.status}`);
@@ -1354,14 +1343,6 @@ function FileRow({ file, extraction, qbank, busyStage, onProcess, onRemove, read
         </div>
       </div>
       <div className="flex flex-wrap items-center gap-2">
-        {extraction && (
-          <button
-            onClick={() => setOpen((o) => !o)}
-            className="text-xs px-2.5 py-1.5 border border-[var(--border)] rounded hover:bg-[var(--bg-hover)]"
-          >
-            {open ? 'Hide' : 'View'}
-          </button>
-        )}
         {!readOnly && !fullyProcessed && (
           <button
             onClick={onProcess}
@@ -1371,13 +1352,63 @@ function FileRow({ file, extraction, qbank, busyStage, onProcess, onRemove, read
             {extraction ? 'Finish' : 'Process'}
           </button>
         )}
-        {!readOnly && <PublishToBankButton file={file} extraction={extraction} qbank={qbank} />}
-        {!readOnly && (
-          <button onClick={onRemove} className="ml-auto text-xs text-[var(--text-muted)] hover:text-[var(--danger-text)] px-2 py-1.5" title="Remove">✕</button>
-        )}
+        <FileRowMenu
+          hasExtraction={!!extraction}
+          isOpen={open}
+          toggleOpen={() => setOpen((o) => !o)}
+          publishSlot={!readOnly ? <PublishToBankButton file={file} extraction={extraction} qbank={qbank} /> : null}
+          onRemove={!readOnly ? onRemove : null}
+        />
       </div>
       {open && extraction && <ExtractionPreview data={extraction} />}
     </li>
+  );
+}
+
+function FileRowMenu({ hasExtraction, isOpen, toggleOpen, publishSlot, onRemove }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [open]);
+
+  return (
+    <div className="relative ml-auto" ref={ref}>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="text-[var(--text-muted)] hover:text-[var(--text-strong)] hover:bg-[var(--bg-hover)] rounded px-2 py-1.5"
+        title="More"
+        aria-label="More"
+      >
+        ⋯
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full mt-1 z-10 min-w-[180px] bg-[var(--bg-card-strong)] border border-[var(--border)] rounded-lg shadow-lg py-1">
+          {hasExtraction && (
+            <button
+              onClick={() => { toggleOpen(); setOpen(false); }}
+              className="w-full text-left text-xs px-3 py-2 hover:bg-[var(--bg-hover)]"
+            >
+              {isOpen ? 'Hide extraction' : 'View extraction'}
+            </button>
+          )}
+          {publishSlot && (
+            <div className="px-2 py-1" onClick={() => setOpen(false)}>{publishSlot}</div>
+          )}
+          {onRemove && (
+            <button
+              onClick={() => { onRemove(); setOpen(false); }}
+              className="w-full text-left text-xs px-3 py-2 text-[var(--danger-text)] hover:bg-[var(--danger-bg)]"
+            >
+              Delete
+            </button>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -1800,42 +1831,96 @@ function QuizLauncher({ onStart }) {
   );
 }
 
+// ---------- quiz: flag a question ----------
+function FlagQuestionModal({ item, onClose }) {
+  const { api, session, files } = useApp();
+  const [description, setDescription] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState(null);
+
+  // Find the chapter id this question belongs to (from the local library).
+  const localFile = files.find((f) => f.file_id === item.file_id);
+  const chapterId = localFile?.chapter_id;
+
+  const submit = async () => {
+    if (!description.trim()) { setStatus({ kind: 'err', msg: 'Describe the problem first.' }); return; }
+    setBusy(true); setStatus(null);
+    try {
+      if (session && chapterId) {
+        // Push to the chapter's server-side flags list.
+        await api.addChapterFlag(chapterId, { question_id: item.id, description: description.trim() });
+      }
+      // Also queue locally so the user can process flags on their own copy even
+      // without a chapter on the server. Pipeline reads from both.
+      const queue = storage.get(KEYS.flagQueue, []);
+      queue.push({
+        id: 'flq_' + Date.now().toString(36),
+        chapter_id: chapterId || null,
+        file_id: item.file_id,
+        chapter_label: item.chapter,
+        question_id: item.id,
+        question_snapshot: item.q,
+        description: description.trim(),
+        ts: Date.now(),
+        status: 'pending',
+      });
+      storage.set(KEYS.flagQueue, queue);
+      setStatus({ kind: 'ok', msg: 'Flagged. We\'ll fix it on the next pipeline run.' });
+      setTimeout(onClose, 900);
+    } catch (e) {
+      setStatus({ kind: 'err', msg: e.message });
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-3" onClick={onClose}>
+      <div className="w-full max-w-md bg-[var(--bg)] border border-[var(--border)] rounded-2xl p-4 space-y-3" onClick={(e) => e.stopPropagation()}>
+        <h3 className="font-semibold text-[var(--text-strong)]">Flag question</h3>
+        <p className="text-xs text-[var(--text-muted)]">{item.q.question || item.q.prompt || '(no stem)'}</p>
+        <textarea
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          autoFocus
+          rows={4}
+          placeholder="What's wrong? (e.g. wrong answer marked correct, two choices are the same, stem is unclear)"
+          className="w-full bg-[var(--bg-elev)] border border-[var(--border)] rounded px-2 py-1.5 text-sm"
+        />
+        {status && (
+          <div className={`text-xs rounded px-2 py-1.5 ${
+            status.kind === 'ok' ? 'bg-[var(--success-bg)] text-[var(--success-text)]' :
+            status.kind === 'err' ? 'bg-[var(--danger-bg)] text-[var(--danger-text)]' :
+            'bg-[var(--accent-soft)] text-[var(--accent-text)]'
+          }`}>{status.msg}</div>
+        )}
+        <div className="flex justify-end gap-2">
+          <button onClick={onClose} className="text-xs px-3 py-1.5 border border-[var(--border)] hover:bg-[var(--bg-hover)] rounded">Cancel</button>
+          <button onClick={submit} disabled={busy} className="text-xs px-3 py-1.5 bg-[var(--warning-text-strong)] text-white rounded hover:opacity-90 disabled:opacity-40">
+            {busy ? 'Submitting…' : 'Flag question'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ---------- quiz: MC ----------
-function MCQuestion({ item, onAnswer, nextSlot }) {
+function MCQuestion({ item, onAnswer, nextSlot, onFlag }) {
   const [picked, setPicked] = useState(null);
-  const [hintUsed, setHintUsed] = useState(false);
   const shuffled = useMemo(() => {
-    const arr = item.q.choices.map((text, origIdx) => ({ text, origIdx, ...splitHint(text) }));
+    const arr = item.q.choices.map((text, origIdx) => ({ text, origIdx }));
     return shuffle(arr);
   }, [item.id]);
-  const hasHints = shuffled.some((e) => e.hint);
-
-  const revealHint = () => { if (!picked) setHintUsed(true); };
 
   const submit = (entry) => {
     if (picked !== null) return;
     setPicked(entry);
     const correct = entry.origIdx === item.q.correct_index;
-    onAnswer({ correct, user_answer: entry.text, half: hintUsed && correct });
+    onAnswer({ correct, user_answer: entry.text });
   };
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-base leading-relaxed flex-1">{item.q.question}</p>
-        {hasHints && !picked && !hintUsed && (
-          <button
-            onClick={revealHint}
-            className="text-xs px-2.5 py-1.5 border border-[var(--warning-text)] text-[var(--warning-text)] rounded hover:bg-[var(--warning-bg)] shrink-0"
-            title="Show hint text for each choice (half credit)"
-          >
-            Hint
-          </button>
-        )}
-        {hintUsed && !picked && (
-          <span className="text-[10px] uppercase tracking-wide text-[var(--warning-text)]">½ credit</span>
-        )}
-      </div>
+      <p className="text-base leading-relaxed">{item.q.question}</p>
       <div className="space-y-2">
         {shuffled.map((entry, i) => {
           const isPicked = picked && entry.origIdx === picked.origIdx;
@@ -1854,10 +1939,7 @@ function MCQuestion({ item, onAnswer, nextSlot }) {
               className={`w-full text-left border rounded-lg px-3 py-2.5 text-sm transition-colors ${cls}`}
             >
               <span className="text-[var(--text-faint)] mr-2">{String.fromCharCode(65 + i)}.</span>
-              {(hintUsed || picked) ? entry.text : entry.base}
-              {!hintUsed && !picked && entry.hint && (
-                <span className="text-[var(--text-fainter)]"> …</span>
-              )}
+              {entry.text}
             </button>
           );
         })}
@@ -1865,14 +1947,17 @@ function MCQuestion({ item, onAnswer, nextSlot }) {
       {picked && (
         <>
           <div className="flex items-center justify-between gap-3 mt-3">
-            <div className={picked.origIdx === item.q.correct_index
-              ? `text-[var(--success-text)] font-medium${hintUsed ? '' : ''}`
-              : 'text-[var(--danger-text)] font-medium'}>
-              {picked.origIdx === item.q.correct_index
-                ? (hintUsed ? 'Correct (½ credit — hint used)' : 'Correct')
-                : 'Incorrect'}
+            <div className={picked.origIdx === item.q.correct_index ? 'text-[var(--success-text)] font-medium' : 'text-[var(--danger-text)] font-medium'}>
+              {picked.origIdx === item.q.correct_index ? 'Correct' : 'Incorrect'}
             </div>
-            {nextSlot}
+            <div className="flex items-center gap-2">
+              {onFlag && (
+                <button onClick={onFlag} className="text-xs text-[var(--text-muted)] hover:text-[var(--warning-text-strong)] border border-[var(--border)] rounded px-2 py-1" title="Flag this question for review">
+                  ⚑ Flag
+                </button>
+              )}
+              {nextSlot}
+            </div>
           </div>
           <div className="bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg p-3 text-sm text-[var(--text)]">
             {item.q.explanation}
@@ -1971,11 +2056,9 @@ function TwoPartQuestion({ item, onAnswer, nextSlot }) {
       setPartIdx((i) => i + 1);
     } else {
       const allCorrect = nextResults.every((r) => r.correct);
-      const anyHalf = nextResults.some((r) => r.half);
       setDone(true);
       onAnswer({
         correct: allCorrect,
-        half: allCorrect && anyHalf,
         user_answer: nextResults.map((r, i) => `P${i + 1}: ${r.user_answer}`).join(' | '),
       });
     }
@@ -2005,14 +2088,10 @@ function TwoPartQuestion({ item, onAnswer, nextSlot }) {
 function SinglePart({ part, onAnswer, nextSlot, continueLabel }) {
   const [picked, setPicked] = useState(null);
   const [advanced, setAdvanced] = useState(false);
-  const [hintUsed, setHintUsed] = useState(false);
   const shuffled = useMemo(() => {
-    const arr = (part.choices || []).map((text, origIdx) => ({ text, origIdx, ...splitHint(text) }));
+    const arr = (part.choices || []).map((text, origIdx) => ({ text, origIdx }));
     return shuffle(arr);
   }, [part]);
-  const hasHints = shuffled.some((e) => e.hint);
-
-  const revealHint = () => { if (!picked) setHintUsed(true); };
 
   const submit = (entry) => {
     if (picked !== null) return;
@@ -2023,26 +2102,12 @@ function SinglePart({ part, onAnswer, nextSlot, continueLabel }) {
     if (picked === null || advanced) return;
     setAdvanced(true);
     const correct = picked.origIdx === part.correct_index;
-    onAnswer({ correct, user_answer: picked.text, half: hintUsed && correct });
+    onAnswer({ correct, user_answer: picked.text });
   };
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-base leading-relaxed flex-1">{part.question}</p>
-        {hasHints && !picked && !hintUsed && (
-          <button
-            onClick={revealHint}
-            className="text-xs px-2.5 py-1.5 border border-[var(--warning-text)] text-[var(--warning-text)] rounded hover:bg-[var(--warning-bg)] shrink-0"
-            title="Show hint text for each choice (half credit)"
-          >
-            Hint
-          </button>
-        )}
-        {hintUsed && !picked && (
-          <span className="text-[10px] uppercase tracking-wide text-[var(--warning-text)]">½ credit</span>
-        )}
-      </div>
+      <p className="text-base leading-relaxed">{part.question}</p>
       <div className="space-y-2">
         {shuffled.map((entry, i) => {
           const isPicked = picked && entry.origIdx === picked.origIdx;
@@ -2061,10 +2126,7 @@ function SinglePart({ part, onAnswer, nextSlot, continueLabel }) {
               className={`w-full text-left border rounded-lg px-3 py-2.5 text-sm transition-colors ${cls}`}
             >
               <span className="text-[var(--text-faint)] mr-2">{String.fromCharCode(65 + i)}.</span>
-              {(hintUsed || picked) ? entry.text : entry.base}
-              {!hintUsed && !picked && entry.hint && (
-                <span className="text-[var(--text-fainter)]"> …</span>
-              )}
+              {entry.text}
             </button>
           );
         })}
@@ -2073,9 +2135,7 @@ function SinglePart({ part, onAnswer, nextSlot, continueLabel }) {
         <>
           <div className="flex items-center justify-between gap-3 mt-3">
             <div className={picked.origIdx === part.correct_index ? 'text-[var(--success-text)] font-medium' : 'text-[var(--danger-text)] font-medium'}>
-              {picked.origIdx === part.correct_index
-                ? (hintUsed ? 'Correct (½ credit)' : 'Correct')
-                : 'Incorrect'}
+              {picked.origIdx === part.correct_index ? 'Correct' : 'Incorrect'}
             </div>
             {!advanced && (
               <button
@@ -2276,10 +2336,12 @@ function QuizRunner({ items, onExit, onPause }) {
     if (onPause) onPause(timerRef);
   }, [onPause]);
 
+  const [flagging, setFlagging] = useState(false);
+
   const item = items[index];
   const isLast = index === items.length - 1;
 
-  const handleAnswer = ({ correct, user_answer, isInterim, half }) => {
+  const handleAnswer = ({ correct, user_answer, isInterim }) => {
     if (isInterim) return; // two-part items emit interim results between parts; only score the final
     if (answered) return;
     setAnswered(true);
@@ -2290,10 +2352,9 @@ function QuizRunner({ items, onExit, onPause }) {
       chapter: item.chapter,
       subject: item.subject,
       correct,
-      half: !!half,
       user_answer,
     });
-    setResults((r) => [...r, { item, correct, half: !!half, user_answer }]);
+    setResults((r) => [...r, { item, correct, user_answer }]);
   };
 
   const next = () => {
@@ -2339,7 +2400,8 @@ function QuizRunner({ items, onExit, onPause }) {
               {isLast ? 'See results' : 'Next →'}
             </button>
           ) : null;
-          const props = { key: item.id, item, onAnswer: handleAnswer, nextSlot: nextBtn };
+          const onFlag = () => setFlagging(true);
+          const props = { key: item.id, item, onAnswer: handleAnswer, nextSlot: nextBtn, onFlag };
           if (item.mode === 'mc') return <MCQuestion {...props} />;
           if (item.mode === 'two_part') return <TwoPartQuestion {...props} />;
           if (item.mode === 'short') return <ShortAnswerQuestion {...props} />;
@@ -2347,15 +2409,16 @@ function QuizRunner({ items, onExit, onPause }) {
           return null;
         })()}
       </div>
+      {flagging && <FlagQuestionModal item={item} onClose={() => setFlagging(false)} />}
     </div>
   );
 }
 
 // ---------- quiz: summary ----------
 function QuizSummary({ results, elapsedTime, onRestart, onDrillMisses }) {
-  const score = results.reduce((sum, r) => sum + (r.correct ? (r.half ? 0.5 : 1) : 0), 0);
+  const correct = results.filter((r) => r.correct).length;
   const total = results.length;
-  const pct = total ? Math.round((score / total) * 100) : 0;
+  const pct = total ? Math.round((correct / total) * 100) : 0;
   const misses = results.filter((r) => !r.correct);
 
   return (
@@ -2363,7 +2426,7 @@ function QuizSummary({ results, elapsedTime, onRestart, onDrillMisses }) {
       <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-6 text-center">
         <div className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Quiz complete</div>
         <div className="text-5xl font-bold mt-2">{pct}%</div>
-        <div className="text-sm text-[var(--text-muted)] mt-1">{score % 1 === 0 ? score : score.toFixed(1)} of {total} correct</div>
+        <div className="text-sm text-[var(--text-muted)] mt-1">{correct} of {total} correct</div>
         {elapsedTime && <div className="text-xs text-[var(--text-faint)] mt-1 font-mono">{elapsedTime}</div>}
       </div>
 
@@ -2632,19 +2695,18 @@ function StatsView() {
     const seenByQid = {};
 
     for (const a of attempts) {
-      const credit = a.correct ? (a.half ? 0.5 : 1) : 0;
       overall.total++;
-      overall.correct += credit;
+      if (a.correct) overall.correct++;
 
       const m = byMode[a.mode] ||= { correct: 0, total: 0 };
-      m.total++; m.correct += credit;
+      m.total++; if (a.correct) m.correct++;
 
       const fkey = a.file_id;
       const c = byChapter[fkey] ||= { correct: 0, total: 0, chapter: a.chapter, subject: a.subject };
-      c.total++; c.correct += credit;
+      c.total++; if (a.correct) c.correct++;
 
       const s = bySubject[a.subject] ||= { correct: 0, total: 0 };
-      s.total++; s.correct += credit;
+      s.total++; if (a.correct) s.correct++;
 
       seenByQid[a.question_id] = (seenByQid[a.question_id] || 0) + 1;
       if (!a.correct) missByQid[a.question_id] = (missByQid[a.question_id] || 0) + 1;
@@ -3016,6 +3078,163 @@ function PublishAllPanel() {
           {status.kind === 'ok' ? '✓ ' : ''}{status.msg}
         </p>
       )}
+    </div>
+  );
+}
+
+// ---------- flag fixes: process queued flagged questions via Gemini ----------
+// Token-limit aware: if Gemini rate-limits or errors, remaining flags stay in
+// localStorage queue for next session.
+function FlagFixesPanel() {
+  const { api, client, apiKey, session, files, extractions, questions, setQuestionsFor } = useApp();
+  const [queue, setQueue] = useState(() => storage.get(KEYS.flagQueue, []));
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState(null);
+  const [processedLog, setProcessedLog] = useState([]);
+
+  const pending = queue.filter((f) => f.status === 'pending');
+  const done = queue.filter((f) => f.status !== 'pending');
+
+  const refresh = () => setQueue(storage.get(KEYS.flagQueue, []));
+
+  const saveQueue = (next) => {
+    storage.set(KEYS.flagQueue, next);
+    setQueue(next);
+  };
+
+  const removeFlag = (id) => {
+    saveQueue(queue.filter((f) => f.id !== id));
+  };
+
+  const isRateLimit = (err) =>
+    err?.status === 429 || /quota|rate.?limit|exceeded/i.test(err?.message || '');
+
+  const runPipeline = async () => {
+    if (!apiKey) { setStatus({ kind: 'err', msg: 'Add a Gemini API key in Settings first.' }); return; }
+    if (!pending.length) return;
+    setBusy(true); setStatus({ kind: 'info', msg: `Processing ${pending.length} flag(s)…` });
+    setProcessedLog([]);
+    const current = [...queue];
+    let processedCount = 0;
+    for (const flag of pending) {
+      try {
+        setStatus({ kind: 'info', msg: `Fixing "${(flag.question_snapshot.question || flag.question_snapshot.prompt || flag.question_id).slice(0, 60)}…"` });
+        const fix = await client.fixFlaggedQuestion({
+          question: flag.question_snapshot,
+          flagDescription: flag.description,
+          chapterContext: flag.chapter_label,
+        });
+
+        // Apply the fix locally and to the server (if logged in + chapter exists on bank).
+        const fileId = flag.file_id;
+        const qbank = questions[fileId];
+        if (qbank?.mc) {
+          let nextMc = qbank.mc;
+          if (fix.action === 'edit') {
+            nextMc = qbank.mc.map((q) => q.id === flag.question_id ? {
+              ...q,
+              question: fix.question || q.question,
+              choices: fix.choices?.length === 4 ? fix.choices : q.choices,
+              correct_index: Number.isInteger(fix.correct_index) ? fix.correct_index : q.correct_index,
+              explanation: fix.explanation || q.explanation,
+            } : q);
+          } else if (fix.action === 'delete') {
+            nextMc = qbank.mc.filter((q) => q.id !== flag.question_id);
+          }
+          if (nextMc !== qbank.mc) {
+            setQuestionsFor(fileId, { ...qbank, mc: nextMc });
+            // Push to server too if this chapter lives on the cloud bank.
+            if (flag.chapter_id && session) {
+              try { await api.putChapterStage(flag.chapter_id, 'mc', nextMc); } catch {}
+            }
+          }
+        }
+
+        const updated = current.find((f) => f.id === flag.id);
+        if (updated) {
+          updated.status = fix.action === 'skip' ? 'skipped' : (fix.action + 'd');
+          updated.rationale = fix.rationale;
+          updated.resolved_at = Date.now();
+        }
+        setProcessedLog((log) => [...log, { flag, fix }]);
+        processedCount++;
+      } catch (e) {
+        if (isRateLimit(e)) {
+          setStatus({ kind: 'warn', msg: `Rate-limited after ${processedCount} flag(s). The remaining ${pending.length - processedCount} will stay queued for tomorrow.` });
+          saveQueue(current);
+          setBusy(false);
+          return;
+        }
+        const updated = current.find((f) => f.id === flag.id);
+        if (updated) { updated.status = 'error'; updated.error = e.message; }
+      }
+    }
+    saveQueue(current);
+    setStatus({ kind: 'ok', msg: `Done — ${processedCount} flag(s) processed.` });
+    setBusy(false);
+  };
+
+  if (!queue.length) return null;
+  return (
+    <div className="bg-[var(--bg-card)] border border-[var(--warning-text)] rounded-2xl p-4 sm:p-5 space-y-3">
+      <div className="flex items-baseline justify-between">
+        <div>
+          <h3 className="font-semibold text-[var(--text-strong)]">⚑ Flagged questions</h3>
+          <p className="text-xs text-[var(--text-muted)]">
+            {pending.length} pending · {done.length} resolved. Pipeline runs locally with your Gemini key.
+          </p>
+        </div>
+        <button onClick={refresh} className="text-xs text-[var(--text-muted)] underline">refresh</button>
+      </div>
+
+      {status && (
+        <div className={`text-sm rounded px-3 py-2 ${
+          status.kind === 'ok' ? 'bg-[var(--success-bg)] text-[var(--success-text)]' :
+          status.kind === 'err' ? 'bg-[var(--danger-bg)] text-[var(--danger-text)]' :
+          status.kind === 'warn' ? 'bg-[var(--warning-bg)] text-[var(--warning-text)]' :
+          'bg-[var(--accent-soft)] text-[var(--accent-text)]'
+        }`}>{status.msg}</div>
+      )}
+
+      <div className="flex flex-wrap gap-2">
+        <button
+          onClick={runPipeline}
+          disabled={busy || !pending.length || !apiKey}
+          className="text-xs px-3 py-1.5 bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] disabled:opacity-40 rounded font-medium"
+        >
+          {busy ? 'Processing…' : `Run pipeline (${pending.length})`}
+        </button>
+        {done.length > 0 && (
+          <button
+            onClick={() => saveQueue(queue.filter((f) => f.status === 'pending'))}
+            className="text-xs px-3 py-1.5 border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--bg-hover)] rounded"
+          >
+            Clear resolved
+          </button>
+        )}
+      </div>
+
+      <ul className="space-y-2 text-sm">
+        {queue.slice().reverse().map((f) => (
+          <li key={f.id} className="border border-[var(--border-soft)] rounded-lg p-2 bg-[var(--bg-elev-soft)]">
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="text-[10px] uppercase tracking-wide text-[var(--text-faint)]">{f.chapter_label}</span>
+              <span className={`text-[10px] uppercase ${
+                f.status === 'pending' ? 'text-[var(--warning-text)]' :
+                f.status === 'error' ? 'text-[var(--danger-text)]' :
+                'text-[var(--success-text)]'
+              }`}>{f.status}</span>
+            </div>
+            <div className="text-xs mt-1 text-[var(--text)]">{(f.question_snapshot?.question || f.question_snapshot?.prompt || f.question_id).slice(0, 140)}</div>
+            <div className="text-xs text-[var(--text-muted)] mt-1 italic">"{f.description}"</div>
+            {f.rationale && <div className="text-[11px] text-[var(--accent-text)] mt-1">→ {f.rationale}</div>}
+            {f.error && <div className="text-[11px] text-[var(--danger-text)] mt-1">{f.error}</div>}
+            <div className="text-right mt-1">
+              <button onClick={() => removeFlag(f.id)} className="text-[10px] text-[var(--text-faint)] hover:text-[var(--danger-text)]">remove</button>
+            </div>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -3435,217 +3654,6 @@ function ServerStatsPayload({ data }) {
   );
 }
 
-// ---------- hint system: split "Term — explanation" into base + hint ----------
-function splitHint(text) {
-  // Match " — explanation", " – explanation", or " - explanation"
-  // but only if what's before the separator is at least 3 chars.
-  const match = text.match(/^(.{3,}?)\s+[—–]\s+(.+)$/) || text.match(/^(.{3,}?)\s+-\s+(.+)$/);
-  if (match) return { base: match[1].trim(), hint: match[2].trim() };
-  return { base: text, hint: null };
-}
-
-function choiceHasHint(text) {
-  return splitHint(text).hint !== null;
-}
-
-// ---------- question audit (pass 1: client-side) ----------
-function auditPass1(mcQuestions) {
-  let withHints = 0;
-  let withoutHints = 0;
-  for (const q of mcQuestions) {
-    if (!q.choices?.length) continue;
-    const hasAny = q.choices.some(choiceHasHint);
-    if (hasAny) withHints++;
-    else withoutHints++;
-  }
-  return { withHints, withoutHints };
-}
-
-// ---------- question audit modal ----------
-function AuditModal({ chapter, onClose }) {
-  const { api, client, apiKey } = useApp();
-  const [phase, setPhase] = useState('loading'); // loading | pass1 | verifying | done
-  const [mc, setMc] = useState([]);
-  const [twoPart, setTwoPart] = useState([]);
-  const [hintStats, setHintStats] = useState(null); // { withHints, withoutHints }
-  const [flags, setFlags] = useState([]); // [{index, suggested_index, reason, q}]
-  const [verifyProgress, setVerifyProgress] = useState('');
-  const [status, setStatus] = useState(null);
-  const [applied, setApplied] = useState(new Set());
-
-  useEffect(() => {
-    let cancelled = false;
-    api.getChapter(chapter.id).then((full) => {
-      if (cancelled) return;
-      const allMc = Array.isArray(full.mc) ? full.mc : [];
-      const tp = Array.isArray(full.two_part) ? full.two_part : [];
-      setMc(allMc);
-      setTwoPart(tp);
-      setHintStats(auditPass1(allMc));
-      setPhase('pass1');
-    }).catch((e) => {
-      setStatus({ kind: 'err', msg: e.message });
-      setPhase('pass1');
-    });
-    return () => { cancelled = true; };
-  }, [chapter.id, api]);
-
-  const runVerify = async () => {
-    if (!apiKey) { setStatus({ kind: 'err', msg: 'Set a Gemini API key in Settings first.' }); return; }
-    setPhase('verifying');
-    setFlags([]);
-    try {
-      const mcOnly = mc.filter((q) => q.mode === 'mc' && q.choices?.length === 4);
-      setVerifyProgress(`Checking ${mcOnly.length} MC questions…`);
-      const results = await client.auditQuestions(mcOnly);
-      const flagged = results.filter((r) => !r.correct).map((r) => ({
-        ...r,
-        q: mcOnly[r.index],
-      }));
-      setFlags(flagged);
-      setPhase('done');
-      setVerifyProgress('');
-      if (!flagged.length) setStatus({ kind: 'ok', msg: 'All questions verified — no issues found!' });
-    } catch (e) {
-      setStatus({ kind: 'err', msg: e.message });
-      setPhase('pass1');
-    }
-  };
-
-  const acceptFix = async (flag) => {
-    const updated = mc.map((q) =>
-      q === flag.q ? { ...q, correct_index: flag.suggested_index } : q
-    );
-    setMc(updated);
-    try {
-      await api.putChapterStage(chapter.id, 'mc', updated);
-      setApplied((s) => new Set(s).add(flag.q.id));
-      setStatus({ kind: 'ok', msg: `Fixed "${flag.q.question.slice(0, 50)}…"` });
-    } catch (e) {
-      setStatus({ kind: 'err', msg: e.message });
-    }
-  };
-
-  const deleteQuestion = async (flag) => {
-    const updated = mc.filter((q) => q !== flag.q);
-    setMc(updated);
-    try {
-      await api.putChapterStage(chapter.id, 'mc', updated);
-      setApplied((s) => new Set(s).add(flag.q.id));
-      setStatus({ kind: 'ok', msg: `Deleted question.` });
-    } catch (e) {
-      setStatus({ kind: 'err', msg: e.message });
-    }
-  };
-
-  return (
-    <div
-      className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-start justify-center p-3 sm:p-6 pt-10 sm:pt-16 overflow-y-auto"
-      onClick={onClose}
-    >
-      <div className="w-full max-w-2xl bg-[var(--bg)] border border-[var(--border)] rounded-2xl p-4 sm:p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between">
-          <h2 className="font-semibold text-[var(--text-strong)]">Audit: {chapter.title}</h2>
-          <button onClick={onClose} className="text-xs px-2 py-1 border border-[var(--border)] rounded hover:bg-[var(--bg-hover)]">Close</button>
-        </div>
-
-        {status && (
-          <div className={`text-sm rounded-lg px-3 py-2 ${
-            status.kind === 'ok' ? 'bg-[var(--success-bg)] text-[var(--success-text)]'
-              : status.kind === 'err' ? 'bg-[var(--danger-bg)] text-[var(--danger-text)]'
-              : 'bg-[var(--accent-soft)] text-[var(--accent-text)]'
-          }`}>
-            {status.msg}
-          </div>
-        )}
-
-        {phase === 'loading' && <div className="text-sm text-[var(--text-muted)]">Loading chapter data…</div>}
-
-        {(phase === 'pass1' || phase === 'done') && (
-          <div className="space-y-3">
-            <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-xl p-4">
-              <h3 className="text-sm font-semibold mb-1">Pass 1 — Hint coverage</h3>
-              {hintStats && (
-                <div className="text-sm text-[var(--text-muted)] space-y-1">
-                  <p>
-                    <span className="text-[var(--success-text)]">{hintStats.withHints}</span> question{hintStats.withHints === 1 ? '' : 's'} have hint text (Term — explanation).
-                  </p>
-                  <p>
-                    <span className={hintStats.withoutHints > 0 ? 'text-[var(--warning-text)]' : 'text-[var(--text-faint)]'}>{hintStats.withoutHints}</span> question{hintStats.withoutHints === 1 ? '' : 's'} have no hint — Hint button won't appear for these.
-                  </p>
-                </div>
-              )}
-            </div>
-
-            <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-xl p-4">
-              <h3 className="text-sm font-semibold mb-1">Pass 2 — Gemini verification</h3>
-              {phase === 'pass1' && (
-                <>
-                  <p className="text-sm text-[var(--text-muted)]">
-                    Send {mc.filter((q) => q.mode === 'mc' && q.choices?.length === 4).length} MC questions to Gemini to check if correct_index is right.
-                  </p>
-                  <button
-                    onClick={runVerify}
-                    disabled={!apiKey}
-                    className={`mt-2 text-xs rounded px-3 py-1.5 ${apiKey
-                      ? 'bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)]'
-                      : 'bg-[var(--bg-elev)] text-[var(--text-faint)] cursor-not-allowed'}`}
-                  >
-                    {apiKey ? 'Verify with Gemini' : 'Needs API key'}
-                  </button>
-                </>
-              )}
-            </div>
-          </div>
-        )}
-
-        {phase === 'verifying' && (
-          <div className="text-sm text-[var(--accent-text)]">… {verifyProgress}</div>
-        )}
-
-        {phase === 'done' && flags.length > 0 && (
-          <div className="space-y-3">
-            <h3 className="text-sm font-semibold text-[var(--warning-text)]">{flags.length} flagged question(s)</h3>
-            {flags.map((flag, i) => {
-              const done = applied.has(flag.q.id);
-              const letters = ['A', 'B', 'C', 'D'];
-              return (
-                <div key={i} className={`bg-[var(--bg-card)] border rounded-xl p-4 text-sm space-y-2 ${done ? 'border-[var(--success-border)] opacity-60' : 'border-[var(--warning-text)]'}`}>
-                  <p className="font-medium">{flag.q.question}</p>
-                  <div className="grid grid-cols-2 gap-1 text-xs">
-                    {flag.q.choices.map((c, ci) => (
-                      <div key={ci} className={`px-2 py-1 rounded ${
-                        ci === flag.q.correct_index ? 'bg-[var(--danger-bg)] line-through' :
-                        ci === flag.suggested_index ? 'bg-[var(--success-bg)] font-semibold' : 'bg-[var(--bg-elev)]'
-                      }`}>
-                        {letters[ci]}. {c}
-                      </div>
-                    ))}
-                  </div>
-                  <p className="text-xs text-[var(--text-muted)]">
-                    <span className="text-[var(--danger-text)]">Stored: {letters[flag.q.correct_index]}</span>
-                    {' → '}
-                    <span className="text-[var(--success-text)]">Suggested: {letters[flag.suggested_index]}</span>
-                    {' · '}{flag.reason}
-                  </p>
-                  {!done && (
-                    <div className="flex gap-2">
-                      <button onClick={() => acceptFix(flag)} className="text-xs bg-[var(--success-bg)] text-[var(--success-text)] border border-[var(--success-border)] rounded px-2 py-1 hover:opacity-80">Accept fix</button>
-                      <button onClick={() => deleteQuestion(flag)} className="text-xs bg-[var(--danger-bg)] text-[var(--danger-text)] border border-[var(--danger-border)] rounded px-2 py-1 hover:opacity-80">Delete</button>
-                      <button onClick={() => setApplied((s) => new Set(s).add(flag.q.id))} className="text-xs text-[var(--text-muted)] border border-[var(--border)] rounded px-2 py-1 hover:bg-[var(--bg-hover)]">Skip</button>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        <div className="text-xs text-[var(--text-faint)]">{mc.length} MC · {twoPart.length} two-part</div>
-      </div>
-    </div>
-  );
-}
 
 // ---------- collaborative bank (chapters) ----------
 function StageDot({ stage, label }) {
@@ -3670,7 +3678,7 @@ function StageDot({ stage, label }) {
   );
 }
 
-function ChapterRow({ chapter, onDownload, onContribute, onAudit, busy, downloaded, canContribute }) {
+function ChapterRow({ chapter, onDownload, onContribute, busy, downloaded, canContribute }) {
   const ago = (() => {
     const ms = Date.now() - chapter.updated_at;
     const m = Math.round(ms / 60000);
@@ -3746,16 +3754,6 @@ function ChapterRow({ chapter, onDownload, onContribute, onAudit, busy, download
             </span>
           )
         )}
-        {chapter.stages.mc.done && canContribute && (
-          <button
-            onClick={onAudit}
-            disabled={!!busy}
-            title="Check questions for errors and strip explanatory text from choices"
-            className="text-xs px-3 py-1.5 border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--bg-hover)] disabled:opacity-40 rounded whitespace-nowrap"
-          >
-            Audit
-          </button>
-        )}
       </div>
     </li>
   );
@@ -3765,7 +3763,6 @@ function BankTab() {
   const { api, session, apiKey, client, setFiles, setExtraction, setQuestionsFor, files } = useApp();
   const [data, setData] = useState(null);
   const [err, setErr] = useState('');
-  const [auditChapter, setAuditChapter] = useState(null);
   const [tick, setTick] = useState(0);
   const [busyId, setBusyId] = useState(null); // chapter id currently working
   const [busyKind, setBusyKind] = useState(null); // 'downloading' | 'contributing'
@@ -3971,7 +3968,6 @@ function BankTab() {
                   chapter={ch}
                   onDownload={() => downloadChapter(ch)}
                   onContribute={(stages) => contributeChapter(ch, stages)}
-                  onAudit={() => setAuditChapter(ch)}
                   busy={busyId === ch.id ? busyKind : null}
                   downloaded={localChapterIds.has(ch.id)}
                   canContribute={!!session && !!apiKey}
@@ -3982,9 +3978,6 @@ function BankTab() {
         );
       })}
 
-      {auditChapter && (
-        <AuditModal chapter={auditChapter} onClose={() => { setAuditChapter(null); setTick((t) => t + 1); }} />
-      )}
     </div>
   );
 }
@@ -4284,6 +4277,7 @@ function Shell() {
                 </>
               )}
               <FileList />
+              <FlagFixesPanel />
             </>
           )}
           <div style={{ display: tab === 'study' ? undefined : 'none' }}><StudyView /></div>
