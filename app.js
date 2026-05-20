@@ -131,7 +131,7 @@ function playSfx(name) {
     }
     const a = _sfxCache[name];
     a.currentTime = 0;
-    a.volume = 0.75 * _vol(); // MP3s are baseline-25%-quieter, then scaled by user volume
+    a.volume = 0.5 * _vol(); // Duolingo MP3s further dampened, then scaled by user volume
     a.play().catch(() => {});
   } catch {}
 }
@@ -185,11 +185,49 @@ function sfxTap() {
   src.stop(t0 + dur + 0.01);
 }
 
-// Ascending 3-note arpeggio when a quiz starts.
+// Each hit = brief tonal blip + noise click attack. Reads as a drum-hit ascending pattern,
+// not a tuneful arpeggio.
+function _percHit(freq, durMs, startAt, vol) {
+  const ctx = _ctx();
+  if (!ctx) return;
+  const peak = Math.max(0.0001, vol * _vol());
+  const t0 = ctx.currentTime + startAt;
+
+  // Tonal body (short square pulse, snappy decay)
+  const osc = ctx.createOscillator();
+  const oscGain = ctx.createGain();
+  osc.type = 'square';
+  osc.frequency.setValueAtTime(freq, t0);
+  oscGain.gain.setValueAtTime(0, t0);
+  oscGain.gain.linearRampToValueAtTime(peak, t0 + 0.002);
+  oscGain.gain.exponentialRampToValueAtTime(0.0001, t0 + durMs / 1000);
+  osc.connect(oscGain).connect(ctx.destination);
+  osc.start(t0);
+  osc.stop(t0 + durMs / 1000 + 0.02);
+
+  // Noise click for the attack
+  const nDur = 0.018;
+  const buf = ctx.createBuffer(1, Math.max(1, Math.floor(ctx.sampleRate * nDur)), ctx.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / data.length);
+  const src = ctx.createBufferSource();
+  src.buffer = buf;
+  const filt = ctx.createBiquadFilter();
+  filt.type = 'bandpass';
+  filt.frequency.value = Math.max(900, freq * 1.4);
+  filt.Q.value = 2;
+  const nGain = ctx.createGain();
+  nGain.gain.setValueAtTime(peak * 0.9, t0);
+  nGain.gain.exponentialRampToValueAtTime(0.0001, t0 + nDur);
+  src.connect(filt).connect(nGain).connect(ctx.destination);
+  src.start(t0);
+  src.stop(t0 + nDur + 0.01);
+}
+
 function sfxQuizStart() {
-  _beep(523, 110, { vol: 0.09, type: 'triangle' });             // C5
-  _beep(659, 110, { vol: 0.09, type: 'triangle', startAt: 0.09 }); // E5
-  _beep(784, 180, { vol: 0.09, type: 'triangle', startAt: 0.18 }); // G5
+  _percHit(420, 55, 0,    0.10);
+  _percHit(560, 55, 0.07, 0.10);
+  _percHit(750, 95, 0.14, 0.12);
 }
 
 // ---------- vibration ----------
@@ -202,6 +240,55 @@ function vibrateWrong() { vibrate(220); }
 
 // HUD click helper — pairs the tap sound with a subtle vibration.
 function hudClick() { sfxTap(); vibrateTap(); }
+
+// ---------- dynamic favicon (matches the in-app gradient logo per theme) ----------
+const THEME_ICON_COLORS = {
+  dark:  { accent: '#4f46e5', accent2: '#d946ef' },
+  light: { accent: '#4f46e5', accent2: '#a21caf' },
+  warm:  { accent: '#c2410c', accent2: '#b45309' },
+  green: { accent: '#58cc02', accent2: '#1cb0f6' },
+};
+function updateFavicon(theme) {
+  try {
+    const pal = THEME_ICON_COLORS[theme] || THEME_ICON_COLORS.dark;
+    const SIZE = 64;
+    const canvas = document.createElement('canvas');
+    canvas.width = SIZE; canvas.height = SIZE;
+    const ctx = canvas.getContext('2d');
+    const r = 14;
+    // Rounded-square gradient (mirrors the header logo)
+    ctx.beginPath();
+    ctx.moveTo(r, 0);
+    ctx.arcTo(SIZE, 0, SIZE, SIZE, r);
+    ctx.arcTo(SIZE, SIZE, 0, SIZE, r);
+    ctx.arcTo(0, SIZE, 0, 0, r);
+    ctx.arcTo(0, 0, SIZE, 0, r);
+    ctx.closePath();
+    const grad = ctx.createLinearGradient(0, 0, SIZE, SIZE);
+    grad.addColorStop(0, pal.accent);
+    grad.addColorStop(1, pal.accent2);
+    ctx.fillStyle = grad;
+    ctx.fill();
+    // "M" inset for recognizability
+    ctx.fillStyle = 'rgba(255,255,255,0.92)';
+    ctx.font = 'bold 38px ui-sans-serif, system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('M', SIZE / 2, SIZE / 2 + 2);
+    const dataUrl = canvas.toDataURL('image/png');
+    // Replace existing icon links with our generated one.
+    document.querySelectorAll('link[rel="icon"], link[rel="apple-touch-icon"]').forEach((el) => el.parentNode.removeChild(el));
+    const link = document.createElement('link');
+    link.rel = 'icon';
+    link.type = 'image/png';
+    link.href = dataUrl;
+    document.head.appendChild(link);
+    const apple = document.createElement('link');
+    apple.rel = 'apple-touch-icon';
+    apple.href = dataUrl;
+    document.head.appendChild(apple);
+  } catch {}
+}
 
 const storage = {
   get(key, fallback = null) {
@@ -770,6 +857,7 @@ function makeApiClient(getToken) {
     postAttempts: (attempts) => call('/attempts', { method: 'POST', body: { attempts }, auth: true }),
     meStats: () => call('/me/stats', { auth: true }),
     leaderboard: () => call('/leaderboard'),
+    activity: () => call('/activity'),
     userProfile: (username) => call(`/u/${encodeURIComponent(username)}`),
 
     // Bank publish + pull. body for putBank is the raw JSON string of the bank.
@@ -909,6 +997,7 @@ function AppProvider({ children }) {
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
+    updateFavicon(theme);
   }, [theme]);
 
   // On boot: try to fetch a static data.json next to index.html.
@@ -2724,6 +2813,55 @@ function StudyView() {
   return <QuizSummary results={results} elapsedTime={elapsedTime} onRestart={restart} onDrillMisses={drillMisses} />;
 }
 
+// ---------- home: recent activity feed ----------
+function HomeActivity() {
+  const { api, session } = useApp();
+  const [rows, setRows] = useState(null);
+  const [err, setErr] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    api.activity()
+      .then((d) => { if (!cancelled) setRows(d.activity || []); })
+      .catch((e) => { if (!cancelled) setErr(e.message); });
+    return () => { cancelled = true; };
+  }, [api]);
+
+  if (err) return null; // silent — Home is a happy place
+  if (!rows) {
+    return (
+      <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-5">
+        <h2 className="font-semibold text-[var(--text-strong)] mb-1">Who else is studying</h2>
+        <p className="text-sm text-[var(--text-muted)]">Loading…</p>
+      </div>
+    );
+  }
+  // Hide own row to keep it useful — show up to 8 others.
+  const others = rows.filter((r) => !session || r.username !== session.username).slice(0, 8);
+  if (!others.length) return null;
+
+  return (
+    <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-5">
+      <h2 className="font-semibold text-[var(--text-strong)] mb-2">Who else is studying</h2>
+      <ul className="divide-y divide-[var(--border-soft)]">
+        {others.map((r) => (
+          <li key={r.username} className="py-2 flex items-center gap-3">
+            <div className="w-2 h-2 rounded-full shrink-0" style={{ background: Date.now() - r.ts < 5 * 60 * 1000 ? 'var(--success-border)' : 'var(--text-fainter)' }} />
+            <div className="min-w-0 flex-1">
+              <div className="text-sm text-[var(--text)] truncate">
+                <span className="font-medium">@{r.username}</span>
+                <span className="text-[var(--text-muted)]"> · {r.subject || 'studying'}</span>
+              </div>
+              {r.chapter && <div className="text-xs text-[var(--text-faint)] truncate">{r.chapter}</div>}
+            </div>
+            <div className="text-xs text-[var(--text-faint)] shrink-0">{relativeTime(r.ts)}</div>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 // ---------- home view ----------
 function HomeView({ onGoToStudy }) {
   const { session, files, questions, extractions, attempts } = useApp();
@@ -2770,21 +2908,19 @@ function HomeView({ onGoToStudy }) {
 
   return (
     <div className="space-y-4">
-      {/* Speech-bubble + bird hero. Bird is intentionally large and overlaps the
-          bottom-right corner of the card. */}
-      <div className="relative bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl px-4 sm:px-6 pt-5 sm:pt-6 pb-2 sm:pb-3 overflow-hidden min-h-[520px] sm:min-h-[620px]">
+      {/* Speech-bubble + bird hero. */}
+      <div className="relative bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl px-4 sm:px-6 pt-5 sm:pt-6 pb-2 sm:pb-3 overflow-hidden min-h-[400px] sm:min-h-[460px]">
         <div className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Welcome back</div>
         <h1 className="text-2xl sm:text-3xl font-bold text-[var(--text-strong)] mb-3">@{username}</h1>
 
-        {/* Speech bubble — upper-left, ~60% width, soft border matching other cards,
-            with the bottom-right corner cut square so it visually "points" toward the bird. */}
+        {/* Speech bubble — upper-left, ~60% width, soft border, bottom-right corner cut square. */}
         <div className="relative w-[78%] sm:w-[62%] max-w-md">
           <div className="bg-[var(--bg-elev)] border border-[var(--border-soft)] rounded-2xl rounded-br-none px-4 py-3 sm:px-5 sm:py-4 text-[var(--text)] text-sm sm:text-base leading-relaxed">
             {quote}
           </div>
         </div>
 
-        {/* Bird — 2.5× the previous size, anchored bottom-right, extends past the card edge */}
+        {/* Bird — anchored higher in the card now (~180px above the bottom). */}
         <img
           src="assets/bird.png"
           alt=""
@@ -2792,12 +2928,14 @@ function HomeView({ onGoToStudy }) {
           className="absolute select-none pointer-events-none"
           style={{
             right: '-40px',
-            bottom: '-60px',
+            bottom: '140px',
             width: 'clamp(450px, 105vw, 650px)',
             maxWidth: 'none',
           }}
         />
       </div>
+
+      <HomeActivity />
 
       {suggested.length > 0 ? (
         <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-5 space-y-3">
