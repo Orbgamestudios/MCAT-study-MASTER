@@ -122,18 +122,46 @@ function _vol() {
     return typeof v === 'number' && v >= 0 && v <= 1 ? v : 1;
   } catch { return 1; }
 }
-const _sfxCache = {};
+// MP3s are routed through WebAudio so the slider gain applies live and
+// reliably (Audio.volume could lag or be coalesced on iOS).
+const _sfxBufferCache = {};
+const _sfxAudioCache = {};
 function playSfx(name) {
-  try {
-    if (!_sfxCache[name]) {
-      _sfxCache[name] = new Audio(`assets/${name}.mp3`);
-      _sfxCache[name].preload = 'auto';
+  const ctx = _ctx();
+  if (ctx) {
+    if (_sfxBufferCache[name] === 'loading') return;
+    if (!_sfxBufferCache[name]) {
+      _sfxBufferCache[name] = 'loading';
+      fetch(`assets/${name}.mp3`)
+        .then((r) => r.arrayBuffer())
+        .then((buf) => ctx.decodeAudioData(buf))
+        .then((decoded) => { _sfxBufferCache[name] = decoded; _playBuffer(ctx, decoded); })
+        .catch(() => { _sfxBufferCache[name] = null; });
+      return;
     }
-    const a = _sfxCache[name];
+    _playBuffer(ctx, _sfxBufferCache[name]);
+    return;
+  }
+  // Fallback for browsers without WebAudio
+  try {
+    if (!_sfxAudioCache[name]) {
+      _sfxAudioCache[name] = new Audio(`assets/${name}.mp3`);
+      _sfxAudioCache[name].preload = 'auto';
+    }
+    const a = _sfxAudioCache[name];
     a.currentTime = 0;
-    a.volume = 0.5 * _vol(); // Duolingo MP3s further dampened, then scaled by user volume
+    a.volume = 0.4 * _vol();
     a.play().catch(() => {});
   } catch {}
+}
+function _playBuffer(ctx, buffer) {
+  const src = ctx.createBufferSource();
+  src.buffer = buffer;
+  const gain = ctx.createGain();
+  // 0.4 baseline = ~20% softer than HUD tap (0.18 noise * scale) when slider is at 1.
+  gain.gain.value = Math.max(0.0001, 0.4 * _vol());
+  src.connect(gain).connect(ctx.destination);
+  src.start();
 }
 
 // Web-Audio synthesized clicks for UI feedback (no asset files needed).
@@ -185,28 +213,16 @@ function sfxTap() {
   src.stop(t0 + dur + 0.01);
 }
 
-// Each hit = brief tonal blip + noise click attack. Reads as a drum-hit ascending pattern,
-// not a tuneful arpeggio.
-function _percHit(freq, durMs, startAt, vol) {
+// Each hit = mostly noise burst with only a faint tonal tail. Reads percussive,
+// barely tuneful.
+function _percHit(centerFreq, startAt, vol) {
   const ctx = _ctx();
   if (!ctx) return;
   const peak = Math.max(0.0001, vol * _vol());
   const t0 = ctx.currentTime + startAt;
 
-  // Tonal body (short square pulse, snappy decay)
-  const osc = ctx.createOscillator();
-  const oscGain = ctx.createGain();
-  osc.type = 'square';
-  osc.frequency.setValueAtTime(freq, t0);
-  oscGain.gain.setValueAtTime(0, t0);
-  oscGain.gain.linearRampToValueAtTime(peak, t0 + 0.002);
-  oscGain.gain.exponentialRampToValueAtTime(0.0001, t0 + durMs / 1000);
-  osc.connect(oscGain).connect(ctx.destination);
-  osc.start(t0);
-  osc.stop(t0 + durMs / 1000 + 0.02);
-
-  // Noise click for the attack
-  const nDur = 0.018;
+  // Heavy noise burst (the main body of each hit)
+  const nDur = 0.045;
   const buf = ctx.createBuffer(1, Math.max(1, Math.floor(ctx.sampleRate * nDur)), ctx.sampleRate);
   const data = buf.getChannelData(0);
   for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / data.length);
@@ -214,20 +230,33 @@ function _percHit(freq, durMs, startAt, vol) {
   src.buffer = buf;
   const filt = ctx.createBiquadFilter();
   filt.type = 'bandpass';
-  filt.frequency.value = Math.max(900, freq * 1.4);
-  filt.Q.value = 2;
+  filt.frequency.value = centerFreq;
+  filt.Q.value = 1.5;
   const nGain = ctx.createGain();
-  nGain.gain.setValueAtTime(peak * 0.9, t0);
+  nGain.gain.setValueAtTime(peak * 1.0, t0);
   nGain.gain.exponentialRampToValueAtTime(0.0001, t0 + nDur);
   src.connect(filt).connect(nGain).connect(ctx.destination);
   src.start(t0);
   src.stop(t0 + nDur + 0.01);
+
+  // Very faint tonal pop — provides the slight pitch hint, sub-audible if you're not
+  // listening for it.
+  const osc = ctx.createOscillator();
+  const oscGain = ctx.createGain();
+  osc.type = 'square';
+  osc.frequency.setValueAtTime(centerFreq * 0.5, t0);
+  oscGain.gain.setValueAtTime(0, t0);
+  oscGain.gain.linearRampToValueAtTime(peak * 0.15, t0 + 0.002);
+  oscGain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.04);
+  osc.connect(oscGain).connect(ctx.destination);
+  osc.start(t0);
+  osc.stop(t0 + 0.06);
 }
 
 function sfxQuizStart() {
-  _percHit(420, 55, 0,    0.10);
-  _percHit(560, 55, 0.07, 0.10);
-  _percHit(750, 95, 0.14, 0.12);
+  _percHit(1100, 0,    0.13);
+  _percHit(1600, 0.07, 0.13);
+  _percHit(2200, 0.14, 0.16);
 }
 
 // ---------- vibration ----------
@@ -999,6 +1028,10 @@ function AppProvider({ children }) {
     document.documentElement.setAttribute('data-theme', theme);
     updateFavicon(theme);
   }, [theme]);
+
+  // One-time cleanup: drop the temporary drag-position key now that the bird
+  // is anchored to the speech bubble's bottom.
+  useEffect(() => { try { localStorage.removeItem('mcat:birdPos'); } catch {} }, []);
 
   // On boot: try to fetch a static data.json next to index.html.
   // If present, expose it on context. The user can enter "shared bank" mode
@@ -2813,94 +2846,58 @@ function StudyView() {
   return <QuizSummary results={results} elapsedTime={elapsedTime} onRestart={restart} onDrillMisses={drillMisses} />;
 }
 
-// ---------- home: bird hero (draggable for positioning, then locked) ----------
-const BIRD_POS_KEY = 'mcat:birdPos';
-const BIRD_DEFAULT = { right: -40, bottom: -60 }; // px, relative to card
+// ---------- home: bird hero ----------
+// Bird position is locked: right is fixed and bottom is dynamic so the bird
+// follows the speech bubble's bottom edge. At a 2-line bubble (BUBBLE_BASELINE_H),
+// bird sits at right:-97 / bottom:-8 (the user-calibrated reference). As the bubble
+// grows, bottom decreases by the same amount, keeping bird visually anchored to the
+// bottom-right corner of the bubble.
+const BUBBLE_BASELINE_H = 80; // px — roughly a 2-line speech bubble
+const BIRD_RIGHT = -97;
+const BIRD_BOTTOM_AT_BASELINE = -8;
 
 function BirdHero({ username, quote }) {
-  const cardRef = useRef(null);
-  const [pos, setPos] = useState(() => storage.get(BIRD_POS_KEY, BIRD_DEFAULT));
-  const dragStateRef = useRef(null);
+  const bubbleRef = useRef(null);
+  const [bubbleH, setBubbleH] = useState(null);
 
-  const persist = (p) => { storage.set(BIRD_POS_KEY, p); };
-  const reset = () => { setPos(BIRD_DEFAULT); persist(BIRD_DEFAULT); };
+  useEffect(() => {
+    const el = bubbleRef.current;
+    if (!el) return;
+    const update = () => setBubbleH(el.offsetHeight);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
-  // Pointer events unify touch + mouse on modern mobile browsers.
-  const onPointerDown = (e) => {
-    e.preventDefault();
-    dragStateRef.current = {
-      startX: e.clientX,
-      startY: e.clientY,
-      startRight: pos.right,
-      startBottom: pos.bottom,
-      moved: false,
-    };
-    try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
-  };
-  const onPointerMove = (e) => {
-    const s = dragStateRef.current;
-    if (!s) return;
-    const dx = e.clientX - s.startX;
-    const dy = e.clientY - s.startY;
-    if (Math.abs(dx) + Math.abs(dy) > 3) s.moved = true;
-    // right grows when dragging LEFT (away from right edge)
-    // bottom grows when dragging UP
-    setPos({ right: Math.round(s.startRight - dx), bottom: Math.round(s.startBottom - dy) });
-  };
-  const onPointerUp = (e) => {
-    const s = dragStateRef.current;
-    if (s?.moved) persist(pos);
-    dragStateRef.current = null;
-    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch {}
-  };
+  const delta = bubbleH != null ? Math.max(0, bubbleH - BUBBLE_BASELINE_H) : 0;
+  const birdBottom = BIRD_BOTTOM_AT_BASELINE - delta;
 
   return (
-    <div ref={cardRef} className="relative bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl px-4 sm:px-6 pt-5 sm:pt-6 pb-2 sm:pb-3 overflow-hidden min-h-[400px] sm:min-h-[460px]">
+    <div className="relative bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl px-4 sm:px-6 pt-5 sm:pt-6 pb-2 sm:pb-3 overflow-hidden min-h-[400px] sm:min-h-[460px]">
       <div className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Welcome back</div>
       <h1 className="text-2xl sm:text-3xl font-bold text-[var(--text-strong)] mb-3">@{username}</h1>
 
-      {/* Bird — BEHIND the speech bubble (z-0). */}
+      {/* Bird — behind the speech bubble (z-0). Bottom is computed from bubble height. */}
       <img
         src="assets/bird.png"
         alt=""
         draggable="false"
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerCancel={onPointerUp}
-        data-no-haptic
-        className="absolute select-none cursor-grab active:cursor-grabbing"
+        className="absolute select-none pointer-events-none"
         style={{
-          right: `${pos.right}px`,
-          bottom: `${pos.bottom}px`,
+          right: `${BIRD_RIGHT}px`,
+          bottom: `${birdBottom}px`,
           width: 'clamp(450px, 105vw, 650px)',
           maxWidth: 'none',
-          touchAction: 'none',
           zIndex: 0,
-          userSelect: 'none',
-          WebkitUserSelect: 'none',
         }}
       />
 
-      {/* Speech bubble — ABOVE the bird (z-10). */}
+      {/* Speech bubble — above the bird (z-10). */}
       <div className="relative w-[78%] sm:w-[62%] max-w-md" style={{ zIndex: 10 }}>
-        <div className="bg-[var(--bg-elev)] border border-[var(--border-soft)] rounded-2xl rounded-br-none px-4 py-3 sm:px-5 sm:py-4 text-[var(--text)] text-sm sm:text-base leading-relaxed">
+        <div ref={bubbleRef} className="bg-[var(--bg-elev)] border border-[var(--border-soft)] rounded-2xl rounded-br-none px-4 py-3 sm:px-5 sm:py-4 text-[var(--text)] text-sm sm:text-base leading-relaxed">
           {quote}
         </div>
-      </div>
-
-      {/* Coordinate readout — temporary; tells you what to send back so we can lock the bird. */}
-      <div className="absolute top-2 right-2 z-20 flex items-center gap-1">
-        <div className="bg-[var(--bg-elev)] border border-[var(--border-soft)] rounded-md px-2 py-1 text-[10px] font-mono text-[var(--text-muted)]">
-          right:{pos.right} · bottom:{pos.bottom}
-        </div>
-        <button
-          onClick={reset}
-          className="bg-[var(--bg-elev)] border border-[var(--border-soft)] rounded-md px-2 py-1 text-[10px] text-[var(--text-muted)] hover:bg-[var(--bg-hover)]"
-          title="Reset bird position"
-        >
-          reset
-        </button>
       </div>
     </div>
   );
