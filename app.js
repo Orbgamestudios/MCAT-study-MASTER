@@ -298,6 +298,14 @@ function makeClient(getKey) {
   };
 
   async function generateMCQuestions(fileUri, mimeType, extraction, chapterLabel, n = DEFAULT_MC_COUNT) {
+    // PDF is optional — contributors without the PDF generate from extraction text alone.
+    const parts = [];
+    if (fileUri && mimeType) parts.push({ fileData: { mimeType, fileUri } });
+    parts.push({ text:
+      `Chapter: ${chapterLabel}\n\n` +
+      `Extracted summary sentences and key terms:\n${JSON.stringify(extraction, null, 2).slice(0, 60000)}\n\n` +
+      `Generate exactly ${n} MCAT-style multiple-choice questions covering the chapter.`,
+    });
     const resp = await generate({
       maxOutputTokens: 32768,
       disableThinking: true,
@@ -308,17 +316,7 @@ function makeClient(getKey) {
         'Cover the chapter broadly across summary_sentences. ' +
         'Explanations are 1-2 sentences and justify the correct answer (and ideally why the most tempting distractor is wrong). ' +
         'Do not duplicate questions. Do not include questions whose answer is not directly supported by the chapter.',
-      contents: [{
-        role: 'user',
-        parts: [
-          { fileData: { mimeType, fileUri } },
-          { text:
-            `Chapter: ${chapterLabel}\n\n` +
-            `Extracted summary sentences and key terms:\n${JSON.stringify(extraction, null, 2).slice(0, 60000)}\n\n` +
-            `Generate exactly ${n} MCAT-style multiple-choice questions covering the chapter.`,
-          },
-        ],
-      }],
+      contents: [{ role: 'user', parts }],
       responseSchema: MC_SCHEMA,
     });
     const data = extractJson(resp);
@@ -362,14 +360,16 @@ function makeClient(getKey) {
         'Cover a range of high-yield topics — do not duplicate.',
       contents: [{
         role: 'user',
-        parts: [
-          { fileData: { mimeType, fileUri } },
-          { text:
+        parts: (() => {
+          const p = [];
+          if (fileUri && mimeType) p.push({ fileData: { mimeType, fileUri } });
+          p.push({ text:
             `Chapter: ${chapterLabel}\n\n` +
             `Extracted material:\n${JSON.stringify(extraction, null, 2).slice(0, 60000)}\n\n` +
             `Generate exactly ${n} short-answer study prompts.`,
-          },
-        ],
+          });
+          return p;
+        })(),
       }],
       responseSchema: SHORT_SCHEMA,
     });
@@ -1245,11 +1245,16 @@ function FileRow({ file, extraction, qbank, busyStage, onProcess, onRemove, read
   }
 
   return (
-    <li className="py-2">
-      <div className="flex items-center gap-3">
+    <li className="py-3 space-y-2">
+      <div className="flex flex-wrap items-start gap-2">
         <div className="flex-1 min-w-0">
-          <div className="text-sm">{file.chapter}</div>
-          <div className="text-xs text-[var(--text-faint)] truncate">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-sm font-medium text-[var(--text)]">{file.chapter}</span>
+            <span className={`text-[10px] uppercase tracking-wide px-2 py-0.5 rounded shrink-0 ${badge.cls}`}>
+              {badge.label}
+            </span>
+          </div>
+          <div className="text-xs text-[var(--text-faint)] mt-0.5 break-words">
             {file.filename} · {fmtBytes(file.size_bytes)}
             {qbank?.mc && (
               <span className="ml-2 text-[var(--text-muted)]">
@@ -1267,34 +1272,33 @@ function FileRow({ file, extraction, qbank, busyStage, onProcess, onRemove, read
             )}
           </div>
           {file.processError && (
-            <div className="text-xs text-[var(--danger-text)] mt-1 truncate" title={file.processError}>
+            <div className="text-xs text-[var(--danger-text)] mt-1 break-words" title={file.processError}>
               {file.processError}
             </div>
           )}
         </div>
-        <span className={`text-[10px] uppercase tracking-wide px-2 py-1 rounded ${badge.cls}`}>
-          {badge.label}
-        </span>
-        {extraction ? (
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        {extraction && (
           <button
             onClick={() => setOpen((o) => !o)}
-            className="text-xs px-2 py-1 border border-[var(--border)] rounded hover:bg-[var(--bg-hover)]"
+            className="text-xs px-2.5 py-1.5 border border-[var(--border)] rounded hover:bg-[var(--bg-hover)]"
           >
             {open ? 'Hide' : 'View'}
           </button>
-        ) : null}
+        )}
         {!readOnly && !fullyProcessed && (
           <button
             onClick={onProcess}
             disabled={!!busyStage}
-            className="text-xs px-2 py-1 bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] disabled:opacity-40 rounded font-medium"
+            className="text-xs px-2.5 py-1.5 bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] disabled:opacity-40 rounded font-medium"
           >
             {extraction ? 'Finish' : 'Process'}
           </button>
         )}
         {!readOnly && <PublishToBankButton file={file} extraction={extraction} qbank={qbank} />}
         {!readOnly && (
-          <button onClick={onRemove} className="text-xs text-[var(--text-muted)] hover:text-[var(--danger-text)] px-2" title="Remove">✕</button>
+          <button onClick={onRemove} className="ml-auto text-xs text-[var(--text-muted)] hover:text-[var(--danger-text)] px-2 py-1.5" title="Remove">✕</button>
         )}
       </div>
       {open && extraction && <ExtractionPreview data={extraction} />}
@@ -3256,7 +3260,7 @@ function StageDot({ stage, label }) {
   );
 }
 
-function ChapterRow({ chapter, onDownload, busy, downloaded }) {
+function ChapterRow({ chapter, onDownload, onContribute, busy, downloaded, canContribute }) {
   const ago = (() => {
     const ms = Date.now() - chapter.updated_at;
     const m = Math.round(ms / 60000);
@@ -3267,28 +3271,38 @@ function ChapterRow({ chapter, onDownload, busy, downloaded }) {
     return `${Math.round(h / 24)}d ago`;
   })();
 
+  // What can a contributor (someone with a Gemini key but not the PDF) actually fill in?
+  // Anything except extraction. Once extraction exists, everything else is up for grabs.
+  const missing = [];
+  const s = chapter.stages;
+  if (s.extraction.done) {
+    if (!s.mc.done || s.mc.terms_missing > 0) missing.push({ key: 'mc', label: s.mc.done ? 'fill missing term coverage' : 'MC' });
+    if (!s.two_part.done) missing.push({ key: 'two_part', label: 'two-part' });
+    if (!s.short.done) missing.push({ key: 'short', label: 'short answer' });
+  }
+
   return (
-    <li className="py-3 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
-      <div className="flex-1 min-w-0">
-        <div className="flex items-baseline gap-2 flex-wrap">
-          <span className="text-[var(--text)] font-medium truncate">{chapter.title}</span>
+    <li className="py-3 space-y-2">
+      <div className="min-w-0">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-[var(--text)] font-medium break-words">{chapter.title}</span>
           {chapter.status === 'complete' && (
-            <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-[var(--success-bg)] text-[var(--success-text)]">
+            <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-[var(--success-bg)] text-[var(--success-text)] shrink-0">
               ✓ complete
             </span>
           )}
           {chapter.status === 'partial' && (
-            <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-[var(--warning-bg)] text-[var(--warning-text)]">
+            <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-[var(--warning-bg)] text-[var(--warning-text)] shrink-0">
               partial
             </span>
           )}
           {chapter.status === 'pending' && (
-            <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-[var(--bg-elev)] text-[var(--text-faint)] border border-[var(--border)]">
+            <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-[var(--bg-elev)] text-[var(--text-faint)] border border-[var(--border)] shrink-0">
               needs extraction
             </span>
           )}
         </div>
-        <div className="text-xs text-[var(--text-faint)] mt-0.5">
+        <div className="text-xs text-[var(--text-faint)] mt-0.5 break-words">
           {chapter.filename} · {ago}
         </div>
         <div className="flex flex-wrap gap-1.5 mt-1.5">
@@ -3298,25 +3312,42 @@ function ChapterRow({ chapter, onDownload, busy, downloaded }) {
           <StageDot stage={chapter.stages.short} label="short" />
         </div>
       </div>
-      <div className="flex sm:flex-col items-end gap-2 shrink-0">
+      <div className="flex flex-wrap items-center gap-2">
         <button
           onClick={onDownload}
-          disabled={busy || chapter.status === 'pending'}
+          disabled={!!busy || chapter.status === 'pending'}
           className="text-xs px-3 py-1.5 bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] disabled:opacity-40 rounded font-medium whitespace-nowrap"
         >
-          {busy ? 'Downloading…' : downloaded ? 'Re-download' : 'Download'}
+          {busy === 'downloading' ? 'Downloading…' : downloaded ? 'Re-download' : 'Download'}
         </button>
+        {missing.length > 0 && (
+          canContribute ? (
+            <button
+              onClick={() => onContribute(missing.map((m) => m.key))}
+              disabled={!!busy}
+              title={`Run your Gemini key to fill: ${missing.map((m) => m.label).join(', ')}`}
+              className="text-xs px-3 py-1.5 border border-[var(--accent-border)] text-[var(--accent-text)] hover:bg-[var(--accent-soft)] disabled:opacity-40 rounded font-medium whitespace-nowrap"
+            >
+              {busy === 'contributing' ? 'Contributing…' : `Contribute (${missing.length})`}
+            </button>
+          ) : (
+            <span className="text-[11px] text-[var(--text-faint)]" title="Add a Gemini API key in Settings to contribute.">
+              {missing.length} stage{missing.length === 1 ? '' : 's'} need work
+            </span>
+          )
+        )}
       </div>
     </li>
   );
 }
 
 function BankTab() {
-  const { api, session, setFiles, setExtraction, setQuestionsFor, files } = useApp();
+  const { api, session, apiKey, client, setFiles, setExtraction, setQuestionsFor, files } = useApp();
   const [data, setData] = useState(null);
   const [err, setErr] = useState('');
   const [tick, setTick] = useState(0);
-  const [downloading, setDownloading] = useState(null); // chapter id
+  const [busyId, setBusyId] = useState(null); // chapter id currently working
+  const [busyKind, setBusyKind] = useState(null); // 'downloading' | 'contributing'
   const [status, setStatus] = useState(null);
   const [filter, setFilter] = useState('');
 
@@ -3329,12 +3360,10 @@ function BankTab() {
   }, [api, tick]);
 
   const downloadChapter = async (chapter) => {
-    if (downloading) return;
-    setDownloading(chapter.id);
-    setStatus(null);
+    if (busyId) return;
+    setBusyId(chapter.id); setBusyKind('downloading'); setStatus(null);
     try {
       const full = await api.getChapter(chapter.id);
-      // Insert as a local file_record so the Library + StudyView see it.
       const localFileId = `chap_${full.id}`;
       const fileRecord = {
         file_id: localFileId,
@@ -3359,7 +3388,62 @@ function BankTab() {
     } catch (e) {
       setStatus({ kind: 'err', msg: e.message });
     } finally {
-      setDownloading(null);
+      setBusyId(null); setBusyKind(null);
+    }
+  };
+
+  // Run the contributor's Gemini key against the chapter's published extraction
+  // to fill in missing stages. PDF is not required for mc/two_part/short, so anyone
+  // signed in with a key can advance a chapter.
+  const contributeChapter = async (chapter, stages) => {
+    if (busyId) return;
+    if (!apiKey) {
+      setStatus({ kind: 'err', msg: 'Add a Gemini API key in Settings to contribute.' });
+      return;
+    }
+    setBusyId(chapter.id); setBusyKind('contributing'); setStatus({ kind: 'info', msg: `Loading "${chapter.title}"…` });
+    try {
+      const full = await api.getChapter(chapter.id);
+      if (!full.extraction) throw new Error('Chapter has no extraction yet — only the uploader can do that step.');
+
+      for (const stage of stages) {
+        if (stage === 'mc') {
+          setStatus({ kind: 'info', msg: `Generating MC for "${chapter.title}"…` });
+          let newMc = Array.isArray(full.mc) ? [...full.mc] : [];
+          // If no baseline mc, generate the general bank first.
+          const hasBaseline = newMc.some((q) => q?.from !== 'term');
+          if (!hasBaseline) {
+            const baseline = await client.generateMCQuestions(null, null, full.extraction, full.title);
+            newMc = newMc.concat(baseline);
+          }
+          // Fill in term-coverage for any uncovered terms.
+          const termCovered = new Set(newMc.filter((q) => q?.from === 'term').map((q) => q.term));
+          const missingTerms = (full.extraction.key_terms || []).filter((t) => !termCovered.has(t.term));
+          if (missingTerms.length > 0) {
+            setStatus({ kind: 'info', msg: `Generating term coverage (${missingTerms.length} terms)…` });
+            const termExtraction = { ...full.extraction, key_terms: missingTerms };
+            const termQs = await client.generateTermQuestions(termExtraction, full.title);
+            newMc = newMc.concat(termQs);
+          }
+          await api.putChapterStage(chapter.id, 'mc', newMc);
+        } else if (stage === 'two_part') {
+          setStatus({ kind: 'info', msg: `Generating two-part for "${chapter.title}"…` });
+          const twoPart = await client.generateTwoPartQuestions(full.extraction, full.title);
+          if (!twoPart?.length) throw new Error('Two-part generation returned no items — try again.');
+          await api.putChapterStage(chapter.id, 'two_part', twoPart);
+        } else if (stage === 'short') {
+          setStatus({ kind: 'info', msg: `Generating short answer for "${chapter.title}"…` });
+          const short = await client.generateShortAnswers(null, null, full.extraction, full.title);
+          if (!short?.length) throw new Error('Short-answer generation returned no items — try again.');
+          await api.putChapterStage(chapter.id, 'short', short);
+        }
+      }
+      setStatus({ kind: 'ok', msg: `Contributed to "${chapter.title}" — refreshing.` });
+      setTick((t) => t + 1);
+    } catch (e) {
+      setStatus({ kind: 'err', msg: e.message });
+    } finally {
+      setBusyId(null); setBusyKind(null);
     }
   };
 
@@ -3410,8 +3494,14 @@ function BankTab() {
           className="w-full bg-[var(--bg-elev)] border border-[var(--border)] rounded px-3 py-2 text-sm"
         />
         {status && (
-          <div className={`text-sm ${status.kind === 'ok' ? 'text-[var(--success-text)]' : 'text-[var(--danger-text)]'}`}>
-            {status.kind === 'ok' ? '✓ ' : ''}{status.msg}
+          <div className={`text-sm rounded-lg px-3 py-2 ${
+            status.kind === 'ok'
+              ? 'bg-[var(--success-bg)] text-[var(--success-text)]'
+              : status.kind === 'err'
+              ? 'bg-[var(--danger-bg)] text-[var(--danger-text)]'
+              : 'bg-[var(--accent-soft)] text-[var(--accent-text)]'
+          }`}>
+            {status.kind === 'ok' ? '✓ ' : status.kind === 'info' ? '… ' : ''}{status.msg}
           </div>
         )}
       </div>
@@ -3437,8 +3527,10 @@ function BankTab() {
                   key={ch.id}
                   chapter={ch}
                   onDownload={() => downloadChapter(ch)}
-                  busy={downloading === ch.id}
+                  onContribute={(stages) => contributeChapter(ch, stages)}
+                  busy={busyId === ch.id ? busyKind : null}
                   downloaded={localChapterIds.has(ch.id)}
+                  canContribute={!!session && !!apiKey}
                 />
               ))}
             </ul>
