@@ -560,6 +560,26 @@ function makeApiClient(getToken) {
     bankMeta: (username) => call(`/bank/${encodeURIComponent(username)}/meta`),
     deleteMyBank: () => call('/bank', { method: 'DELETE', auth: true }),
     listBanks: () => call('/banks'),
+
+    // ---- collaborative chapters ----
+    listChapters: () => call('/chapters'),
+    getChapter: (id) => call(`/chapters/${encodeURIComponent(id)}`),
+    createChapter: ({ subject, title, filename, size_bytes }) =>
+      call('/chapters', { method: 'POST', body: { subject, title, filename, size_bytes }, auth: true }),
+    deleteChapter: (id) => call(`/chapters/${encodeURIComponent(id)}`, { method: 'DELETE', auth: true }),
+    putChapterStage: async (id, stage, payload) => {
+      const t = getToken();
+      if (!t) throw new ApiError(401, 'not signed in');
+      const body = typeof payload === 'string' ? payload : JSON.stringify(payload);
+      const res = await fetch(`${API_BASE}/chapters/${encodeURIComponent(id)}/stage/${encodeURIComponent(stage)}`, {
+        method: 'PUT',
+        headers: { 'Authorization': `Bearer ${t}`, 'Content-Type': 'application/json' },
+        body,
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new ApiError(res.status, data?.error || `HTTP ${res.status}`);
+      return data;
+    },
   };
 }
 
@@ -1127,6 +1147,69 @@ function ExtractionPreview({ data }) {
 }
 
 // ---------- file row ----------
+function PublishToBankButton({ file, extraction, qbank }) {
+  const { api, session, setFiles } = useApp();
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState(null);
+
+  if (!session) return null;
+  // Need at least an extraction to publish anything meaningful.
+  if (!extraction) return null;
+
+  const publish = async () => {
+    if (busy) return;
+    setBusy(true);
+    setStatus(null);
+    try {
+      // 1. Ensure chapter exists (POST is idempotent by uploader+subject+title).
+      let chapterId = file.chapter_id;
+      if (!chapterId) {
+        const created = await api.createChapter({
+          subject: file.subject,
+          title: file.chapter,
+          filename: file.filename,
+          size_bytes: file.size_bytes,
+        });
+        chapterId = created.id;
+        // Persist the link on the file record.
+        setFiles((prev) => prev.map((f) => f.file_id === file.file_id ? { ...f, chapter_id: chapterId } : f));
+      }
+      // 2. Push each stage we have locally.
+      const pushes = [];
+      if (extraction) pushes.push(['extraction', extraction]);
+      if (qbank?.mc?.length) pushes.push(['mc', qbank.mc]);
+      if (qbank?.twoPart?.length) pushes.push(['two_part', qbank.twoPart]);
+      if (qbank?.short?.length) pushes.push(['short', qbank.short]);
+      for (const [stage, payload] of pushes) {
+        await api.putChapterStage(chapterId, stage, payload);
+      }
+      setStatus({ kind: 'ok', msg: `Published ${pushes.length} stage${pushes.length === 1 ? '' : 's'}` });
+    } catch (e) {
+      setStatus({ kind: 'err', msg: e.message });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-2">
+      {status && (
+        <span className={`text-[10px] ${status.kind === 'ok' ? 'text-[var(--success-text)]' : 'text-[var(--danger-text)]'}`}>
+          {status.kind === 'ok' ? '✓' : '!'} {status.msg}
+        </span>
+      )}
+      <button
+        onClick={publish}
+        disabled={busy}
+        title={file.chapter_id ? `Update chapter ${file.chapter_id}` : 'Publish this chapter to the shared Bank'}
+        className="text-xs px-2 py-1 border border-[var(--accent-border)] text-[var(--accent-text)] hover:bg-[var(--accent-soft)] disabled:opacity-40 rounded font-medium"
+      >
+        {busy ? 'Publishing…' : file.chapter_id ? 'Update bank' : 'Publish to bank'}
+      </button>
+    </div>
+  );
+}
+
 function FileRow({ file, extraction, qbank, busyStage, onProcess, onRemove, readOnly }) {
   const [open, setOpen] = useState(false);
   const mcCount = qbank?.mc?.length || 0;
@@ -1191,6 +1274,7 @@ function FileRow({ file, extraction, qbank, busyStage, onProcess, onRemove, read
             {extraction ? 'Finish' : 'Process'}
           </button>
         )}
+        {!readOnly && <PublishToBankButton file={file} extraction={extraction} qbank={qbank} />}
         {!readOnly && (
           <button onClick={onRemove} className="text-xs text-[var(--text-muted)] hover:text-[var(--danger-text)] px-2" title="Remove">✕</button>
         )}
@@ -2620,6 +2704,98 @@ function SettingsPanel({ onClose }) {
   );
 }
 
+// ---------- bulk publish to chapter bank ----------
+function PublishAllPanel() {
+  const { api, session, files, extractions, questions, setFiles } = useApp();
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState(null);
+
+  const publishable = files.filter((f) => extractions[f.file_id]);
+  if (publishable.length === 0) return null;
+
+  const allLinked = publishable.every((f) => f.chapter_id);
+
+  const publishAll = async () => {
+    if (busy) return;
+    setBusy(true);
+    setStatus({ kind: 'info', msg: `Publishing ${publishable.length} chapter${publishable.length === 1 ? '' : 's'}…` });
+    let okCount = 0;
+    let errCount = 0;
+    const lastErr = { msg: '' };
+    for (const f of publishable) {
+      try {
+        let chapterId = f.chapter_id;
+        if (!chapterId) {
+          const created = await api.createChapter({
+            subject: f.subject,
+            title: f.chapter,
+            filename: f.filename,
+            size_bytes: f.size_bytes,
+          });
+          chapterId = created.id;
+          // eslint-disable-next-line no-loop-func
+          setFiles((prev) => prev.map((x) => x.file_id === f.file_id ? { ...x, chapter_id: chapterId } : x));
+        }
+        const ext = extractions[f.file_id];
+        const qb = questions[f.file_id] || {};
+        const pushes = [];
+        if (ext) pushes.push(['extraction', ext]);
+        if (qb.mc?.length) pushes.push(['mc', qb.mc]);
+        if (qb.twoPart?.length) pushes.push(['two_part', qb.twoPart]);
+        if (qb.short?.length) pushes.push(['short', qb.short]);
+        for (const [stage, payload] of pushes) {
+          // eslint-disable-next-line no-await-in-loop
+          await api.putChapterStage(chapterId, stage, payload);
+        }
+        okCount++;
+      } catch (e) {
+        errCount++;
+        lastErr.msg = e.message;
+      }
+    }
+    setBusy(false);
+    if (errCount === 0) {
+      setStatus({ kind: 'ok', msg: `Published ${okCount} chapter${okCount === 1 ? '' : 's'} to the Bank.` });
+    } else {
+      setStatus({ kind: 'err', msg: `${okCount} ok, ${errCount} failed. Last error: ${lastErr.msg}` });
+    }
+  };
+
+  return (
+    <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-5 space-y-3">
+      <div className="flex items-baseline justify-between gap-2">
+        <h3 className="font-semibold text-[var(--text-strong)]">Publish to Bank</h3>
+        <span className="text-xs text-[var(--text-faint)]">
+          {publishable.length} chapter{publishable.length === 1 ? '' : 's'} ready
+        </span>
+      </div>
+      <p className="text-sm text-[var(--text-muted)]">
+        {allLinked
+          ? <>All your local chapters are already published. Click below to push any newer stages.</>
+          : <>Each local chapter becomes its own row in the shared Bank, with stage badges showing what's done. Friends signed in to the same Bank can quiz from or contribute to them.</>}
+      </p>
+      <div className="flex flex-col sm:flex-row gap-2">
+        <button
+          onClick={publishAll}
+          disabled={busy}
+          className="flex-1 bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] disabled:opacity-40 rounded-lg py-2 text-sm font-medium"
+        >
+          {busy ? 'Publishing…' : allLinked ? 'Update all in Bank' : `Publish all ${publishable.length} to Bank`}
+        </button>
+      </div>
+      {status && (
+        <p className={`text-xs ${
+          status.kind === 'ok' ? 'text-[var(--success-text)]' :
+          status.kind === 'err' ? 'text-[var(--danger-text)]' :
+          'text-[var(--text-muted)]'
+        }`}>
+          {status.kind === 'ok' ? '✓ ' : ''}{status.msg}
+        </p>
+      )}
+    </div>
+  );
+}
+
 // ---------- shell ----------
 function CloudBankPanel() {
   const { session, api, files, extractions, questions, setFiles, setExtraction, setQuestionsFor } = useApp();
@@ -3035,6 +3211,222 @@ function ServerStatsPayload({ data }) {
   );
 }
 
+// ---------- collaborative bank (chapters) ----------
+function StageDot({ stage, label }) {
+  const done = stage?.done;
+  const partial = stage?.terms_missing > 0;
+  const cls = done && !partial
+    ? 'bg-[var(--success-bg-strong)] text-[var(--success-text)] border-[var(--success-border)]'
+    : done && partial
+    ? 'bg-[var(--warning-bg)] text-[var(--warning-text)] border-[var(--warning-text-strong)]'
+    : 'bg-[var(--bg-elev)] text-[var(--text-faint)] border-[var(--border)]';
+  let tooltip = `${label}: ${done ? 'done' : 'pending'}`;
+  if (stage?.by) tooltip += ` · by @${stage.by}`;
+  if (stage?.count != null) tooltip += ` · ${stage.count} items`;
+  if (stage?.term_coverage) tooltip += ` · term coverage: ${stage.term_coverage}`;
+  return (
+    <span
+      title={tooltip}
+      className={`text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded border ${cls}`}
+    >
+      {label}{stage?.count != null ? ` ${stage.count}` : ''}
+    </span>
+  );
+}
+
+function ChapterRow({ chapter, onDownload, busy, downloaded }) {
+  const ago = (() => {
+    const ms = Date.now() - chapter.updated_at;
+    const m = Math.round(ms / 60000);
+    if (m < 1) return 'just now';
+    if (m < 60) return `${m}m ago`;
+    const h = Math.round(m / 60);
+    if (h < 24) return `${h}h ago`;
+    return `${Math.round(h / 24)}d ago`;
+  })();
+
+  return (
+    <li className="py-3 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
+      <div className="flex-1 min-w-0">
+        <div className="flex items-baseline gap-2 flex-wrap">
+          <span className="text-[var(--text)] font-medium truncate">{chapter.title}</span>
+          {chapter.status === 'complete' && (
+            <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-[var(--success-bg)] text-[var(--success-text)]">
+              ✓ complete
+            </span>
+          )}
+          {chapter.status === 'partial' && (
+            <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-[var(--warning-bg)] text-[var(--warning-text)]">
+              partial
+            </span>
+          )}
+          {chapter.status === 'pending' && (
+            <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-[var(--bg-elev)] text-[var(--text-faint)] border border-[var(--border)]">
+              needs extraction
+            </span>
+          )}
+        </div>
+        <div className="text-xs text-[var(--text-faint)] mt-0.5">
+          {chapter.filename} · {ago}
+        </div>
+        <div className="flex flex-wrap gap-1.5 mt-1.5">
+          <StageDot stage={chapter.stages.extraction} label="extract" />
+          <StageDot stage={chapter.stages.mc} label="mc" />
+          <StageDot stage={chapter.stages.two_part} label="two-part" />
+          <StageDot stage={chapter.stages.short} label="short" />
+        </div>
+      </div>
+      <div className="flex sm:flex-col items-end gap-2 shrink-0">
+        <button
+          onClick={onDownload}
+          disabled={busy || chapter.status === 'pending'}
+          className="text-xs px-3 py-1.5 bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] disabled:opacity-40 rounded font-medium whitespace-nowrap"
+        >
+          {busy ? 'Downloading…' : downloaded ? 'Re-download' : 'Download'}
+        </button>
+      </div>
+    </li>
+  );
+}
+
+function BankTab() {
+  const { api, session, setFiles, setExtraction, setQuestionsFor, files } = useApp();
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState('');
+  const [tick, setTick] = useState(0);
+  const [downloading, setDownloading] = useState(null); // chapter id
+  const [status, setStatus] = useState(null);
+  const [filter, setFilter] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    api.listChapters()
+      .then((d) => { if (!cancelled) setData(d); })
+      .catch((e) => { if (!cancelled) setErr(e.message); });
+    return () => { cancelled = true; };
+  }, [api, tick]);
+
+  const downloadChapter = async (chapter) => {
+    if (downloading) return;
+    setDownloading(chapter.id);
+    setStatus(null);
+    try {
+      const full = await api.getChapter(chapter.id);
+      // Insert as a local file_record so the Library + StudyView see it.
+      const localFileId = `chap_${full.id}`;
+      const fileRecord = {
+        file_id: localFileId,
+        file_uri: 'cloud',
+        mime_type: 'application/pdf',
+        filename: full.filename,
+        size_bytes: full.size_bytes || 0,
+        subject: full.subject,
+        chapter: full.title,
+        uploaded_at: new Date(full.created_at).toISOString(),
+        chapter_id: full.id,
+      };
+      setFiles((prev) => [...prev.filter((f) => f.file_id !== localFileId && f.chapter_id !== full.id), fileRecord]);
+      if (full.extraction) setExtraction(localFileId, full.extraction);
+      setQuestionsFor(localFileId, {
+        mc: full.mc || [],
+        twoPart: full.two_part || [],
+        short: full.short || [],
+        generated_at: new Date(full.updated_at).toISOString(),
+      });
+      setStatus({ kind: 'ok', msg: `Downloaded "${full.title}"` });
+    } catch (e) {
+      setStatus({ kind: 'err', msg: e.message });
+    } finally {
+      setDownloading(null);
+    }
+  };
+
+  if (err) {
+    return (
+      <div className="bg-[var(--danger-bg)] border border-[var(--danger-border)] rounded-2xl px-4 py-3 text-sm text-[var(--danger-text)] flex items-center justify-between">
+        <span>Could not load bank: {err}</span>
+        <button onClick={() => setTick((t) => t + 1)} className="text-xs px-3 py-1 border border-[var(--danger-border)] rounded">Retry</button>
+      </div>
+    );
+  }
+  if (!data) return <div className="text-sm text-[var(--text-muted)]">Loading bank…</div>;
+
+  // Group by uploader, then sort uploaders by their latest chapter.
+  const byUploader = {};
+  for (const ch of data.chapters) {
+    if (!byUploader[ch.uploader_username]) byUploader[ch.uploader_username] = [];
+    byUploader[ch.uploader_username].push(ch);
+  }
+  const localChapterIds = new Set(files.map((f) => f.chapter_id).filter(Boolean));
+  const uploaders = Object.keys(byUploader).sort((a, b) => {
+    const aMax = Math.max(...byUploader[a].map((c) => c.updated_at));
+    const bMax = Math.max(...byUploader[b].map((c) => c.updated_at));
+    return bMax - aMax;
+  });
+
+  const filterLc = filter.toLowerCase();
+  const filtered = (chs) =>
+    filterLc ? chs.filter((c) =>
+      c.title.toLowerCase().includes(filterLc) ||
+      c.subject.toLowerCase().includes(filterLc) ||
+      c.filename.toLowerCase().includes(filterLc)
+    ) : chs;
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-5 space-y-3">
+        <div>
+          <h2 className="font-semibold text-[var(--text-strong)]">Bank</h2>
+          <p className="text-sm text-[var(--text-muted)]">
+            Every chapter anyone has published. Stage badges show what's been generated. Download any chapter into your local Library to quiz from it.
+          </p>
+        </div>
+        <input
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          placeholder="Filter by subject, chapter, filename…"
+          className="w-full bg-[var(--bg-elev)] border border-[var(--border)] rounded px-3 py-2 text-sm"
+        />
+        {status && (
+          <div className={`text-sm ${status.kind === 'ok' ? 'text-[var(--success-text)]' : 'text-[var(--danger-text)]'}`}>
+            {status.kind === 'ok' ? '✓ ' : ''}{status.msg}
+          </div>
+        )}
+      </div>
+
+      {data.chapters.length === 0 && (
+        <div className="bg-[var(--bg-card-soft)] border border-dashed border-[var(--border-soft)] rounded-2xl p-6 text-sm text-[var(--text-muted)]">
+          No chapters published yet. Publish your local chapters from the Library tab.
+        </div>
+      )}
+
+      {uploaders.map((uploader) => {
+        const list = filtered(byUploader[uploader]);
+        if (!list.length) return null;
+        return (
+          <div key={uploader} className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-5">
+            <div className="flex items-baseline justify-between mb-2">
+              <h3 className="font-semibold text-[var(--text-strong)]">@{uploader}</h3>
+              <span className="text-xs text-[var(--text-faint)]">{list.length} chapter{list.length === 1 ? '' : 's'}</span>
+            </div>
+            <ul className="divide-y divide-[var(--border-soft)]">
+              {list.map((ch) => (
+                <ChapterRow
+                  key={ch.id}
+                  chapter={ch}
+                  onDownload={() => downloadChapter(ch)}
+                  busy={downloading === ch.id}
+                  downloaded={localChapterIds.has(ch.id)}
+                />
+              ))}
+            </ul>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function BanksBrowser() {
   const { api, session, setFiles, setExtraction, setQuestionsFor, files } = useApp();
   const [data, setData] = useState(null);
@@ -3244,10 +3636,10 @@ function Shell() {
 
   const hasLibrary = apiKey || readOnly || session;
   const tabs = readOnly
-    ? [['study', 'Study'], ['stats', 'Stats'], ['leaderboard', 'Leaderboard'], ['banks', 'Banks'], ['library', 'Library']]
+    ? [['study', 'Study'], ['stats', 'Stats'], ['leaderboard', 'Leaderboard'], ['banks', 'Bank'], ['library', 'Library']]
     : hasLibrary
-      ? [['library', 'Library'], ['study', 'Study'], ['stats', 'Stats'], ['leaderboard', 'Leaderboard'], ['banks', 'Banks']]
-      : [['stats', 'Stats'], ['leaderboard', 'Leaderboard'], ['banks', 'Banks'], ['study', 'Study']];
+      ? [['library', 'Library'], ['study', 'Study'], ['stats', 'Stats'], ['leaderboard', 'Leaderboard'], ['banks', 'Bank']]
+      : [['stats', 'Stats'], ['leaderboard', 'Leaderboard'], ['banks', 'Bank'], ['study', 'Study']];
   useEffect(() => { if (readOnly) setTab('study'); else if (!hasLibrary) setTab('stats'); }, [readOnly, hasLibrary]);
   useEffect(() => { setProfileUser(null); }, [tab]);
 
@@ -3315,7 +3707,7 @@ function Shell() {
           {tab === 'library' && (
             <>
               {!readOnly && apiKey && <UploadPanel />}
-              {session && <CloudBankPanel />}
+              {session && <PublishAllPanel />}
               {fullyProcessed > 0 && (
                 <>
                   {/* SyncPanel (GitHub auto-push) intentionally hidden — Cloudflare CloudBankPanel replaces it. */}
@@ -3344,7 +3736,7 @@ function Shell() {
               ? <UserProfile username={profileUser} onBack={() => setProfileUser(null)} />
               : <Leaderboard onPickUser={(u) => setProfileUser(u)} />
           )}
-          {tab === 'banks' && <BanksBrowser />}
+          {tab === 'banks' && <BankTab />}
         </div>
       </main>
 
