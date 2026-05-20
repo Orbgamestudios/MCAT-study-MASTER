@@ -121,9 +121,55 @@ function playSfx(name) {
     }
     const a = _sfxCache[name];
     a.currentTime = 0;
-    a.play().catch(() => {}); // user-gesture / autoplay errors are non-fatal
+    a.play().catch(() => {});
   } catch {}
 }
+
+// Web-Audio synthesized clicks for UI feedback (no asset files needed).
+let _audioCtx = null;
+function _ctx() {
+  try {
+    if (!_audioCtx) _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (_audioCtx.state === 'suspended') _audioCtx.resume();
+    return _audioCtx;
+  } catch { return null; }
+}
+function _beep(freq, durMs, { vol = 0.08, type = 'sine', startAt = 0 } = {}) {
+  const ctx = _ctx();
+  if (!ctx) return;
+  const t0 = ctx.currentTime + startAt;
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = type;
+  osc.frequency.setValueAtTime(freq, t0);
+  gain.gain.setValueAtTime(0, t0);
+  gain.gain.linearRampToValueAtTime(vol, t0 + 0.005);
+  gain.gain.exponentialRampToValueAtTime(0.0001, t0 + durMs / 1000);
+  osc.connect(gain).connect(ctx.destination);
+  osc.start(t0);
+  osc.stop(t0 + durMs / 1000 + 0.02);
+}
+
+// Soft "tick" for any HUD button tap.
+function sfxTap() { _beep(900, 50, { vol: 0.05, type: 'triangle' }); }
+
+// Ascending 3-note arpeggio when a quiz starts.
+function sfxQuizStart() {
+  _beep(523, 110, { vol: 0.09, type: 'triangle' });             // C5
+  _beep(659, 110, { vol: 0.09, type: 'triangle', startAt: 0.09 }); // E5
+  _beep(784, 180, { vol: 0.09, type: 'triangle', startAt: 0.18 }); // G5
+}
+
+// ---------- vibration ----------
+function vibrate(pattern) {
+  try { if (navigator.vibrate) navigator.vibrate(pattern); } catch {}
+}
+function vibrateTap() { vibrate(12); }
+function vibrateCorrect() { vibrate([30, 60, 30]); }
+function vibrateWrong() { vibrate(220); }
+
+// HUD click helper — pairs the tap sound with a subtle vibration.
+function hudClick() { sfxTap(); vibrateTap(); }
 
 const storage = {
   get(key, fallback = null) {
@@ -1920,6 +1966,7 @@ function QuizLauncher({ onStart }) {
         onClick={() => {
           const picked = shuffle(pool).slice(0, Math.min(count, pool.length));
           if (!picked.length) return;
+          sfxQuizStart();
           onStart(picked);
         }}
         disabled={pool.length === 0}
@@ -2018,6 +2065,7 @@ function MCQuestion({ item, onAnswer, nextSlot, onFlag }) {
     setPicked(entry);
     const correct = entry.origIdx === item.q.correct_index;
     playSfx(correct ? 'correct' : 'wrong');
+    if (correct) vibrateCorrect(); else vibrateWrong();
     onAnswer({ correct, user_answer: entry.text });
   };
 
@@ -2039,6 +2087,7 @@ function MCQuestion({ item, onAnswer, nextSlot, onFlag }) {
               key={i}
               onClick={() => submit(entry)}
               disabled={picked !== null}
+              data-no-haptic
               className={`w-full text-left border rounded-lg px-3 py-2.5 text-sm transition-colors ${cls}`}
             >
               <span className="text-[var(--text-faint)] mr-2">{String.fromCharCode(65 + i)}.</span>
@@ -2199,7 +2248,9 @@ function SinglePart({ part, onAnswer, nextSlot, continueLabel }) {
   const submit = (entry) => {
     if (picked !== null) return;
     setPicked(entry);
-    playSfx(entry.origIdx === part.correct_index ? 'correct' : 'wrong');
+    const correct = entry.origIdx === part.correct_index;
+    playSfx(correct ? 'correct' : 'wrong');
+    if (correct) vibrateCorrect(); else vibrateWrong();
   };
 
   const onContinue = () => {
@@ -2227,6 +2278,7 @@ function SinglePart({ part, onAnswer, nextSlot, continueLabel }) {
               key={i}
               onClick={() => submit(entry)}
               disabled={picked !== null}
+              data-no-haptic
               className={`w-full text-left border rounded-lg px-3 py-2.5 text-sm transition-colors ${cls}`}
             >
               <span className="text-[var(--text-faint)] mr-2">{String.fromCharCode(65 + i)}.</span>
@@ -2669,31 +2721,65 @@ function HomeView({ onGoToStudy }) {
 
   const launch = () => {
     if (!suggested.length) return;
+    sfxQuizStart();
     window.dispatchEvent(new CustomEvent('mcat:startQuiz', { detail: { items: suggested } }));
     onGoToStudy?.();
   };
 
   return (
     <div className="space-y-4">
-      <div className="relative bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-6 overflow-hidden">
-        <div className="flex items-start gap-3 sm:gap-5">
-          <div className="flex-1 min-w-0 space-y-3">
-            <div>
-              <div className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Welcome back</div>
-              <h1 className="text-2xl sm:text-3xl font-bold text-[var(--text-strong)]">@{username}</h1>
-            </div>
-            {/* Speech bubble */}
-            <div className="relative bg-[var(--bg-elev)] border border-[var(--border)] rounded-2xl rounded-bl-sm px-4 py-3 text-[var(--text)] text-sm sm:text-base leading-relaxed">
-              {quote}
-            </div>
+      {/* Speech-bubble + bird hero. Bird is intentionally large and overlaps the
+          bottom-right; bubble tail points to its mouth. */}
+      <div className="relative bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl px-4 sm:px-6 pt-5 sm:pt-6 pb-2 sm:pb-3 overflow-hidden min-h-[280px] sm:min-h-[340px]">
+        <div className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Welcome back</div>
+        <h1 className="text-2xl sm:text-3xl font-bold text-[var(--text-strong)] mb-3">@{username}</h1>
+
+        {/* Speech bubble — sits in upper-left, ~60% width, tail points down-right toward bird */}
+        <div className="relative w-[78%] sm:w-[62%] max-w-md">
+          <div className="bg-[var(--bg-elev)] border-2 border-[var(--text-strong)] rounded-3xl px-4 py-3 sm:px-5 sm:py-4 text-[var(--text)] text-sm sm:text-base leading-relaxed shadow-sm">
+            {quote}
           </div>
-          <img
-            src="assets/bird.png"
-            alt=""
-            className="w-24 sm:w-32 md:w-40 shrink-0 select-none"
-            draggable="false"
+          {/* Tail: black outline triangle + inner fill triangle, pointing toward bird (down-right). */}
+          <div
+            aria-hidden="true"
+            className="absolute"
+            style={{
+              right: '-2px',
+              bottom: '-22px',
+              width: 0,
+              height: 0,
+              borderTop: '24px solid var(--text-strong)',
+              borderLeft: '14px solid transparent',
+              borderRight: '0 solid transparent',
+            }}
+          />
+          <div
+            aria-hidden="true"
+            className="absolute"
+            style={{
+              right: '4px',
+              bottom: '-15px',
+              width: 0,
+              height: 0,
+              borderTop: '18px solid var(--bg-elev)',
+              borderLeft: '10px solid transparent',
+              borderRight: '0 solid transparent',
+            }}
           />
         </div>
+
+        {/* Bird — large, anchored bottom-right, partially extending below the card edge */}
+        <img
+          src="assets/bird.png"
+          alt=""
+          draggable="false"
+          className="absolute select-none pointer-events-none"
+          style={{
+            right: '-18px',
+            bottom: '-30px',
+            width: 'clamp(180px, 42vw, 260px)',
+          }}
+        />
       </div>
 
       {suggested.length > 0 ? (
@@ -4571,10 +4657,24 @@ function ServerStatsView() {
 
 function Shell() {
   const { apiKey, setApiKey, attempts, readOnly, files, extractions, questions, session, setSession, pendingSync, syncBusy } = useApp();
-  const [tab, setTab] = useState('library');
+  const [tab, setTab] = useState('home');
   const [showAccount, setShowAccount] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [profileUser, setProfileUser] = useState(null);
+
+  // Global HUD click feedback: tap sound + short vibration on any non-content button.
+  // Quiz answer buttons (MC/SinglePart) carry data-no-haptic so they don't double up
+  // with the correct/wrong sound that already fires on submit.
+  useEffect(() => {
+    const onClick = (e) => {
+      const btn = e.target.closest('button');
+      if (!btn) return;
+      if (btn.hasAttribute('data-no-haptic')) return;
+      hudClick();
+    };
+    document.addEventListener('click', onClick, true);
+    return () => document.removeEventListener('click', onClick, true);
+  }, []);
 
   const hasLibrary = apiKey || readOnly || session;
   const tabs = readOnly
