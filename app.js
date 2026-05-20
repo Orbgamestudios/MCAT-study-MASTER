@@ -2103,12 +2103,54 @@ function MatchingQuestion({ item, onAnswer, nextSlot }) {
   );
 }
 
+// ---------- quiz: timer hook ----------
+function useQuizTimer() {
+  const [startedAt] = useState(() => Date.now());
+  const [pausedAt, setPausedAt] = useState(null);
+  const [banked, setBanked] = useState(0);
+  const [display, setDisplay] = useState('0:00');
+
+  const pause = useCallback(() => {
+    if (!pausedAt) setPausedAt(Date.now());
+  }, [pausedAt]);
+
+  const resume = useCallback(() => {
+    if (pausedAt) {
+      setBanked((b) => b + (Date.now() - pausedAt));
+      setPausedAt(null);
+    }
+  }, [pausedAt]);
+
+  useEffect(() => {
+    if (pausedAt) return;
+    const tick = () => {
+      const elapsed = Math.floor((Date.now() - startedAt - banked) / 1000);
+      const m = Math.floor(elapsed / 60);
+      const s = elapsed % 60;
+      setDisplay(`${m}:${s.toString().padStart(2, '0')}`);
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [startedAt, banked, pausedAt]);
+
+  return { display, pause, resume, paused: !!pausedAt };
+}
+
 // ---------- quiz: runner ----------
-function QuizRunner({ items, onExit }) {
+function QuizRunner({ items, onExit, onPause }) {
   const { addAttempt } = useApp();
   const [index, setIndex] = useState(0);
   const [results, setResults] = useState([]); // [{item, correct, user_answer}]
   const [answered, setAnswered] = useState(false);
+  const timer = useQuizTimer();
+
+  // Expose pause/resume so parent can call them when tab visibility changes
+  const timerRef = useRef(timer);
+  timerRef.current = timer;
+  useEffect(() => {
+    if (onPause) onPause(timerRef);
+  }, [onPause]);
 
   const item = items[index];
   const isLast = index === items.length - 1;
@@ -2139,17 +2181,20 @@ function QuizRunner({ items, onExit }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div className="text-xs text-[var(--text-muted)]">
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-xs text-[var(--text-muted)] min-w-0">
           <span className="text-[var(--text-strong)]">{item.chapter}</span>
-          <span className="ml-2">· Question {index + 1} of {items.length}</span>
+          <span className="ml-2">· {index + 1}/{items.length}</span>
         </div>
-        <button
-          onClick={() => onExit(results)}
-          className="text-xs text-[var(--text-muted)] hover:text-[var(--danger-text)] border border-[var(--border)] rounded px-2 py-1"
-        >
-          End quiz
-        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          <span className="text-xs font-mono text-[var(--text-muted)]">{timer.display}</span>
+          <button
+            onClick={() => onExit(results, timer.display)}
+            className="text-xs text-[var(--text-muted)] hover:text-[var(--danger-text)] border border-[var(--border)] rounded px-2 py-1"
+          >
+            End quiz
+          </button>
+        </div>
       </div>
 
       <div className="h-1 bg-[var(--bg-hover)] rounded-full overflow-hidden">
@@ -2163,7 +2208,7 @@ function QuizRunner({ items, onExit }) {
         {(() => {
           const nextBtn = answered ? (
             <button
-              onClick={isLast ? () => onExit([...results]) : next}
+              onClick={isLast ? () => onExit([...results], timer.display) : next}
               className="bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] rounded px-4 py-2 text-sm font-medium shrink-0"
             >
               {isLast ? 'See results' : 'Next →'}
@@ -2182,7 +2227,7 @@ function QuizRunner({ items, onExit }) {
 }
 
 // ---------- quiz: summary ----------
-function QuizSummary({ results, onRestart, onDrillMisses }) {
+function QuizSummary({ results, elapsedTime, onRestart, onDrillMisses }) {
   const correct = results.filter((r) => r.correct).length;
   const total = results.length;
   const pct = total ? Math.round((correct / total) * 100) : 0;
@@ -2194,6 +2239,7 @@ function QuizSummary({ results, onRestart, onDrillMisses }) {
         <div className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Quiz complete</div>
         <div className="text-5xl font-bold mt-2">{pct}%</div>
         <div className="text-sm text-[var(--text-muted)] mt-1">{correct} of {total} correct</div>
+        {elapsedTime && <div className="text-xs text-[var(--text-faint)] mt-1 font-mono">{elapsedTime}</div>}
       </div>
 
       {misses.length > 0 && (
@@ -2240,20 +2286,46 @@ function StudyView() {
   const [phase, setPhase] = useState('launcher');
   const [items, setItems] = useState([]);
   const [results, setResults] = useState([]);
+  const [elapsedTime, setElapsedTime] = useState('0:00');
+  const timerRefHolder = useRef(null);
 
-  const start = (picked) => { setItems(picked); setResults([]); setPhase('active'); };
-  const end = (r) => { setResults(r); setPhase('summary'); };
-  const restart = () => { setItems([]); setResults([]); setPhase('launcher'); };
+  const start = (picked) => { setItems(picked); setResults([]); setElapsedTime('0:00'); setPhase('active'); };
+  const end = (r, time) => { setResults(r); setElapsedTime(time || '0:00'); setPhase('summary'); };
+  const restart = () => { setItems([]); setResults([]); setPhase('launcher'); timerRefHolder.current = null; };
   const drillMisses = () => {
     const missedItems = results.filter((r) => !r.correct).map((r) => r.item);
     setItems(shuffle(missedItems));
     setResults([]);
     setPhase('active');
+    timerRefHolder.current = null;
   };
 
+  // Pause/resume the quiz timer when this view becomes hidden/visible.
+  // The parent keeps us mounted via display:none so state is preserved.
+  useEffect(() => {
+    const wrapper = document.getElementById('study-view-root')?.parentElement;
+    if (!wrapper) return;
+    const observer = new MutationObserver(() => {
+      if (!timerRefHolder.current?.current) return;
+      const hidden = wrapper.style.display === 'none';
+      if (hidden) timerRefHolder.current.current.pause();
+      else timerRefHolder.current.current.resume();
+    });
+    observer.observe(wrapper, { attributes: true, attributeFilter: ['style'] });
+    return () => observer.disconnect();
+  }, [phase]);
+
+  const handleTimerRef = useCallback((ref) => { timerRefHolder.current = ref; }, []);
+
   if (phase === 'launcher') return <QuizLauncher onStart={start} />;
-  if (phase === 'active') return <QuizRunner items={items} onExit={end} />;
-  return <QuizSummary results={results} onRestart={restart} onDrillMisses={drillMisses} />;
+  if (phase === 'active') {
+    return (
+      <div id="study-view-root">
+        <QuizRunner items={items} onExit={end} onPause={handleTimerRef} />
+      </div>
+    );
+  }
+  return <QuizSummary results={results} elapsedTime={elapsedTime} onRestart={restart} onDrillMisses={drillMisses} />;
 }
 
 // ---------- github sync panel ----------
@@ -3438,7 +3510,29 @@ function BankTab() {
           await api.putChapterStage(chapter.id, 'short', short);
         }
       }
-      setStatus({ kind: 'ok', msg: `Contributed to "${chapter.title}" — refreshing.` });
+      // If the user already has this chapter in their local library, refresh it
+      // so they get the newly contributed stages without a manual re-download.
+      const localFile = files.find((f) => f.chapter_id === chapter.id);
+      if (localFile) {
+        setStatus({ kind: 'info', msg: `Refreshing local copy of "${chapter.title}"…` });
+        try {
+          const refreshed = await api.getChapter(chapter.id);
+          const localFileId = `chap_${refreshed.id}`;
+          const fileRecord = {
+            file_id: localFileId, file_uri: 'cloud', mime_type: 'application/pdf',
+            filename: refreshed.filename, size_bytes: refreshed.size_bytes || 0,
+            subject: refreshed.subject, chapter: refreshed.title,
+            uploaded_at: new Date(refreshed.created_at).toISOString(), chapter_id: refreshed.id,
+          };
+          setFiles((prev) => [...prev.filter((f) => f.file_id !== localFileId && f.chapter_id !== refreshed.id), fileRecord]);
+          if (refreshed.extraction) setExtraction(localFileId, refreshed.extraction);
+          setQuestionsFor(localFileId, {
+            mc: refreshed.mc || [], twoPart: refreshed.two_part || [],
+            short: refreshed.short || [], generated_at: new Date(refreshed.updated_at).toISOString(),
+          });
+        } catch {}
+      }
+      setStatus({ kind: 'ok', msg: `Contributed to "${chapter.title}"${localFile ? ' — local copy updated.' : ' — refreshing.'}` });
       setTick((t) => t + 1);
     } catch (e) {
       setStatus({ kind: 'err', msg: e.message });
@@ -3838,7 +3932,7 @@ function Shell() {
               <FileList />
             </>
           )}
-          {tab === 'study' && <StudyView />}
+          <div style={{ display: tab === 'study' ? undefined : 'none' }}><StudyView /></div>
           {tab === 'stats' && (
             <>
               {session && <ServerStatsView />}
