@@ -210,6 +210,15 @@ function makeClient(getKey) {
     });
   }
 
+  // -------------------------------------------------------------------------
+  //  PIPELINE PROMPTS — keep in lockstep with GEMINI_PROMPTS.md.
+  //  Every browser running this app (yours, your phone's, a contributor's)
+  //  sends THESE EXACT strings to whatever Gemini key it holds, so output
+  //  shape and quality stay consistent across users. If you tweak a prompt
+  //  below, mirror the change in GEMINI_PROMPTS.md and bump ?v=N on app.js
+  //  in index.html so contributors pull the new version.
+  // -------------------------------------------------------------------------
+
   // ---- extraction ----
   const EXTRACTION_SCHEMA = {
     type: 'OBJECT',

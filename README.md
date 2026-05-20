@@ -35,4 +35,8 @@ The local server is needed because browsers block loading sibling `.js` files fr
 - `index.html` — entry point
 - `app.js` — the entire app
 - `serve.js` — tiny static server for local dev
+- `apple-touch-icon.png` / `icon-512.png` — PWA icons
+- `gen-icon.js` — pure-Node icon generator
 - `data.json` *(optional)* — exported question bank for read-only public hosting
+- `GEMINI_PROMPTS.md` — single source of truth for what every contributor's Gemini is asked to do, per pipeline stage
+- `CHAPTER_PROCESSING.md` — same pipeline translated for Claude Code if you'd rather burn Claude tokens than Gemini quota
