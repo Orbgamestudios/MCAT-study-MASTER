@@ -3024,7 +3024,9 @@ function useQuizTimer() {
 
 // ---------- quiz: runner ----------
 function QuizRunner({ items, onExit, onPause }) {
-  const { addAttempt } = useApp();
+  const { addAttempt, flushSync } = useApp();
+  // Force-sync win/loss data to the server whenever a quiz ends.
+  const exitQuiz = (r, time) => { try { flushSync(); } catch {} onExit(r, time); };
   const [index, setIndex] = useState(0);
   const [results, setResults] = useState([]); // [{item, correct, user_answer}]
   const [answered, setAnswered] = useState(false);
@@ -3076,7 +3078,7 @@ function QuizRunner({ items, onExit, onPause }) {
         <div className="flex items-center gap-2 shrink-0">
           <span className="text-xs font-mono text-[var(--text-muted)]">{timer.display}</span>
           <button
-            onClick={() => onExit(results, timer.display)}
+            onClick={() => exitQuiz(results, timer.display)}
             className="text-xs text-[var(--text-muted)] hover:text-[var(--danger-text)] border border-[var(--border)] rounded px-2 py-1"
           >
             End quiz
@@ -3095,7 +3097,7 @@ function QuizRunner({ items, onExit, onPause }) {
         {(() => {
           const nextBtn = answered ? (
             <button
-              onClick={isLast ? () => onExit([...results], timer.display) : next}
+              onClick={isLast ? () => exitQuiz([...results], timer.display) : next}
               className="bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] rounded px-4 py-2 text-sm font-medium shrink-0"
             >
               {isLast ? 'See results' : 'Next →'}
@@ -3384,7 +3386,7 @@ function CarsQuestion({ q, index, picked, onPick, reveal }) {
 }
 
 function CarsRunner({ date, payload, onClose, alreadyDone }) {
-  const { addAttempt } = useApp();
+  const { addAttempt, flushSync } = useApp();
   const questions = payload.questions || [];
   const savedResult = alreadyDone ? (getCarsResults()[date] || null) : null;
   const [picks, setPicks] = useState(() => (savedResult && savedResult.picks) || {});
@@ -3432,6 +3434,9 @@ function CarsRunner({ date, payload, onClose, alreadyDone }) {
       });
       setCarsResult(date, { score, total: questions.length, completed_at: Date.now(), picks });
       window.dispatchEvent(new Event('mcat:carsDone'));
+      // Force-sync the freshly logged win/loss attempts. Deferred so the batched
+      // addAttempt state updates have flushed to localStorage before flushSync reads it.
+      setTimeout(() => { try { flushSync(); } catch {} }, 120);
     }
     setPhase('review');
     scrollTop();
