@@ -2859,15 +2859,40 @@ function StudyView() {
 }
 
 // ---------- home: bird hero ----------
-// The bird sits in normal document flow directly below the speech bubble, so:
-//  - the card height grows to fully contain the bird (no clipped lower body)
-//  - the gap between the bubble and the bird is always the same, whatever the
-//    quote length (a 2-line and a 4-line quote leave the same gap).
-// BIRD_GAP is the constant vertical gap; tweak if you want it tighter/looser.
-const BIRD_GAP = -8;     // px below the speech bubble (negative tucks the bird's transparent top up)
-const BIRD_SHIFT = -36;  // px horizontal nudge (negative = rightward overflow)
+// The bird sits in normal document flow directly below the speech bubble, so the
+// card grows to fully contain it and the gap to the bubble is constant for any
+// quote length. The offsets below are user-adjustable: drag the bird to position
+// it, the gap/shift are saved to localStorage. Read them off the on-screen badge
+// and tell me the values to lock in, then we remove the drag UI.
+const BIRD_POS_KEY = 'mcat:birdPos2';
+const BIRD_DEFAULT = { gap: -8, shift: -36 }; // gap = px below bubble, shift = px (neg = rightward)
 
 function BirdHero({ username, quote }) {
+  const [pos, setPos] = useState(() => {
+    const p = storage.get(BIRD_POS_KEY, null);
+    return p && typeof p.gap === 'number' && typeof p.shift === 'number' ? p : BIRD_DEFAULT;
+  });
+  const dragRef = useRef(null);
+
+  const onPointerDown = (e) => {
+    e.preventDefault();
+    dragRef.current = { startX: e.clientX, startY: e.clientY, startGap: pos.gap, startShift: pos.shift };
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
+  };
+  const onPointerMove = (e) => {
+    const s = dragRef.current;
+    if (!s) return;
+    const dx = e.clientX - s.startX;
+    const dy = e.clientY - s.startY;
+    // drag down -> larger gap; drag right -> more negative shift
+    setPos({ gap: Math.round(s.startGap + dy), shift: Math.round(s.startShift - dx) });
+  };
+  const onPointerUp = (e) => {
+    if (dragRef.current) { storage.set(BIRD_POS_KEY, pos); dragRef.current = null; }
+    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch {}
+  };
+  const reset = () => { setPos(BIRD_DEFAULT); storage.set(BIRD_POS_KEY, BIRD_DEFAULT); };
+
   return (
     <div className="relative bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl px-4 sm:px-6 pt-5 sm:pt-6 pb-0 overflow-hidden">
       <div className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Welcome back</div>
@@ -2880,21 +2905,43 @@ function BirdHero({ username, quote }) {
         </div>
       </div>
 
-      {/* Bird — in flow, so the card grows to contain it and the gap above stays constant. */}
+      {/* Bird — in flow, so the card grows to contain it and the gap above stays constant.
+          Draggable for positioning; offsets persist to localStorage. */}
       <img
         src="assets/bird.png"
         alt=""
         draggable="false"
-        className="block select-none pointer-events-none"
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
+        data-no-haptic
+        className="block select-none cursor-grab active:cursor-grabbing"
         style={{
           width: 'clamp(440px, 116vw, 680px)',
           maxWidth: 'none',
-          marginTop: `${BIRD_GAP}px`,
+          marginTop: `${pos.gap}px`,
           position: 'relative',
-          right: `${BIRD_SHIFT}px`,
+          right: `${pos.shift}px`,
           zIndex: 0,
+          touchAction: 'none',
+          WebkitUserSelect: 'none',
+          userSelect: 'none',
         }}
       />
+
+      {/* Temporary positioning readout — drag the bird, then send me these numbers. */}
+      <div className="absolute top-2 right-2 z-20 flex items-center gap-1">
+        <div className="bg-[var(--bg-elev)] border border-[var(--border-soft)] rounded-md px-2 py-1 text-[10px] font-mono text-[var(--text-muted)]">
+          gap:{pos.gap} · shift:{pos.shift}
+        </div>
+        <button
+          onClick={reset}
+          className="bg-[var(--bg-elev)] border border-[var(--border-soft)] rounded-md px-2 py-1 text-[10px] text-[var(--text-muted)] hover:bg-[var(--bg-hover)]"
+        >
+          reset
+        </button>
+      </div>
     </div>
   );
 }
