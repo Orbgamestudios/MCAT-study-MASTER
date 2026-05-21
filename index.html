@@ -13,15 +13,33 @@
 <link rel="icon" type="image/png" sizes="512x512" href="icon-512.png" />
 <title>MCAT Study</title>
 <script>
-  // Apply persisted theme before paint to avoid flash. "system" follows the OS.
+  // Apply persisted theme before paint to avoid flash. Theme is a (palette, mode)
+  // pair; "system" mode follows the OS. Older single-string themes are migrated.
   (function () {
+    function resolve(palette, mode) {
+      var dark = mode === 'dark' ||
+        (mode === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+      if (palette === 'warm') return dark ? 'darkwarm' : 'warm';
+      if (palette === 'duo') return dark ? 'darkgreen' : 'green';
+      return dark ? 'dark' : 'light';
+    }
     try {
-      let t = JSON.parse(localStorage.getItem('mcat:theme')) || 'system';
-      if (t === 'system') {
-        t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+      var raw = JSON.parse(localStorage.getItem('mcat:theme'));
+      var palette = 'cold', mode = 'system';
+      if (raw && typeof raw === 'object') {
+        palette = raw.palette || 'cold';
+        mode = raw.mode || 'system';
+      } else if (typeof raw === 'string') {
+        var map = {
+          dark: ['cold', 'dark'], light: ['cold', 'light'], system: ['cold', 'system'],
+          warm: ['warm', 'light'], darkwarm: ['warm', 'dark'],
+          green: ['duo', 'light'], darkgreen: ['duo', 'dark'],
+        };
+        var m = map[raw] || ['cold', 'system'];
+        palette = m[0]; mode = m[1];
       }
-      document.documentElement.setAttribute('data-theme', t);
-    } catch { document.documentElement.setAttribute('data-theme', 'dark'); }
+      document.documentElement.setAttribute('data-theme', resolve(palette, mode));
+    } catch (e) { document.documentElement.setAttribute('data-theme', 'dark'); }
   })();
 </script>
 <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
@@ -274,6 +292,6 @@
 </head>
 <body>
 <div id="root"></div>
-<script type="text/babel" data-presets="react" src="app.js?v=38"></script>
+<script type="text/babel" data-presets="react" src="app.js?v=39"></script>
 </body>
 </html>

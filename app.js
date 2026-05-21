@@ -29,14 +29,40 @@ const KEYS = {
   bankSeen: 'mcat:bankSeen', // timestamp — last time the user reviewed the Bank tab
 };
 
-// 'system' follows the OS light/dark setting; the rest are explicit palettes.
-const THEMES = ['system', 'light', 'dark', 'warm', 'darkwarm', 'green', 'darkgreen'];
-function resolveTheme(choice) {
-  if (choice === 'system') {
-    try { return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'; }
-    catch { return 'dark'; }
+// Theme is a (palette, mode) pair. Palette picks the colour family; mode picks
+// light/dark, or follows the OS when 'system'. The pair resolves to one of the
+// six concrete data-theme values the CSS defines.
+const PALETTES = ['cold', 'warm', 'duo'];
+const MODES = ['light', 'dark', 'system'];
+function systemPrefersDark() {
+  try { return window.matchMedia('(prefers-color-scheme: dark)').matches; }
+  catch { return true; }
+}
+function dataThemeFor(palette, mode) {
+  const dark = mode === 'dark' || (mode === 'system' && systemPrefersDark());
+  if (palette === 'warm') return dark ? 'darkwarm' : 'warm';
+  if (palette === 'duo') return dark ? 'darkgreen' : 'green';
+  return dark ? 'dark' : 'light'; // cold
+}
+// Parse the stored theme, migrating the older single-string format.
+function parseStoredTheme() {
+  const raw = storage.get(KEYS.theme, null);
+  if (raw && typeof raw === 'object' && raw.palette && raw.mode) {
+    return {
+      palette: PALETTES.includes(raw.palette) ? raw.palette : 'cold',
+      mode: MODES.includes(raw.mode) ? raw.mode : 'system',
+    };
   }
-  return THEMES.includes(choice) ? choice : 'dark';
+  const legacy = {
+    dark: { palette: 'cold', mode: 'dark' },
+    light: { palette: 'cold', mode: 'light' },
+    system: { palette: 'cold', mode: 'system' },
+    warm: { palette: 'warm', mode: 'light' },
+    darkwarm: { palette: 'warm', mode: 'dark' },
+    green: { palette: 'duo', mode: 'light' },
+    darkgreen: { palette: 'duo', mode: 'dark' },
+  };
+  return legacy[raw] || { palette: 'cold', mode: 'system' };
 }
 
 // Random motivational quotes — one is picked when the Home tab mounts.
@@ -991,10 +1017,24 @@ function AppProvider({ children }) {
   const [attempts, setAttemptsState] = useState(() => storage.get(KEYS.attempts, []));
   const [staticBank, setStaticBank] = useState(null); // { files, extractions, questions } or null
   const [readOnly, setReadOnly] = useState(false);
-  const [theme, setThemeState] = useState(() => {
-    const t = storage.get(KEYS.theme, 'system');
-    return THEMES.includes(t) ? t : 'system';
-  });
+  const [themePref, setThemePref] = useState(() => parseStoredTheme());
+  const { palette, mode } = themePref;
+  const setPalette = useCallback((p) => {
+    if (!PALETTES.includes(p)) return;
+    setThemePref((prev) => {
+      const next = { ...prev, palette: p };
+      storage.set(KEYS.theme, next);
+      return next;
+    });
+  }, []);
+  const setMode = useCallback((m) => {
+    if (!MODES.includes(m)) return;
+    setThemePref((prev) => {
+      const next = { ...prev, mode: m };
+      storage.set(KEYS.theme, next);
+      return next;
+    });
+  }, []);
   const [github, setGithubState] = useState(() => ({ ...DEFAULT_GITHUB, ...(storage.get(KEYS.github, {}) || {}) }));
   const [pushStatus, setPushStatus] = useState({ state: 'idle', lastAt: null, error: null });
   const [reauditEnabled, setReauditEnabledState] = useState(() => !!storage.get(KEYS.reaudit, false));
@@ -1037,27 +1077,21 @@ function AppProvider({ children }) {
     }
   }, [github]);
 
-  const setTheme = useCallback((t) => {
-    if (!THEMES.includes(t)) return;
-    storage.set(KEYS.theme, t);
-    setThemeState(t);
-  }, []);
-
   useEffect(() => {
     const apply = () => {
-      const resolved = resolveTheme(theme);
+      const resolved = dataThemeFor(palette, mode);
       document.documentElement.setAttribute('data-theme', resolved);
       updateFavicon(resolved);
     };
     apply();
     // When following the OS, re-apply if the user flips their system light/dark.
-    if (theme === 'system') {
+    if (mode === 'system') {
       const mq = window.matchMedia('(prefers-color-scheme: dark)');
       const onChange = () => apply();
       mq.addEventListener('change', onChange);
       return () => mq.removeEventListener('change', onChange);
     }
-  }, [theme]);
+  }, [palette, mode]);
 
   // One-time cleanup: drop the temporary drag-position key now that the bird
   // is anchored to the speech bubble's bottom.
@@ -1218,7 +1252,7 @@ function AppProvider({ children }) {
       attempts, addAttempt, clearAttempts,
       staticBank, useStaticBank,
       readOnly, setReadOnly,
-      theme, setTheme,
+      palette, mode, setPalette, setMode,
       github, setGithub, pushBank, pushStatus,
       session, setSession, api, pendingSync, flushSync, syncBusy, syncError,
       client,
@@ -1226,7 +1260,8 @@ function AppProvider({ children }) {
       volume, setVolume,
     }),
     [apiKey, setApiKey, files, setFiles, extractions, setExtraction, questions, setQuestionsFor,
-     attempts, addAttempt, clearAttempts, staticBank, useStaticBank, readOnly, theme, setTheme,
+     attempts, addAttempt, clearAttempts, staticBank, useStaticBank, readOnly,
+     palette, mode, setPalette, setMode,
      github, setGithub, pushBank, pushStatus,
      session, setSession, api, pendingSync, flushSync, syncBusy, syncError, client,
      reauditEnabled, setReauditEnabled, volume, setVolume]
@@ -3357,32 +3392,10 @@ function StatsView() {
   );
 }
 
-// ---------- theme switcher ----------
-function ThemeSwitcher() {
-  const { theme, setTheme } = useApp();
-  return (
-    <div className="flex items-center gap-0.5 border border-[var(--border)] rounded-full p-0.5">
-      {THEMES.map((t) => (
-        <button
-          key={t}
-          onClick={() => setTheme(t)}
-          title={`${t.charAt(0).toUpperCase()}${t.slice(1)} theme`}
-          className={`text-xs px-2.5 py-1 rounded-full transition-colors ${
-            theme === t
-              ? 'bg-[var(--accent)] text-white'
-              : 'text-[var(--text-muted)] hover:text-[var(--text-strong)]'
-          }`}
-        >
-          {t === 'dark' ? '🌙' : t === 'light' ? '☀️' : '🍂'}
-        </button>
-      ))}
-    </div>
-  );
-}
 
 // ---------- settings ----------
 function SettingsPanel({ onClose }) {
-  const { theme, setTheme, apiKey, setApiKey, client, session, pendingSync, syncBusy, syncError, flushSync, reauditEnabled, setReauditEnabled, volume, setVolume } = useApp();
+  const { palette, mode, setPalette, setMode, apiKey, setApiKey, client, session, pendingSync, syncBusy, syncError, flushSync, reauditEnabled, setReauditEnabled, volume, setVolume } = useApp();
   const [keyVal, setKeyVal] = useState(apiKey || '');
   const [keyShow, setKeyShow] = useState(false);
   const [keyErr, setKeyErr] = useState('');
@@ -3408,14 +3421,15 @@ function SettingsPanel({ onClose }) {
     }
   };
 
-  const themeOpts = [
-    ['system', '🖥️', 'System'],
+  const paletteOpts = [
+    ['cold', '❄️', 'Cold'],
+    ['warm', '🍂', 'Warm'],
+    ['duo', '🦉', 'Duo'],
+  ];
+  const modeOpts = [
     ['light', '☀️', 'Light'],
     ['dark', '🌙', 'Dark'],
-    ['warm', '🍂', 'Warm'],
-    ['darkwarm', '🔥', 'Dark Warm'],
-    ['green', '🦉', 'Green'],
-    ['darkgreen', '🌲', 'Dark Green'],
+    ['system', '🖥️', 'System'],
   ];
 
   return (
@@ -3426,13 +3440,28 @@ function SettingsPanel({ onClose }) {
       </div>
 
       <div>
-        <div className="text-xs uppercase tracking-wide text-[var(--text-muted)] mb-2">Appearance</div>
-        <div className="grid grid-cols-4 gap-2">
-          {themeOpts.map(([k, emoji, label]) => (
+        <div className="text-xs uppercase tracking-wide text-[var(--text-muted)] mb-2">Colour</div>
+        <div className="grid grid-cols-3 gap-2">
+          {paletteOpts.map(([k, emoji, label]) => (
             <button
               key={k}
-              onClick={() => setTheme(k)}
-              className={`flex flex-col items-center gap-1 py-3 rounded border ${theme === k
+              onClick={() => setPalette(k)}
+              className={`flex flex-col items-center gap-1 py-3 rounded border ${palette === k
+                ? 'border-[var(--accent-border)] bg-[var(--accent-soft)]'
+                : 'border-[var(--border)] hover:bg-[var(--bg-hover)]'}`}
+            >
+              <span className="text-2xl">{emoji}</span>
+              <span className="text-xs text-[var(--text)]">{label}</span>
+            </button>
+          ))}
+        </div>
+        <div className="text-xs uppercase tracking-wide text-[var(--text-muted)] mt-4 mb-2">Mode</div>
+        <div className="grid grid-cols-3 gap-2">
+          {modeOpts.map(([k, emoji, label]) => (
+            <button
+              key={k}
+              onClick={() => setMode(k)}
+              className={`flex flex-col items-center gap-1 py-3 rounded border ${mode === k
                 ? 'border-[var(--accent-border)] bg-[var(--accent-soft)]'
                 : 'border-[var(--border)] hover:bg-[var(--bg-hover)]'}`}
             >
