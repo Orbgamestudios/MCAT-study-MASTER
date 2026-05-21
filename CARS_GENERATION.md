@@ -12,6 +12,26 @@ day and is archived in the CARS bank afterwards.
 The goal is **harder than the real MCAT CARS section** — these are training questions, so
 they should punish loose reading and reward genuine analysis.
 
+## How the passage is sourced
+
+**Primary path — a real public-domain text.** The Cloudflare Worker exposes
+`GET /cars/passage?date=YYYY-MM-DD`. It picks a work from a curated, verified list of
+**Project Gutenberg** books (difficult humanities / social-science prose — exactly the
+CARS disciplines), fetches the plain text server-side, strips the Gutenberg header/footer
+and front matter, and slices a flowing ~500–600 word window of genuine prose. The client
+hands that passage to Gemini, which writes **only the questions** (`generateCarsQuestions`).
+This is the intended behaviour: the passage is real, difficult, human-written text; only
+the questions are AI-generated.
+
+The Gutenberg list lives in `GUTENBERG_BOOKS` in the Worker (`API/src/index.js`) — 16
+verified works (Machiavelli, Veblen, Nietzsche, James, Arnold, Pater, Frazer, Marcus
+Aurelius, Russell, Plato, Hobbes, Smith, Tocqueville, Spinoza, Marx/Engels). The book
+rotates by day-of-year; the Worker tries the next book if one fails to fetch.
+
+**Fallback path — fully generated.** If the Gutenberg fetch fails entirely,
+`generateDailyCars` has Gemini write the passage *and* questions (an original passage in
+authentic CARS style). The "The passage" section below governs that fallback only.
+
 ---
 
 ## What CARS actually is (from the Kaplan outline)
@@ -38,11 +58,11 @@ The app passes a target discipline (rotating day to day) so consecutive days var
 
 ---
 
-## The passage
+## The passage (fallback path only)
 
-Write an **original** passage in authentic CARS style — do **not** copy any existing
-text. (A public-domain excerpt may be adapted instead, but original is the default and
-must be the app's behaviour.)
+When the Gutenberg fetch fails and Gemini must write the passage itself, write an
+**original** passage in authentic CARS style — do **not** copy any existing copyrighted
+text.
 
 Requirements:
 
@@ -120,50 +140,53 @@ For every question provide:
 
 ---
 
-## Prompt (mirrors `CARS_PROMPT` in app.js)
+## Prompt — primary path (`generateCarsQuestions` in app.js)
+
+Used when a real Gutenberg passage was fetched. Gemini writes **only the questions**.
 
 **System instruction:**
 
-> You write original MCAT CARS (Critical Analysis and Reasoning Skills) practice sets —
-> one academic passage plus six multiple-choice questions — for a study app. The passages
-> are humanities or social-science prose, 500–600 words, built around a single arguable
-> thesis with real nuance (a concession, a fine distinction, a tonal shift). Never copy
-> existing text; write original prose. Questions test analysis of the passage only, never
-> outside knowledge. Generate exactly 6 questions covering all three AAMC categories
-> (Foundations of Comprehension, Reasoning Within the Text, Reasoning Beyond the Text),
-> each with exactly 4 choices and a correct_index 0–3. THESE MUST BE HARDER THAN THE REAL
-> MCAT: distractors must be technically-true-but-unresponsive, right-concept-wrong-scope,
-> reversed relationships, too-extreme, or correct-for-the-wrong-paragraph — never obviously
-> wrong. All four choices must match in length and register so the answer never stands
-> out. At least two questions must require combining two or more paragraphs. Include at
-> least one LEAST-supported / EXCEPT-style question. For every question give a 2–4
-> sentence explanation and a one-line rationale for each of the four choices.
+> You write MCAT CARS (Critical Analysis and Reasoning Skills) questions for a study app.
+> You are given a REAL public-domain passage of difficult humanities or social-science
+> prose. Do NOT rewrite, summarize, or replace the passage — write questions about it
+> exactly as given. Generate exactly 6 multiple-choice questions covering all three AAMC
+> categories (Foundations of Comprehension, Reasoning Within the Text, Reasoning Beyond
+> the Text), each with exactly 4 choices and a correct_index 0–3, testing analysis of
+> THIS passage only — never outside knowledge. THESE MUST BE HARDER THAN THE REAL MCAT:
+> distractors must be technically-true-but-unresponsive, right-concept-wrong-scope,
+> reversed relationships, too-extreme, or correct-for-the-wrong-paragraph — never
+> obviously wrong. All four choices must match in length and register. At least two
+> questions must require combining two or more paragraphs. Include at least one
+> LEAST-supported / EXCEPT-style question. For every question give a 2–4 sentence
+> explanation and a one-line rationale for each of the four choices.
 
 **User message:**
 
-> Generate today's CARS set. Target discipline: {discipline}. Write the passage, then six
-> questions per the rules. Make it harder than a real MCAT CARS section — a strong student
-> should expect to miss one or two.
+> Discipline: {discipline}
+>
+> Passage (real public-domain text — do not alter it):
+> {passage}
+>
+> Write exactly 6 CARS questions on this passage, harder than a real MCAT CARS section — a
+> strong student should expect to miss one or two.
 
-**Response schema:**
+**Response schema:** `{ "questions": [ {question, choices[4], correct_index, category,
+subtype, explanation, choice_explanations[4]} x6 ] }`
 
-```json
-{
-  "passage": "string (500-600 words)",
-  "discipline": "string",
-  "title": "string",
-  "source": "string (e.g. 'Original passage in CARS style')",
-  "questions": [{
-    "question": "string",
-    "choices": ["A", "B", "C", "D"],
-    "correct_index": 0,
-    "category": "Foundations of Comprehension | Reasoning Within the Text | Reasoning Beyond the Text",
-    "subtype": "string",
-    "explanation": "string",
-    "choice_explanations": ["string", "string", "string", "string"]
-  }]
-}
-```
+## Prompt — fallback path (`generateDailyCars` in app.js)
+
+Used only when no Gutenberg passage could be fetched. Gemini writes the passage too.
+
+**System instruction:**
+
+> You write original MCAT CARS practice sets — one academic passage plus six
+> multiple-choice questions — for a study app. The passages are humanities or
+> social-science prose, 500–600 words, built around a single arguable thesis with real
+> nuance. Never copy existing text; write original prose. [...same difficulty mandate as
+> above...]
+
+**Response schema:** as the primary path, plus top-level `passage`, `discipline`,
+`title`, `source`.
 
 **Output budget:** 32,768 tokens. Adaptive thinking disabled.
 
@@ -171,6 +194,7 @@ For every question provide:
 
 ## Changing this spec
 
-Edit `CARS_PROMPT` near the top of `app.js`, then update this document to match, then
+Edit `generateCarsQuestions` / `generateDailyCars` near the top of `app.js`, or the
+`GUTENBERG_BOOKS` list in `API/src/index.js`, then update this document to match, then
 bump the `?v=N` cache-bust on `app.js` in `index.html`. Already-generated days are not
 regenerated; only future days use the new prompt.

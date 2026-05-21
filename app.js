@@ -1017,10 +1017,70 @@ function makeClient(getKey) {
     return data;
   }
 
+  // ---- CARS questions from a supplied (real, public-domain) passage ----
+  const CARS_QUESTIONS_SCHEMA = {
+    type: 'OBJECT',
+    properties: {
+      questions: {
+        type: 'ARRAY',
+        items: {
+          type: 'OBJECT',
+          properties: {
+            question: { type: 'STRING' },
+            choices: { type: 'ARRAY', items: { type: 'STRING' } },
+            correct_index: { type: 'INTEGER' },
+            category: { type: 'STRING' },
+            subtype: { type: 'STRING' },
+            explanation: { type: 'STRING' },
+            choice_explanations: { type: 'ARRAY', items: { type: 'STRING' } },
+          },
+          required: ['question', 'choices', 'correct_index', 'category', 'subtype', 'explanation', 'choice_explanations'],
+        },
+      },
+    },
+    required: ['questions'],
+  };
+
+  async function generateCarsQuestions(passage, discipline) {
+    const resp = await generate({
+      maxOutputTokens: 32768,
+      disableThinking: true,
+      systemInstruction:
+        'You write MCAT CARS (Critical Analysis and Reasoning Skills) questions for a study app. ' +
+        'You are given a REAL public-domain passage of difficult humanities or social-science prose. ' +
+        'Do NOT rewrite, summarize, or replace the passage — write questions about it exactly as given. ' +
+        'Generate exactly 6 multiple-choice questions covering all three AAMC categories (Foundations of ' +
+        'Comprehension, Reasoning Within the Text, Reasoning Beyond the Text), each with exactly 4 choices ' +
+        'and a correct_index 0-3, testing analysis of THIS passage only — never outside knowledge. ' +
+        'THESE MUST BE HARDER THAN THE REAL MCAT: distractors must be technically-true-but-unresponsive, ' +
+        'right-concept-wrong-scope, reversed relationships, too-extreme, or correct-for-the-wrong-paragraph ' +
+        '— never obviously wrong. All four choices must match in length and register so the answer never ' +
+        'stands out. At least two questions must require combining two or more paragraphs. Include at ' +
+        'least one LEAST-supported / EXCEPT-style question. For every question give a 2-4 sentence ' +
+        'explanation and a one-line rationale for each of the four choices (choice_explanations, 4 entries).',
+      contents: [{
+        role: 'user',
+        parts: [{ text:
+          `Discipline: ${discipline}\n\n` +
+          `Passage (real public-domain text — do not alter it):\n${passage}\n\n` +
+          `Write exactly 6 CARS questions on this passage, harder than a real MCAT CARS section — a strong ` +
+          `student should expect to miss one or two.`,
+        }],
+      }],
+      responseSchema: CARS_QUESTIONS_SCHEMA,
+    });
+    const data = extractJson(resp);
+    return (data.questions || []).map((q, i) => ({
+      id: `cars_${Date.now()}_${i}`,
+      mode: 'mc',
+      ...q,
+    }));
+  }
+
   return {
     uploadFile, deleteFile, generate, ping,
     extractFromPdf, generateMCQuestions, generateShortAnswers, generateTermQuestions, generateTwoPartQuestions,
-    fixFlaggedQuestion, auditQuestions, generateDailyCars,
+    fixFlaggedQuestion, auditQuestions, generateDailyCars, generateCarsQuestions,
   };
 }
 
@@ -1064,6 +1124,7 @@ function makeApiClient(getToken) {
     // ---- daily CARS ----
     listCars: () => call('/cars'),
     getCars: (date) => call(`/cars/${encodeURIComponent(date)}`),
+    getCarsPassage: (date) => call(`/cars/passage?date=${encodeURIComponent(date)}`),
     postCars: ({ date, discipline, title, payload }) =>
       call('/cars', { method: 'POST', body: { date, discipline, title, payload }, auth: true }),
     userProfile: (username) => call(`/u/${encodeURIComponent(username)}`),
@@ -3300,10 +3361,31 @@ function DailyCarsCard() {
         if (!apiKey || !session) { setState('unavailable'); return; }
         setState('generating');
         try {
-          const discipline = carsDisciplineFor(today);
-          const gen = await client.generateDailyCars(discipline);
+          // Preferred path: pull a real public-domain passage from Project Gutenberg,
+          // then have Gemini write only the (hard) questions about it.
+          let gen = null;
+          try {
+            const src = await api.getCarsPassage(today);
+            if (src?.passage) {
+              const questions = await client.generateCarsQuestions(src.passage, src.discipline);
+              if (questions?.length) {
+                gen = {
+                  passage: src.passage,
+                  discipline: src.discipline,
+                  title: src.title,
+                  source: src.source,
+                  questions,
+                };
+              }
+            }
+          } catch { /* fall through to full generation */ }
+          // Fallback: Gemini writes the passage too (if Gutenberg fetch failed).
+          if (!gen) {
+            const discipline = carsDisciplineFor(today);
+            gen = await client.generateDailyCars(discipline);
+          }
           if (!gen?.questions?.length) throw new Error('Generation returned no questions.');
-          await api.postCars({ date: today, discipline: gen.discipline || discipline, title: gen.title || '', payload: gen });
+          await api.postCars({ date: today, discipline: gen.discipline || carsDisciplineFor(today), title: gen.title || '', payload: gen });
           if (!cancelled) { setCarsCachePayload(today, gen); setPayload(gen); setState('ready'); }
         } catch (ge) {
           // Someone else may have generated it in the meantime — try one more fetch.
