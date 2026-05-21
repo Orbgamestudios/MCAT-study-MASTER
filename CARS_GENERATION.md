@@ -23,10 +23,14 @@ hands that passage to Gemini, which writes **only the questions** (`generateCars
 This is the intended behaviour: the passage is real, difficult, human-written text; only
 the questions are AI-generated.
 
-The Gutenberg list lives in `GUTENBERG_BOOKS` in the Worker (`API/src/index.js`) — 16
-verified works (Machiavelli, Veblen, Nietzsche, James, Arnold, Pater, Frazer, Marcus
-Aurelius, Russell, Plato, Hobbes, Smith, Tocqueville, Spinoza, Marx/Engels). The book
-rotates by day-of-year; the Worker tries the next book if one fails to fetch.
+The Gutenberg list lives in `GUTENBERG_BOOKS` in the Worker (`API/src/index.js`) — 29
+verified works of difficult humanities / social-science prose (Machiavelli, Veblen,
+Nietzsche, Du Bois, William James, Adam Smith, Mill, Frazer, the Federalist, Pater,
+Wollstonecraft, Tocqueville, Arnold, Hume, Malthus, Hobbes, Thoreau, Russell,
+Marx/Engels, Aristotle, Locke, Emerson, Plato, Paine, Descartes, More, …). The book
+rotates by day-of-year; within each book the ~550-word window is date-seeded, so the
+same title yields a different passage each time it comes around. The Worker tries the
+next book if one fails to fetch.
 
 **Fallback path — fully generated.** If the Gutenberg fetch fails entirely,
 `generateDailyCars` has Gemini write the passage *and* questions (an original passage in
