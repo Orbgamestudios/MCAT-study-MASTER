@@ -26,6 +26,7 @@ const KEYS = {
   flagQueue: 'mcat:flagQueue', // Flagged questions awaiting Gemini fix (rate-limit safe)
   reaudit: 'mcat:reaudit', // boolean — show Audit button on already-audited chapters
   volume: 'mcat:volume', // 0-1, global SFX volume multiplier (default 1)
+  bankSeen: 'mcat:bankSeen', // timestamp — last time the user reviewed the Bank tab
 };
 
 const THEMES = ['dark', 'light', 'warm', 'green'];
@@ -122,27 +123,24 @@ function _vol() {
     return typeof v === 'number' && v >= 0 && v <= 1 ? v : 1;
   } catch { return 1; }
 }
-// MP3s are routed through WebAudio so the slider gain applies live and
-// reliably (Audio.volume could lag or be coalesced on iOS).
-const _sfxBufferCache = {};
+// Answer SFX. The Audio element is the always-works path; WebAudio (with a gain
+// node) is used once its buffer is decoded so the volume slider applies precisely.
+// Crucially we NEVER end up permanently silent — if WebAudio isn't ready or fails,
+// the Audio element plays regardless.
+const _sfxBufferCache = {}; // name -> AudioBuffer | undefined  (no sticky 'loading' state)
 const _sfxAudioCache = {};
-function playSfx(name) {
+function _kickBufferLoad(name) {
   const ctx = _ctx();
-  if (ctx) {
-    if (_sfxBufferCache[name] === 'loading') return;
-    if (!_sfxBufferCache[name]) {
-      _sfxBufferCache[name] = 'loading';
-      fetch(`assets/${name}.mp3`)
-        .then((r) => r.arrayBuffer())
-        .then((buf) => ctx.decodeAudioData(buf))
-        .then((decoded) => { _sfxBufferCache[name] = decoded; _playBuffer(ctx, decoded); })
-        .catch(() => { _sfxBufferCache[name] = null; });
-      return;
-    }
-    _playBuffer(ctx, _sfxBufferCache[name]);
-    return;
-  }
-  // Fallback for browsers without WebAudio
+  if (!ctx || _sfxBufferCache[name + ':loading'] || _sfxBufferCache[name]) return;
+  _sfxBufferCache[name + ':loading'] = true;
+  fetch(`assets/${name}.mp3`)
+    .then((r) => r.arrayBuffer())
+    .then((buf) => ctx.decodeAudioData(buf))
+    .then((decoded) => { _sfxBufferCache[name] = decoded; })
+    .catch(() => {})
+    .finally(() => { _sfxBufferCache[name + ':loading'] = false; });
+}
+function _playSfxFallback(name) {
   try {
     if (!_sfxAudioCache[name]) {
       _sfxAudioCache[name] = new Audio(`assets/${name}.mp3`);
@@ -150,18 +148,27 @@ function playSfx(name) {
     }
     const a = _sfxAudioCache[name];
     a.currentTime = 0;
-    a.volume = 0.4 * _vol();
+    a.volume = Math.max(0, Math.min(1, 0.4 * _vol()));
     a.play().catch(() => {});
   } catch {}
 }
-function _playBuffer(ctx, buffer) {
-  const src = ctx.createBufferSource();
-  src.buffer = buffer;
-  const gain = ctx.createGain();
-  // 0.4 baseline = ~20% softer than HUD tap (0.18 noise * scale) when slider is at 1.
-  gain.gain.value = Math.max(0.0001, 0.4 * _vol());
-  src.connect(gain).connect(ctx.destination);
-  src.start();
+function playSfx(name) {
+  const ctx = _ctx();
+  const buf = _sfxBufferCache[name];
+  if (ctx && buf) {
+    try {
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      const gain = ctx.createGain();
+      gain.gain.value = Math.max(0.0001, 0.4 * _vol());
+      src.connect(gain).connect(ctx.destination);
+      src.start();
+      return;
+    } catch { /* fall through to Audio element */ }
+  }
+  // Buffer not ready (or no WebAudio) — load for next time, play via Audio element now.
+  _kickBufferLoad(name);
+  _playSfxFallback(name);
 }
 
 // Web-Audio synthesized clicks for UI feedback (no asset files needed).
@@ -2294,6 +2301,8 @@ function ShortAnswerQuestion({ item, onAnswer, nextSlot }) {
   const grade = (correct) => {
     if (graded) return;
     setGraded(true);
+    playSfx(correct ? 'correct' : 'wrong');
+    if (correct) vibrateCorrect(); else vibrateWrong();
     onAnswer({ correct, user_answer: text });
   };
 
@@ -2526,10 +2535,13 @@ function MatchingQuestion({ item, onAnswer, nextSlot }) {
       const termIdx = Number(termIdxStr);
       if (termIdx === defIdx) correctCount++;
     }
+    const allRight = correctCount === pairs.length;
+    playSfx(allRight ? 'correct' : 'wrong');
+    if (allRight) vibrateCorrect(); else vibrateWrong();
     // Report a single attempt per matching question — correct iff all pairs right.
     // (More granular per-pair tracking would require unique question_ids per term.)
     onAnswer({
-      correct: correctCount === pairs.length,
+      correct: allRight,
       user_answer: `${correctCount}/${pairs.length} pairs correct`,
     });
   };
@@ -2847,58 +2859,42 @@ function StudyView() {
 }
 
 // ---------- home: bird hero ----------
-// Bird position is locked: right is fixed and bottom is dynamic so the bird
-// follows the speech bubble's bottom edge. At a 2-line bubble (BUBBLE_BASELINE_H),
-// bird sits at right:-97 / bottom:-8 (the user-calibrated reference). As the bubble
-// grows, bottom decreases by the same amount, keeping bird visually anchored to the
-// bottom-right corner of the bubble.
-const BUBBLE_BASELINE_H = 80; // px — roughly a 2-line speech bubble
-const BIRD_RIGHT = -97;
-const BIRD_BOTTOM_AT_BASELINE = -8;
+// The bird sits in normal document flow directly below the speech bubble, so:
+//  - the card height grows to fully contain the bird (no clipped lower body)
+//  - the gap between the bubble and the bird is always the same, whatever the
+//    quote length (a 2-line and a 4-line quote leave the same gap).
+// BIRD_GAP is the constant vertical gap; tweak if you want it tighter/looser.
+const BIRD_GAP = -8;     // px below the speech bubble (negative tucks the bird's transparent top up)
+const BIRD_SHIFT = -36;  // px horizontal nudge (negative = rightward overflow)
 
 function BirdHero({ username, quote }) {
-  const bubbleRef = useRef(null);
-  const [bubbleH, setBubbleH] = useState(null);
-
-  useEffect(() => {
-    const el = bubbleRef.current;
-    if (!el) return;
-    const update = () => setBubbleH(el.offsetHeight);
-    update();
-    const ro = new ResizeObserver(update);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-
-  const delta = bubbleH != null ? Math.max(0, bubbleH - BUBBLE_BASELINE_H) : 0;
-  const birdBottom = BIRD_BOTTOM_AT_BASELINE - delta;
-
   return (
-    <div className="relative bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl px-4 sm:px-6 pt-5 sm:pt-6 pb-2 sm:pb-3 overflow-hidden min-h-[400px] sm:min-h-[460px]">
+    <div className="relative bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl px-4 sm:px-6 pt-5 sm:pt-6 pb-0 overflow-hidden">
       <div className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Welcome back</div>
       <h1 className="text-2xl sm:text-3xl font-bold text-[var(--text-strong)] mb-3">@{username}</h1>
 
-      {/* Bird — behind the speech bubble (z-0). Bottom is computed from bubble height. */}
+      {/* Speech bubble */}
+      <div className="relative w-[78%] sm:w-[62%] max-w-md" style={{ zIndex: 10 }}>
+        <div className="bg-[var(--bg-elev)] border border-[var(--border-soft)] rounded-2xl rounded-br-none px-4 py-3 sm:px-5 sm:py-4 text-[var(--text)] text-sm sm:text-base leading-relaxed">
+          {quote}
+        </div>
+      </div>
+
+      {/* Bird — in flow, so the card grows to contain it and the gap above stays constant. */}
       <img
         src="assets/bird.png"
         alt=""
         draggable="false"
-        className="absolute select-none pointer-events-none"
+        className="block select-none pointer-events-none"
         style={{
-          right: `${BIRD_RIGHT}px`,
-          bottom: `${birdBottom}px`,
-          width: 'clamp(450px, 105vw, 650px)',
+          width: 'clamp(440px, 116vw, 680px)',
           maxWidth: 'none',
+          marginTop: `${BIRD_GAP}px`,
+          position: 'relative',
+          right: `${BIRD_SHIFT}px`,
           zIndex: 0,
         }}
       />
-
-      {/* Speech bubble — above the bird (z-10). */}
-      <div className="relative w-[78%] sm:w-[62%] max-w-md" style={{ zIndex: 10 }}>
-        <div ref={bubbleRef} className="bg-[var(--bg-elev)] border border-[var(--border-soft)] rounded-2xl rounded-br-none px-4 py-3 sm:px-5 sm:py-4 text-[var(--text)] text-sm sm:text-base leading-relaxed">
-          {quote}
-        </div>
-      </div>
     </div>
   );
 }
@@ -3654,6 +3650,19 @@ function FlagFixesPanel() {
     saveQueue(queue.filter((f) => f.id !== id));
   };
 
+  // Re-queue a resolved flag so the next pipeline run sends it back to Gemini.
+  // An optional amended description lets the user clarify what's still wrong.
+  const requeueFlag = (id, newDescription) => {
+    saveQueue(queue.map((f) => f.id === id ? {
+      ...f,
+      status: 'pending',
+      description: (newDescription || '').trim() || f.description,
+      rationale: undefined,
+      error: undefined,
+      fixed_question: undefined,
+    } : f));
+  };
+
   const isRateLimit = (err) =>
     err?.status === 429 || /quota|rate.?limit|exceeded/i.test(err?.message || '');
 
@@ -3702,6 +3711,16 @@ function FlagFixesPanel() {
           updated.status = fix.action === 'edit' ? 'edited' : 'skipped';
           updated.rationale = fix.rationale;
           updated.resolved_at = Date.now();
+          updated.error = undefined;
+          // Keep the corrected question so it can be reviewed later.
+          if (fix.action === 'edit') {
+            updated.fixed_question = {
+              question: fix.question || flag.question_snapshot.question,
+              choices: fix.choices?.length === 4 ? fix.choices : flag.question_snapshot.choices,
+              correct_index: Number.isInteger(fix.correct_index) ? fix.correct_index : flag.question_snapshot.correct_index,
+              explanation: fix.explanation || flag.question_snapshot.explanation,
+            };
+          }
         }
         setProcessedLog((log) => [...log, { flag, fix }]);
         processedCount++;
@@ -3763,26 +3782,82 @@ function FlagFixesPanel() {
 
       <ul className="space-y-2 text-sm">
         {queue.slice().reverse().map((f) => (
-          <li key={f.id} className="border border-[var(--border-soft)] rounded-lg p-2 bg-[var(--bg-elev-soft)]">
-            <div className="flex items-baseline justify-between gap-2">
-              <span className="text-[10px] uppercase tracking-wide text-[var(--text-faint)]">{f.chapter_label}</span>
-              <span className={`text-[10px] uppercase ${
-                f.status === 'pending' ? 'text-[var(--warning-text)]' :
-                f.status === 'error' ? 'text-[var(--danger-text)]' :
-                'text-[var(--success-text)]'
-              }`}>{f.status}</span>
-            </div>
-            <div className="text-xs mt-1 text-[var(--text)]">{(f.question_snapshot?.question || f.question_snapshot?.prompt || f.question_id).slice(0, 140)}</div>
-            <div className="text-xs text-[var(--text-muted)] mt-1 italic">"{f.description}"</div>
-            {f.rationale && <div className="text-[11px] text-[var(--accent-text)] mt-1">→ {f.rationale}</div>}
-            {f.error && <div className="text-[11px] text-[var(--danger-text)] mt-1">{f.error}</div>}
-            <div className="text-right mt-1">
-              <button onClick={() => removeFlag(f.id)} className="text-[10px] text-[var(--text-faint)] hover:text-[var(--danger-text)]">remove</button>
-            </div>
-          </li>
+          <FlagRow key={f.id} flag={f} onRemove={() => removeFlag(f.id)} onRequeue={(d) => requeueFlag(f.id, d)} />
         ))}
       </ul>
     </div>
+  );
+}
+
+function FlagRow({ flag: f, onRemove, onRequeue }) {
+  const [amending, setAmending] = useState(false);
+  const [amendText, setAmendText] = useState('');
+  const letters = ['A', 'B', 'C', 'D'];
+  const fixed = f.fixed_question;
+
+  return (
+    <li className="border border-[var(--border-soft)] rounded-lg p-2 bg-[var(--bg-elev-soft)]">
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="text-[10px] uppercase tracking-wide text-[var(--text-faint)]">{f.chapter_label}</span>
+        <span className={`text-[10px] uppercase ${
+          f.status === 'pending' ? 'text-[var(--warning-text)]' :
+          f.status === 'error' ? 'text-[var(--danger-text)]' :
+          f.status === 'skipped' ? 'text-[var(--text-faint)]' :
+          'text-[var(--success-text)]'
+        }`}>{f.status}</span>
+      </div>
+      <div className="text-xs mt-1 text-[var(--text)]">{(f.question_snapshot?.question || f.question_snapshot?.prompt || f.question_id).slice(0, 160)}</div>
+      <div className="text-xs text-[var(--text-muted)] mt-1 italic">"{f.description}"</div>
+      {f.rationale && <div className="text-[11px] text-[var(--accent-text)] mt-1">→ {f.rationale}</div>}
+      {f.error && <div className="text-[11px] text-[var(--danger-text)] mt-1">{f.error}</div>}
+
+      {/* Corrected question preview (edited flags only) */}
+      {fixed && (
+        <div className="mt-2 border-t border-[var(--border-soft)] pt-2">
+          <div className="text-[10px] uppercase tracking-wide text-[var(--success-text)] mb-1">Corrected</div>
+          <div className="text-xs text-[var(--text)]">{fixed.question}</div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-0.5 mt-1">
+            {(fixed.choices || []).map((c, ci) => (
+              <div key={ci} className={`text-[11px] px-1.5 py-0.5 rounded ${ci === fixed.correct_index ? 'bg-[var(--success-bg)] text-[var(--success-text)] font-medium' : 'text-[var(--text-muted)]'}`}>
+                {letters[ci]}. {c}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {amending && (
+        <div className="mt-2 space-y-1.5">
+          <textarea
+            value={amendText}
+            onChange={(e) => setAmendText(e.target.value)}
+            rows={2}
+            placeholder="Optional: clarify what's still wrong before re-sending to Gemini…"
+            className="w-full bg-[var(--bg-elev)] border border-[var(--border)] rounded px-2 py-1 text-xs"
+          />
+          <div className="flex gap-2 justify-end">
+            <button onClick={() => setAmending(false)} className="text-[10px] text-[var(--text-faint)] px-2 py-1">cancel</button>
+            <button
+              onClick={() => { onRequeue(amendText); setAmending(false); setAmendText(''); }}
+              className="text-[10px] px-2 py-1 bg-[var(--accent)] text-white rounded"
+            >
+              Re-queue
+            </button>
+          </div>
+        </div>
+      )}
+
+      {!amending && (
+        <div className="flex items-center justify-end gap-3 mt-1">
+          {f.status !== 'pending' && (
+            <button onClick={() => setAmending(true)} className="text-[10px] text-[var(--accent-text)] hover:underline">
+              re-run with Gemini
+            </button>
+          )}
+          <button onClick={onRemove} className="text-[10px] text-[var(--text-faint)] hover:text-[var(--danger-text)]">remove</button>
+        </div>
+      )}
+    </li>
   );
 }
 
@@ -4477,6 +4552,9 @@ function BankTab() {
   const [busyKind, setBusyKind] = useState(null); // 'downloading' | 'contributing'
   const [status, setStatus] = useState(null);
   const [filter, setFilter] = useState('');
+  // Captured once at mount — the timestamp of the user's previous Bank visit.
+  const [seenAt] = useState(() => storage.get(KEYS.bankSeen, 0));
+  const [summaryDismissed, setSummaryDismissed] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -4485,6 +4563,17 @@ function BankTab() {
       .catch((e) => { if (!cancelled) setErr(e.message); });
     return () => { cancelled = true; };
   }, [api, tick]);
+
+  // When the Bank loads with nothing to summarize (first-ever visit, or no chapters
+  // changed since last time), silently advance the seen marker so the tab dot clears.
+  useEffect(() => {
+    if (!data) return;
+    const changed = seenAt > 0 ? data.chapters.filter((c) => (c.updated_at || 0) > seenAt) : [];
+    if (seenAt === 0 || changed.length === 0) {
+      storage.set(KEYS.bankSeen, Date.now());
+      window.dispatchEvent(new Event('mcat:bankSeen'));
+    }
+  }, [data, seenAt]);
 
   const downloadChapter = async (chapter) => {
     if (busyId) return;
@@ -4627,8 +4716,47 @@ function BankTab() {
       c.filename.toLowerCase().includes(filterLc)
     ) : chs;
 
+  // Chapters touched since the user's last Bank visit. Skipped on the very first
+  // visit (seenAt 0) so we don't flag the whole bank as "new".
+  const changedChapters = seenAt > 0
+    ? data.chapters.filter((c) => (c.updated_at || 0) > seenAt).sort((a, b) => b.updated_at - a.updated_at)
+    : [];
+  const markBankSeen = () => {
+    storage.set(KEYS.bankSeen, Date.now());
+    setSummaryDismissed(true);
+    window.dispatchEvent(new Event('mcat:bankSeen'));
+  };
+
   return (
     <div className="space-y-4">
+      {changedChapters.length > 0 && !summaryDismissed && (
+        <div className="bg-[var(--accent-soft)] border border-[var(--accent-border)] rounded-2xl p-4 sm:p-5">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h3 className="font-semibold text-[var(--accent-text)]">
+                {changedChapters.length} chapter{changedChapters.length === 1 ? '' : 's'} updated since your last visit
+              </h3>
+              <ul className="mt-1 text-sm text-[var(--text)] space-y-0.5">
+                {changedChapters.slice(0, 6).map((c) => (
+                  <li key={c.id} className="truncate">
+                    <span className="font-medium">{c.title}</span>
+                    <span className="text-[var(--text-muted)]"> · {c.subject} · by @{c.uploader_username}</span>
+                  </li>
+                ))}
+                {changedChapters.length > 6 && (
+                  <li className="text-[var(--text-muted)]">…and {changedChapters.length - 6} more</li>
+                )}
+              </ul>
+            </div>
+            <button
+              onClick={markBankSeen}
+              className="shrink-0 text-xs px-3 py-1.5 border border-[var(--accent-border)] text-[var(--accent-text)] hover:bg-[var(--bg-hover)] rounded font-medium"
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
       <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-5 space-y-3">
         <div>
           <h2 className="font-semibold text-[var(--text-strong)]">Bank</h2>
@@ -4897,11 +5025,34 @@ function ServerStatsView() {
 }
 
 function Shell() {
-  const { apiKey, setApiKey, attempts, readOnly, files, extractions, questions, session, setSession, pendingSync, syncBusy } = useApp();
+  const { apiKey, setApiKey, attempts, readOnly, files, extractions, questions, session, setSession, pendingSync, syncBusy, api } = useApp();
   const [tab, setTab] = useState('home');
   const [showAccount, setShowAccount] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [profileUser, setProfileUser] = useState(null);
+  const [bankHasUpdates, setBankHasUpdates] = useState(false);
+
+  // Bank update indicator: compare the newest chapter's updated_at against the
+  // last time the user reviewed the Bank tab.
+  useEffect(() => {
+    let cancelled = false;
+    api.listChapters()
+      .then((d) => {
+        if (cancelled) return;
+        const seen = storage.get(KEYS.bankSeen, 0);
+        const newest = Math.max(0, ...(d.chapters || []).map((c) => c.updated_at || 0));
+        setBankHasUpdates(newest > seen);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [api]);
+
+  // BankTab dispatches this once the user has reviewed the change summary.
+  useEffect(() => {
+    const onSeen = () => setBankHasUpdates(false);
+    window.addEventListener('mcat:bankSeen', onSeen);
+    return () => window.removeEventListener('mcat:bankSeen', onSeen);
+  }, []);
 
   // Global HUD click feedback: tap sound + short vibration on any non-content button.
   // Quiz answer buttons (MC/SinglePart) carry data-no-haptic so they don't double up
@@ -4943,11 +5094,14 @@ function Shell() {
             <button
               key={k}
               onClick={() => setTab(k)}
-              className={`text-sm px-3 py-2 sm:py-1.5 rounded whitespace-nowrap shrink-0 ${tab === k
+              className={`relative text-sm px-3 py-2 sm:py-1.5 rounded whitespace-nowrap shrink-0 ${tab === k
                 ? 'bg-[var(--bg-hover)] text-[var(--text-strong)]'
                 : 'text-[var(--text-muted)] hover:text-[var(--text-strong)]'}`}
             >
               {label}
+              {k === 'banks' && bankHasUpdates && (
+                <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-[var(--danger-border)]" />
+              )}
             </button>
           ))}
         </nav>

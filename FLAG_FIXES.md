@@ -43,6 +43,14 @@ Gemini is instructed to edit it into something usable rather than delete.
 The fix is applied locally to the user's library, and if the chapter exists on the cloud
 bank, also pushed via `PUT /chapters/{id}/stage/mc`.
 
+## Reviewing & re-running
+
+Resolved flags stay in the queue panel showing the corrected question (stem +
+choices with the new answer highlighted) and Gemini's rationale. If a fix isn't
+right, tap **re-run with Gemini** — you can optionally type an amended description
+clarifying what's still wrong, and the flag goes back to `pending` for the next
+pipeline run.
+
 ## Rate-limit handling
 
 If Gemini returns 429 / quota-exceeded, the pipeline stops and the remaining flags stay
