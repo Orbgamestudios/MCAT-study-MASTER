@@ -13,10 +13,13 @@
 <link rel="icon" type="image/png" sizes="512x512" href="icon-512.png" />
 <title>MCAT Study</title>
 <script>
-  // Apply persisted theme before paint to avoid flash.
+  // Apply persisted theme before paint to avoid flash. "system" follows the OS.
   (function () {
     try {
-      const t = JSON.parse(localStorage.getItem('mcat:theme')) || 'dark';
+      let t = JSON.parse(localStorage.getItem('mcat:theme')) || 'system';
+      if (t === 'system') {
+        t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+      }
       document.documentElement.setAttribute('data-theme', t);
     } catch { document.documentElement.setAttribute('data-theme', 'dark'); }
   })();
@@ -193,10 +196,84 @@
     --warning-text: #784f1a;
     --warning-text-strong: #92551c;
   }
+
+  :root[data-theme="darkwarm"] {
+    --bg: #211a12;
+    --bg-card: rgb(46 36 25 / 0.7);
+    --bg-card-strong: rgb(46 36 25 / 0.85);
+    --bg-card-soft: rgb(46 36 25 / 0.45);
+    --bg-elev: #17110b;
+    --bg-elev-soft: rgb(23 17 11 / 0.6);
+    --bg-hover: #3a2d1e;
+    --bg-hover-soft: rgb(58 45 30 / 0.5);
+    --border: #4a3a26;
+    --border-soft: #2e2419;
+    --border-strong: #6b5436;
+    --text: #f0e6d6;
+    --text-strong: #fbf4e6;
+    --text-muted: #c0ad92;
+    --text-faint: #94815f;
+    --text-fainter: #6b5a3f;
+    --accent: #e8833a;
+    --accent-hover: #f59e52;
+    --accent-text: #f5b787;
+    --accent-border: #e8833a;
+    --accent-soft: rgb(232 131 58 / 0.16);
+    --accent-2: #d99a3a;
+    --accent-2-text: #ecc98a;
+    --success-bg: rgb(54 70 30 / 0.45);
+    --success-bg-strong: rgb(54 70 30 / 0.6);
+    --success-text: #b3d98a;
+    --success-border: #84b94a;
+    --danger-bg: rgb(110 40 25 / 0.45);
+    --danger-bg-strong: rgb(110 40 25 / 0.6);
+    --danger-text: #f0a98a;
+    --danger-border: #d2602f;
+    --warning-bg: rgb(120 80 20 / 0.4);
+    --warning-text: #f0c878;
+    --warning-text-strong: #f5d590;
+  }
+
+  :root[data-theme="darkgreen"] {
+    --bg: #0e1710;
+    --bg-card: rgb(20 33 23 / 0.7);
+    --bg-card-strong: rgb(20 33 23 / 0.85);
+    --bg-card-soft: rgb(20 33 23 / 0.45);
+    --bg-elev: #091009;
+    --bg-elev-soft: rgb(9 16 9 / 0.6);
+    --bg-hover: #1f3325;
+    --bg-hover-soft: rgb(31 51 37 / 0.5);
+    --border: #2f4733;
+    --border-soft: #1c2c20;
+    --border-strong: #436b48;
+    --text: #e3efe3;
+    --text-strong: #f1f8f1;
+    --text-muted: #9bb89f;
+    --text-faint: #6e8c72;
+    --text-fainter: #4d6651;
+    --accent: #58cc02;
+    --accent-hover: #6fe018;
+    --accent-text: #a3e87a;
+    --accent-border: #58cc02;
+    --accent-soft: rgb(88 204 2 / 0.15);
+    --accent-2: #1cb0f6;
+    --accent-2-text: #7fd3f9;
+    --success-bg: rgb(20 80 30 / 0.45);
+    --success-bg-strong: rgb(20 80 30 / 0.6);
+    --success-text: #86e05f;
+    --success-border: #58cc02;
+    --danger-bg: rgb(120 35 25 / 0.45);
+    --danger-bg-strong: rgb(120 35 25 / 0.6);
+    --danger-text: #f0a090;
+    --danger-border: #e85d3a;
+    --warning-bg: rgb(110 75 20 / 0.4);
+    --warning-text: #ecca78;
+    --warning-text-strong: #f2d68e;
+  }
 </style>
 </head>
 <body>
 <div id="root"></div>
-<script type="text/babel" data-presets="react" src="app.js?v=37"></script>
+<script type="text/babel" data-presets="react" src="app.js?v=38"></script>
 </body>
 </html>

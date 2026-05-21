@@ -29,7 +29,15 @@ const KEYS = {
   bankSeen: 'mcat:bankSeen', // timestamp — last time the user reviewed the Bank tab
 };
 
-const THEMES = ['dark', 'light', 'warm', 'green'];
+// 'system' follows the OS light/dark setting; the rest are explicit palettes.
+const THEMES = ['system', 'light', 'dark', 'warm', 'darkwarm', 'green', 'darkgreen'];
+function resolveTheme(choice) {
+  if (choice === 'system') {
+    try { return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'; }
+    catch { return 'dark'; }
+  }
+  return THEMES.includes(choice) ? choice : 'dark';
+}
 
 // Random motivational quotes — one is picked when the Home tab mounts.
 const QUOTES = [
@@ -279,10 +287,12 @@ function hudClick() { sfxTap(); vibrateTap(); }
 
 // ---------- dynamic favicon (matches the in-app gradient logo per theme) ----------
 const THEME_ICON_COLORS = {
-  dark:  { accent: '#4f46e5', accent2: '#d946ef' },
-  light: { accent: '#4f46e5', accent2: '#a21caf' },
-  warm:  { accent: '#c2410c', accent2: '#b45309' },
-  green: { accent: '#58cc02', accent2: '#1cb0f6' },
+  dark:      { accent: '#4f46e5', accent2: '#d946ef' },
+  light:     { accent: '#4f46e5', accent2: '#a21caf' },
+  warm:      { accent: '#c2410c', accent2: '#b45309' },
+  darkwarm:  { accent: '#e8833a', accent2: '#d99a3a' },
+  green:     { accent: '#58cc02', accent2: '#1cb0f6' },
+  darkgreen: { accent: '#58cc02', accent2: '#1cb0f6' },
 };
 function updateFavicon(theme) {
   try {
@@ -981,7 +991,10 @@ function AppProvider({ children }) {
   const [attempts, setAttemptsState] = useState(() => storage.get(KEYS.attempts, []));
   const [staticBank, setStaticBank] = useState(null); // { files, extractions, questions } or null
   const [readOnly, setReadOnly] = useState(false);
-  const [theme, setThemeState] = useState(() => storage.get(KEYS.theme, 'dark'));
+  const [theme, setThemeState] = useState(() => {
+    const t = storage.get(KEYS.theme, 'system');
+    return THEMES.includes(t) ? t : 'system';
+  });
   const [github, setGithubState] = useState(() => ({ ...DEFAULT_GITHUB, ...(storage.get(KEYS.github, {}) || {}) }));
   const [pushStatus, setPushStatus] = useState({ state: 'idle', lastAt: null, error: null });
   const [reauditEnabled, setReauditEnabledState] = useState(() => !!storage.get(KEYS.reaudit, false));
@@ -1027,13 +1040,23 @@ function AppProvider({ children }) {
   const setTheme = useCallback((t) => {
     if (!THEMES.includes(t)) return;
     storage.set(KEYS.theme, t);
-    document.documentElement.setAttribute('data-theme', t);
     setThemeState(t);
   }, []);
 
   useEffect(() => {
-    document.documentElement.setAttribute('data-theme', theme);
-    updateFavicon(theme);
+    const apply = () => {
+      const resolved = resolveTheme(theme);
+      document.documentElement.setAttribute('data-theme', resolved);
+      updateFavicon(resolved);
+    };
+    apply();
+    // When following the OS, re-apply if the user flips their system light/dark.
+    if (theme === 'system') {
+      const mq = window.matchMedia('(prefers-color-scheme: dark)');
+      const onChange = () => apply();
+      mq.addEventListener('change', onChange);
+      return () => mq.removeEventListener('change', onChange);
+    }
   }, [theme]);
 
   // One-time cleanup: drop the temporary drag-position key now that the bird
@@ -3386,10 +3409,13 @@ function SettingsPanel({ onClose }) {
   };
 
   const themeOpts = [
-    ['dark', '🌙', 'Dark'],
+    ['system', '🖥️', 'System'],
     ['light', '☀️', 'Light'],
+    ['dark', '🌙', 'Dark'],
     ['warm', '🍂', 'Warm'],
+    ['darkwarm', '🔥', 'Dark Warm'],
     ['green', '🦉', 'Green'],
+    ['darkgreen', '🌲', 'Dark Green'],
   ];
 
   return (
