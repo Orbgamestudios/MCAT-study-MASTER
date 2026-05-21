@@ -108,6 +108,18 @@ function setCarsResult(date, result) {
   all[date] = result;
   try { localStorage.setItem('mcat:cars', JSON.stringify(all)); } catch {}
 }
+// Local cache of downloaded CARS payloads so a day opens instantly / offline.
+function getCarsCache() { try { return JSON.parse(localStorage.getItem('mcat:carsCache')) || {}; } catch { return {}; } }
+function getCarsCachePayload(date) { return getCarsCache()[date] || null; }
+function setCarsCachePayload(date, payload) {
+  if (!payload) return;
+  const all = getCarsCache();
+  all[date] = payload;
+  // Keep the cache bounded — newest 60 days.
+  const keys = Object.keys(all).sort();
+  while (keys.length > 60) delete all[keys.shift()];
+  try { localStorage.setItem('mcat:carsCache', JSON.stringify(all)); } catch {}
+}
 
 const DEFAULT_GITHUB = {
   token: '',
@@ -3266,8 +3278,10 @@ function CarsRunner({ date, payload, onClose, alreadyDone }) {
 function DailyCarsCard() {
   const { api, client, apiKey, session } = useApp();
   const today = todayStr();
-  const [state, setState] = useState('loading'); // loading | ready | generating | unavailable | error
-  const [payload, setPayload] = useState(null);
+  // Seed from the local cache so the card shows instantly if today was already downloaded.
+  const cached = getCarsCachePayload(today);
+  const [state, setState] = useState(cached ? 'ready' : 'loading'); // loading | ready | generating | unavailable | error
+  const [payload, setPayload] = useState(cached);
   const [err, setErr] = useState('');
   const [running, setRunning] = useState(false);
   const [tick, setTick] = useState(0);
@@ -3275,9 +3289,10 @@ function DailyCarsCard() {
 
   useEffect(() => {
     let cancelled = false;
-    setState('loading'); setErr('');
+    if (!getCarsCachePayload(today)) { setState('loading'); }
+    setErr('');
     api.getCars(today)
-      .then((d) => { if (!cancelled) { setPayload(d.payload); setState('ready'); } })
+      .then((d) => { if (!cancelled) { setCarsCachePayload(today, d.payload); setPayload(d.payload); setState('ready'); } })
       .catch(async (e) => {
         if (cancelled) return;
         if (e.status !== 404) { setErr(e.message); setState('error'); return; }
@@ -3289,12 +3304,12 @@ function DailyCarsCard() {
           const gen = await client.generateDailyCars(discipline);
           if (!gen?.questions?.length) throw new Error('Generation returned no questions.');
           await api.postCars({ date: today, discipline: gen.discipline || discipline, title: gen.title || '', payload: gen });
-          if (!cancelled) { setPayload(gen); setState('ready'); }
+          if (!cancelled) { setCarsCachePayload(today, gen); setPayload(gen); setState('ready'); }
         } catch (ge) {
           // Someone else may have generated it in the meantime — try one more fetch.
           try {
             const d2 = await api.getCars(today);
-            if (!cancelled) { setPayload(d2.payload); setState('ready'); return; }
+            if (!cancelled) { setCarsCachePayload(today, d2.payload); setPayload(d2.payload); setState('ready'); return; }
           } catch {}
           if (!cancelled) { setErr(ge.message); setState('error'); }
         }
@@ -3322,12 +3337,12 @@ function DailyCarsCard() {
     </div>
   );
   if (state === 'error') return card(
-    <div className="flex items-center justify-between gap-3">
-      <div>
+    <div>
+      <div className="flex items-center justify-between gap-3">
         <h2 className="font-semibold text-[var(--text-strong)]">Daily CARS</h2>
-        <p className="text-sm text-[var(--danger-text)] mt-1">{err}</p>
+        <button onClick={() => setTick((t) => t + 1)} className="shrink-0 text-xs px-3 py-1.5 border border-[var(--border)] rounded hover:bg-[var(--bg-hover)]">Retry</button>
       </div>
-      <button onClick={() => setTick((t) => t + 1)} className="text-xs px-3 py-1.5 border border-[var(--border)] rounded hover:bg-[var(--bg-hover)]">Retry</button>
+      <p className="text-sm text-[var(--danger-text)] mt-1 break-words whitespace-pre-wrap">{err}</p>
     </div>
   );
 
@@ -3386,9 +3401,13 @@ function CarsArchive() {
   }, [api]);
 
   const openDay = async (date) => {
+    // Instant if already downloaded; otherwise fetch and cache it.
+    const cachedPayload = getCarsCachePayload(date);
+    if (cachedPayload) { setOpen({ date, payload: cachedPayload }); return; }
     setLoadingDate(date);
     try {
       const d = await api.getCars(date);
+      setCarsCachePayload(date, d.payload);
       setOpen({ date, payload: d.payload });
     } catch (e) {
       setErr(e.message);
@@ -5553,10 +5572,12 @@ function Shell() {
   }, []);
 
   // Home dot: today's CARS is ready but the user hasn't done it yet.
+  // Also downloads (caches) today's set on app entry so it opens instantly / offline.
   const [carsReady, setCarsReady] = useState(false);
   const recheckCars = useCallback(() => {
-    api.getCars(todayStr())
-      .then(() => { setCarsReady(!getCarsResults()[todayStr()]); })
+    const d = todayStr();
+    api.getCars(d)
+      .then((res) => { setCarsCachePayload(d, res.payload); setCarsReady(!getCarsResults()[d]); })
       .catch(() => { setCarsReady(false); });
   }, [api]);
   useEffect(() => { recheckCars(); }, [recheckCars]);
