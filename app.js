@@ -157,11 +157,29 @@ function _vol() {
     return typeof v === 'number' && v >= 0 && v <= 1 ? v : 1;
   } catch { return 1; }
 }
-// Answer SFX. The Audio element is the always-works path; WebAudio (with a gain
-// node) is used once its buffer is decoded so the volume slider applies precisely.
-// Crucially we NEVER end up permanently silent — if WebAudio isn't ready or fails,
-// the Audio element plays regardless.
-const _sfxBufferCache = {}; // name -> AudioBuffer | undefined  (no sticky 'loading' state)
+// ---------- audio context ----------
+// Browsers auto-suspend the AudioContext after inactivity / backgrounding. A sound
+// scheduled against a suspended context is silently dropped — that's the "works
+// sometimes" bug. _withCtx() resumes first and only schedules once the context is
+// genuinely running.
+let _audioCtx = null;
+function _ctx() {
+  try {
+    if (!_audioCtx) _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    return _audioCtx;
+  } catch { return null; }
+}
+function _withCtx(cb) {
+  const ctx = _ctx();
+  if (!ctx) return;
+  if (ctx.state === 'running') { try { cb(ctx); } catch {} return; }
+  // resume() must be kicked off inside a user gesture; cb runs once it actually resumes.
+  ctx.resume().then(() => { try { cb(ctx); } catch {} }).catch(() => {});
+}
+
+// Answer SFX. WebAudio buffer (with a gain node) once decoded so the volume slider
+// applies precisely; the Audio element is the fallback until then.
+const _sfxBufferCache = {}; // name -> AudioBuffer | undefined
 const _sfxAudioCache = {};
 function _kickBufferLoad(name) {
   const ctx = _ctx();
@@ -187,111 +205,119 @@ function _playSfxFallback(name) {
   } catch {}
 }
 function playSfx(name) {
-  const ctx = _ctx();
   const buf = _sfxBufferCache[name];
-  if (ctx && buf) {
-    try {
+  if (buf) {
+    _withCtx((ctx) => {
       const src = ctx.createBufferSource();
       src.buffer = buf;
       const gain = ctx.createGain();
       gain.gain.value = Math.max(0.0001, 0.4 * _vol());
       src.connect(gain).connect(ctx.destination);
       src.start();
-      return;
-    } catch { /* fall through to Audio element */ }
+    });
+    return;
   }
-  // Buffer not ready (or no WebAudio) — load for next time, play via Audio element now.
+  // Buffer not ready — load it for next time, play via Audio element now.
   _kickBufferLoad(name);
   _playSfxFallback(name);
 }
 
-// Web-Audio synthesized clicks for UI feedback (no asset files needed).
-let _audioCtx = null;
-function _ctx() {
-  try {
-    if (!_audioCtx) _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    if (_audioCtx.state === 'suspended') _audioCtx.resume();
-    return _audioCtx;
-  } catch { return null; }
-}
+// One-time audio unlock on the first user interaction: resumes the context (so the
+// very first sound isn't dropped) and pre-decodes the answer SFX buffers.
+(function () {
+  let done = false;
+  const unlock = () => {
+    if (done) return;
+    done = true;
+    _withCtx((ctx) => {
+      try {
+        const b = ctx.createBuffer(1, 1, ctx.sampleRate);
+        const s = ctx.createBufferSource();
+        s.buffer = b; s.connect(ctx.destination); s.start();
+      } catch {}
+    });
+    _kickBufferLoad('correct');
+    _kickBufferLoad('wrong');
+  };
+  ['pointerdown', 'touchstart', 'keydown', 'click'].forEach((ev) =>
+    document.addEventListener(ev, unlock, { capture: true, passive: true }));
+})();
+
 function _beep(freq, durMs, { vol = 0.08, type = 'sine', startAt = 0 } = {}) {
-  const ctx = _ctx();
-  if (!ctx) return;
-  const peak = Math.max(0.0001, vol * _vol());
-  const t0 = ctx.currentTime + startAt;
-  const osc = ctx.createOscillator();
-  const gain = ctx.createGain();
-  osc.type = type;
-  osc.frequency.setValueAtTime(freq, t0);
-  gain.gain.setValueAtTime(0, t0);
-  gain.gain.linearRampToValueAtTime(peak, t0 + 0.005);
-  gain.gain.exponentialRampToValueAtTime(0.0001, t0 + durMs / 1000);
-  osc.connect(gain).connect(ctx.destination);
-  osc.start(t0);
-  osc.stop(t0 + durMs / 1000 + 0.02);
+  _withCtx((ctx) => {
+    const peak = Math.max(0.0001, vol * _vol());
+    const t0 = ctx.currentTime + startAt;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, t0);
+    gain.gain.setValueAtTime(0, t0);
+    gain.gain.linearRampToValueAtTime(peak, t0 + 0.005);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + durMs / 1000);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(t0);
+    osc.stop(t0 + durMs / 1000 + 0.02);
+  });
 }
 
 // Percussive "tick" for any HUD button tap — short band-pass-filtered noise burst.
 function sfxTap() {
-  const ctx = _ctx();
-  if (!ctx) return;
-  const t0 = ctx.currentTime;
-  const dur = 0.035;
-  const buf = ctx.createBuffer(1, Math.max(1, Math.floor(ctx.sampleRate * dur)), ctx.sampleRate);
-  const data = buf.getChannelData(0);
-  for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / data.length);
-  const src = ctx.createBufferSource();
-  src.buffer = buf;
-  const filter = ctx.createBiquadFilter();
-  filter.type = 'bandpass';
-  filter.frequency.value = 2800;
-  filter.Q.value = 3;
-  const gain = ctx.createGain();
-  gain.gain.setValueAtTime(Math.max(0.0001, 0.18 * _vol()), t0);
-  gain.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
-  src.connect(filter).connect(gain).connect(ctx.destination);
-  src.start(t0);
-  src.stop(t0 + dur + 0.01);
+  _withCtx((ctx) => {
+    const t0 = ctx.currentTime;
+    const dur = 0.035;
+    const buf = ctx.createBuffer(1, Math.max(1, Math.floor(ctx.sampleRate * dur)), ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / data.length);
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.value = 2800;
+    filter.Q.value = 3;
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(Math.max(0.0001, 0.18 * _vol()), t0);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    src.connect(filter).connect(gain).connect(ctx.destination);
+    src.start(t0);
+    src.stop(t0 + dur + 0.01);
+  });
 }
 
 // Each hit = mostly noise burst with only a faint tonal tail. Reads percussive,
 // barely tuneful.
 function _percHit(centerFreq, startAt, vol) {
-  const ctx = _ctx();
-  if (!ctx) return;
-  const peak = Math.max(0.0001, vol * _vol());
-  const t0 = ctx.currentTime + startAt;
+  _withCtx((ctx) => {
+    const peak = Math.max(0.0001, vol * _vol());
+    const t0 = ctx.currentTime + startAt;
 
-  // Heavy noise burst (the main body of each hit)
-  const nDur = 0.045;
-  const buf = ctx.createBuffer(1, Math.max(1, Math.floor(ctx.sampleRate * nDur)), ctx.sampleRate);
-  const data = buf.getChannelData(0);
-  for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / data.length);
-  const src = ctx.createBufferSource();
-  src.buffer = buf;
-  const filt = ctx.createBiquadFilter();
-  filt.type = 'bandpass';
-  filt.frequency.value = centerFreq;
-  filt.Q.value = 1.5;
-  const nGain = ctx.createGain();
-  nGain.gain.setValueAtTime(peak * 1.0, t0);
-  nGain.gain.exponentialRampToValueAtTime(0.0001, t0 + nDur);
-  src.connect(filt).connect(nGain).connect(ctx.destination);
-  src.start(t0);
-  src.stop(t0 + nDur + 0.01);
+    const nDur = 0.045;
+    const buf = ctx.createBuffer(1, Math.max(1, Math.floor(ctx.sampleRate * nDur)), ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / data.length);
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    const filt = ctx.createBiquadFilter();
+    filt.type = 'bandpass';
+    filt.frequency.value = centerFreq;
+    filt.Q.value = 1.5;
+    const nGain = ctx.createGain();
+    nGain.gain.setValueAtTime(peak * 1.0, t0);
+    nGain.gain.exponentialRampToValueAtTime(0.0001, t0 + nDur);
+    src.connect(filt).connect(nGain).connect(ctx.destination);
+    src.start(t0);
+    src.stop(t0 + nDur + 0.01);
 
-  // Very faint tonal pop — provides the slight pitch hint, sub-audible if you're not
-  // listening for it.
-  const osc = ctx.createOscillator();
-  const oscGain = ctx.createGain();
-  osc.type = 'square';
-  osc.frequency.setValueAtTime(centerFreq * 0.5, t0);
-  oscGain.gain.setValueAtTime(0, t0);
-  oscGain.gain.linearRampToValueAtTime(peak * 0.15, t0 + 0.002);
-  oscGain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.04);
-  osc.connect(oscGain).connect(ctx.destination);
-  osc.start(t0);
-  osc.stop(t0 + 0.06);
+    const osc = ctx.createOscillator();
+    const oscGain = ctx.createGain();
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(centerFreq * 0.5, t0);
+    oscGain.gain.setValueAtTime(0, t0);
+    oscGain.gain.linearRampToValueAtTime(peak * 0.15, t0 + 0.002);
+    oscGain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.04);
+    osc.connect(oscGain).connect(ctx.destination);
+    osc.start(t0);
+    osc.stop(t0 + 0.06);
+  });
 }
 
 function sfxQuizStart() {
