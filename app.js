@@ -3661,6 +3661,67 @@ function CarsArchive() {
   );
 }
 
+// CARS calendar — GitHub-style grid of daily CARS activity + accuracy.
+function CarsCalendar() {
+  const results = getCarsResults();
+  const done = Object.entries(results).filter(([, r]) => r && r.total);
+  const WEEKS = 13;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const total = (WEEKS - 1) * 7 + today.getDay() + 1;
+  const days = [];
+  for (let i = total - 1; i >= 0; i--) {
+    const d = new Date(today);
+    d.setDate(today.getDate() - i);
+    days.push(d);
+  }
+  // Streak: consecutive days up to today with a result (today not-yet-done doesn't break it).
+  let streak = 0;
+  for (let i = 0; i < 400; i++) {
+    const d = new Date(today); d.setDate(today.getDate() - i);
+    const r = results[todayStr(d)];
+    if (r && r.total) streak++;
+    else if (i === 0) continue;
+    else break;
+  }
+  const doneCount = done.length;
+  const avgAcc = doneCount
+    ? Math.round((done.reduce((s, [, r]) => s + r.score / r.total, 0) / doneCount) * 100)
+    : 0;
+
+  return (
+    <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-5">
+      <div className="flex items-baseline justify-between mb-1">
+        <h3 className="font-semibold text-[var(--text-strong)]">CARS calendar</h3>
+        <span className="text-xs text-[var(--text-muted)]">
+          {doneCount} done · {avgAcc}% avg · {streak}-day streak
+        </span>
+      </div>
+      <p className="text-[11px] text-[var(--text-faint)] mb-3">Last 13 weeks. Greener = higher accuracy.</p>
+      <div className="grid gap-1" style={{ gridTemplateRows: 'repeat(7, 1fr)', gridAutoFlow: 'column' }}>
+        {days.map((d) => {
+          const key = todayStr(d);
+          const r = results[key];
+          const acc = r && r.total ? r.score / r.total : null;
+          const style = acc != null
+            ? { background: 'var(--success-border)', opacity: 0.3 + acc * 0.7 }
+            : { background: 'var(--bg-elev)' };
+          return (
+            <div
+              key={key}
+              title={r ? `${key} — ${r.score}/${r.total} (${Math.round(acc * 100)}%)` : `${key} — not done`}
+              className="rounded-sm"
+              style={{ ...style, aspectRatio: '1', minWidth: '9px' }}
+            />
+          );
+        })}
+      </div>
+      {doneCount === 0 && (
+        <p className="text-xs text-[var(--text-faint)] mt-3">Do a daily CARS passage and it lights up here.</p>
+      )}
+    </div>
+  );
+}
+
 // ---------- home view ----------
 function HomeView({ onGoToStudy }) {
   const { session, files, questions, extractions, attempts } = useApp();
@@ -4956,22 +5017,30 @@ function ServerStatsPayload({ data }) {
       <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-5">
         <h3 className="font-semibold mb-3 text-[var(--text-strong)]">Last 7 days</h3>
         <div className="flex items-end gap-1.5 h-32">
-          {dailySeries.map((d, i) => {
+          {dailySeries.map((d) => {
             const acc = pct(d.correct, d.total);
-            const h = `${(d.total / maxTotal) * 100}%`;
-            const ok = `${d.total ? (d.correct / maxTotal) * 100 : 0}%`;
-            const dayLabel = new Date((d.day + 1) * 86400000 - 1).toLocaleDateString(undefined, { weekday: 'short' });
+            // Bar height = total relative to the busiest day; fill = % correct of that bar.
+            const barH = d.total ? Math.max(6, (d.total / maxTotal) * 100) : 0;
+            const fillH = d.total ? (d.correct / d.total) * 100 : 0;
             return (
-              <div key={d.day} className="flex-1 flex flex-col items-center justify-end">
-                <div className="w-full bg-[var(--bg-elev)] rounded-t flex flex-col justify-end" style={{ height: h }}>
-                  <div className="bg-[var(--success-border)] rounded-t" style={{ height: ok }} title={`${d.correct}/${d.total} (${acc}%)`} />
+              <div key={d.day} className="flex-1 h-full flex flex-col justify-end" title={`${d.correct}/${d.total} (${acc}%)`}>
+                <div
+                  className="w-full bg-[var(--bg-elev)] rounded-t overflow-hidden flex flex-col justify-end"
+                  style={{ height: `${barH}%` }}
+                >
+                  <div className="w-full bg-[var(--success-border)]" style={{ height: `${fillH}%` }} />
                 </div>
-                <div className="text-[10px] text-[var(--text-faint)] mt-1">{dayLabel}</div>
               </div>
             );
           })}
         </div>
-        <p className="text-[11px] text-[var(--text-faint)] mt-2">Full bar = total attempts that day. Filled portion = correct.</p>
+        <div className="flex gap-1.5 mt-1">
+          {dailySeries.map((d) => {
+            const dayLabel = new Date(d.day * 86400000 + 43200000).toLocaleDateString(undefined, { weekday: 'short' });
+            return <div key={d.day} className="flex-1 text-center text-[10px] text-[var(--text-faint)]">{dayLabel}</div>;
+          })}
+        </div>
+        <p className="text-[11px] text-[var(--text-faint)] mt-2">Bar height = attempts that day. Green = % correct.</p>
       </div>
 
       {data.bySubject?.length > 0 && (
@@ -5923,6 +5992,7 @@ function Shell() {
               : (
                 <>
                   <Leaderboard onPickUser={(u) => setProfileUser(u)} />
+                  <CarsCalendar />
                   {session && <ServerStatsView />}
                   <StatsView />
                 </>
