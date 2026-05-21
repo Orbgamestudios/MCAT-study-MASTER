@@ -7,8 +7,9 @@ questions individually and applies the smallest fix that addresses the user's co
 ## The user side
 
 In the quiz UI, when a question has been answered (so the correct answer is visible), a
-small **⚑ Flag** button appears next to the Next button. Tapping it opens a modal where
-the user types a short description — e.g.:
+small **⚑ Flag** button appears. This works for both regular multiple-choice questions
+and **two-part items** (the button shows once both parts are done). Tapping it opens a
+modal where the user types a short description — e.g.:
 
 - "B and C are basically the same answer"
 - "The marked correct answer doesn't match the explanation"
@@ -35,6 +36,15 @@ chapter label, then returns one of two actions:
 | --- | --- |
 | `edit` | Returns a corrected stem / choices / correct_index / explanation. |
 | `skip` | The flag does not describe a real problem; leave the question unchanged. |
+
+**Two-part items** are handled too: Gemini receives the theme and both sub-questions and
+returns the corrected theme + both parts; the fix is written back to the chapter's
+`two_part` stage.
+
+**Formatting cleanup.** Every fixed choice is passed through a sanitizer that strips
+leaked escape sequences (`—`, `’`, …) and HTML entities, and removes any
+stray `A.` / `B.` / `(C)` letter labels the model may have prefixed to a choice. The fix
+prompt also explicitly forbids both.
 
 **Questions are never deleted.** Term-coverage MC questions in particular must stay so
 that every key term in a chapter remains testable. If a question seems irredeemable,

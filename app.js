@@ -108,6 +108,41 @@ function setCarsResult(date, result) {
   all[date] = result;
   try { localStorage.setItem('mcat:cars', JSON.stringify(all)); } catch {}
 }
+// ---------- text sanitization (defensive cleanup for AI-edited questions) ----------
+// Replace literal escape sequences / entities that sometimes leak into model output,
+// and collapse stray whitespace.
+function sanitizeText(s) {
+  if (typeof s !== 'string') return s;
+  return s
+    .replace(/\\u2014/gi, '—').replace(/\\u2013/gi, '–')
+    .replace(/\\u2019/gi, '’').replace(/\\u2018/gi, '‘')
+    .replace(/\\u201c/gi, '“').replace(/\\u201d/gi, '”')
+    .replace(/\\u2026/gi, '…').replace(/\\u00a0/gi, ' ')
+    .replace(/&mdash;/gi, '—').replace(/&ndash;/gi, '–')
+    .replace(/&#8212;?/g, '—').replace(/&#8211;?/g, '–')
+    .replace(/&rsquo;/gi, '’').replace(/&lsquo;/gi, '‘')
+    .replace(/&[lr]dquo;/gi, '"').replace(/&hellip;/gi, '…')
+    .replace(/&amp;/gi, '&').replace(/\\n/g, ' ').replace(/\\t/g, ' ')
+    .replace(/[ \t]+/g, ' ')
+    .trim();
+}
+// Strip a leading position label ("A.", "B)", "(C)") from a choice — but only when the
+// label matches the choice's own index, and not when it's actually a name initial
+// (e.g. "B. F. Skinner").
+function stripChoiceLabel(s, index) {
+  if (typeof s !== 'string') return s;
+  const expected = 'ABCD'[index];
+  const cleaned = sanitizeText(s);
+  if (!expected) return cleaned;
+  const m = cleaned.match(/^\(?([A-Da-d])\)?[.):\-]\s+(.+)$/s);
+  if (m && m[1].toUpperCase() === expected) {
+    const rest = m[2].trim();
+    if (/^[A-Z]\.\s/.test(rest)) return cleaned; // looks like a name initial — keep
+    return rest;
+  }
+  return cleaned;
+}
+
 // Local cache of downloaded CARS payloads so a day opens instantly / offline.
 function getCarsCache() { try { return JSON.parse(localStorage.getItem('mcat:carsCache')) || {}; } catch { return {}; } }
 function getCarsCachePayload(date) { return getCarsCache()[date] || null; }
@@ -850,6 +885,13 @@ function makeClient(getKey) {
   }
 
   // ---- flag fix: take a user's flag description and produce an updated question ----
+  // Shared formatting rule appended to every fix prompt.
+  const FIX_FORMAT_RULES =
+    'FORMATTING RULES: Each answer choice must contain ONLY the answer text — never prefix a ' +
+    'choice with "A.", "B.", "C.", "D.", "(A)", or any letter label. Use proper typographic ' +
+    'characters (a real em-dash —, real quotes); NEVER output literal escape sequences such as ' +
+    '\\u2014, \\u2019, \\n, or HTML entities. Fix any such artifacts you see in the original.';
+
   const FIX_SCHEMA = {
     type: 'OBJECT',
     properties: {
@@ -863,8 +905,65 @@ function makeClient(getKey) {
     required: ['action', 'rationale'],
   };
 
+  const TWO_PART_FIX_SCHEMA = {
+    type: 'OBJECT',
+    properties: {
+      action: { type: 'STRING' }, // 'edit' | 'skip'
+      theme: { type: 'STRING' },
+      parts: {
+        type: 'ARRAY',
+        items: {
+          type: 'OBJECT',
+          properties: {
+            question: { type: 'STRING' },
+            choices: { type: 'ARRAY', items: { type: 'STRING' } },
+            correct_index: { type: 'INTEGER' },
+            explanation: { type: 'STRING' },
+          },
+          required: ['question', 'choices', 'correct_index', 'explanation'],
+        },
+      },
+      rationale: { type: 'STRING' },
+    },
+    required: ['action', 'rationale'],
+  };
+
   async function fixFlaggedQuestion({ question, flagDescription, chapterContext }) {
     const letters = ['A', 'B', 'C', 'D'];
+
+    // ---- two-part item ----
+    if (Array.isArray(question?.parts)) {
+      const partsText = question.parts.map((p, pi) => (
+        `Part ${pi + 1}:\n` +
+        `  Stem: ${p.question || '(no stem)'}\n` +
+        (p.choices || []).map((c, i) => `  ${letters[i]}. ${c}`).join('\n') +
+        `\n  Current correct: ${letters[p.correct_index] || '?'} (index ${p.correct_index})\n` +
+        `  Explanation: ${p.explanation || '(none)'}`
+      )).join('\n\n');
+      const resp = await generate({
+        maxOutputTokens: 4096,
+        disableThinking: true,
+        systemInstruction:
+          'You are a meticulous MCAT question editor. A user has flagged a TWO-PART multiple-choice ' +
+          'item (a theme plus exactly 2 sub-questions, each with 4 choices). Apply the smallest fix that ' +
+          'addresses their description. Set action to "edit" and return the theme plus both corrected ' +
+          'parts (each: stem, 4 choices, correct_index 0-3, 1-2 sentence explanation). NEVER delete the ' +
+          'item. If the flag describes no real problem, set action to "skip". Always give a short ' +
+          'rationale. ' + FIX_FORMAT_RULES,
+        contents: [{ role: 'user', parts: [{ text:
+          `Chapter: ${chapterContext || '(unknown)'}\n\n` +
+          `--- Flagged two-part item ---\nTheme: ${question.theme || '(none)'}\n\n${partsText}\n\n` +
+          `--- User's flag ---\n${flagDescription}\n\n` +
+          `Decide on action ("edit" or "skip" only) and return the corrected item if editing.`,
+        }] }],
+        responseSchema: TWO_PART_FIX_SCHEMA,
+      });
+      const out = extractJson(resp);
+      out.two_part = true;
+      return out;
+    }
+
+    // ---- single MC question ----
     const stem = question.question || '(no stem)';
     const choices = (question.choices || []).map((c, i) => `${letters[i]}. ${c}`).join('\n');
     const currentCorrect = letters[question.correct_index] || '?';
@@ -879,7 +978,7 @@ function makeClient(getKey) {
         'NEVER delete questions — every question must be preserved (especially term-coverage questions). ' +
         'If the flag does not describe a real problem, set action to "skip". ' +
         'If a question seems irredeemable, still edit it into something usable rather than deleting. ' +
-        'Always provide a short rationale.',
+        'Always provide a short rationale. ' + FIX_FORMAT_RULES,
       contents: [{ role: 'user', parts: [{ text:
         `Chapter: ${chapterContext || '(unknown)'}\n\n` +
         `--- Flagged question ---\n` +
@@ -2434,6 +2533,7 @@ function FlagQuestionModal({ item, onClose }) {
         file_id: item.file_id,
         chapter_label: item.chapter,
         question_id: item.id,
+        mode: item.mode || 'mc',
         question_snapshot: item.q,
         description: description.trim(),
         ts: Date.now(),
@@ -2451,7 +2551,10 @@ function FlagQuestionModal({ item, onClose }) {
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-3" onClick={onClose}>
       <div className="w-full max-w-md bg-[var(--bg)] border border-[var(--border)] rounded-2xl p-4 space-y-3" onClick={(e) => e.stopPropagation()}>
         <h3 className="font-semibold text-[var(--text-strong)]">Flag question</h3>
-        <p className="text-xs text-[var(--text-muted)]">{item.q.question || item.q.prompt || '(no stem)'}</p>
+        <p className="text-xs text-[var(--text-muted)]">
+          {item.q.question || item.q.prompt
+            || (item.q.theme ? `Two-part: ${item.q.theme}` : '(no stem)')}
+        </p>
         <textarea
           value={description}
           onChange={(e) => setDescription(e.target.value)}
@@ -2618,7 +2721,7 @@ function ShortAnswerQuestion({ item, onAnswer, nextSlot }) {
 
 // ---------- quiz: matching ----------
 // ---------- quiz: two-part ----------
-function TwoPartQuestion({ item, onAnswer, nextSlot }) {
+function TwoPartQuestion({ item, onAnswer, nextSlot, onFlag }) {
   const parts = item.q.parts || [];
   const [partIdx, setPartIdx] = useState(0);
   const [results, setResults] = useState([]);
@@ -2661,6 +2764,17 @@ function TwoPartQuestion({ item, onAnswer, nextSlot }) {
         nextSlot={done && partIdx === parts.length - 1 ? nextSlot : null}
         continueLabel={partIdx === parts.length - 1 ? null : 'Continue →'}
       />
+      {done && onFlag && (
+        <div className="flex justify-end">
+          <button
+            onClick={onFlag}
+            className="text-xs text-[var(--text-muted)] hover:text-[var(--warning-text-strong)] border border-[var(--border)] rounded px-2 py-1"
+            title="Flag this two-part item for review"
+          >
+            ⚑ Flag
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -4273,7 +4387,7 @@ function FlagFixesPanel() {
     let processedCount = 0;
     for (const flag of pending) {
       try {
-        setStatus({ kind: 'info', msg: `Fixing "${(flag.question_snapshot.question || flag.question_snapshot.prompt || flag.question_id).slice(0, 60)}…"` });
+        setStatus({ kind: 'info', msg: `Fixing "${(flag.question_snapshot.question || flag.question_snapshot.prompt || flag.question_snapshot.theme || flag.question_id).slice(0, 60)}…"` });
         const fix = await client.fixFlaggedQuestion({
           question: flag.question_snapshot,
           flagDescription: flag.description,
@@ -4283,21 +4397,42 @@ function FlagFixesPanel() {
         // Apply the fix locally and to the server (if logged in + chapter exists on bank).
         const fileId = flag.file_id;
         const qbank = questions[fileId];
-        if (qbank?.mc) {
+
+        if (fix.two_part) {
+          // ---- two-part item fix: update qbank.twoPart ----
+          if (qbank?.twoPart && fix.action === 'edit' && Array.isArray(fix.parts) && fix.parts.length === 2) {
+            const cleanParts = fix.parts.map((p) => ({
+              question: sanitizeText(p.question),
+              choices: (p.choices || []).slice(0, 4).map((c, i) => stripChoiceLabel(c, i)),
+              correct_index: Number.isInteger(p.correct_index) ? p.correct_index : 0,
+              explanation: sanitizeText(p.explanation),
+            }));
+            const nextTp = qbank.twoPart.map((it) => it.id === flag.question_id ? {
+              ...it, theme: sanitizeText(fix.theme) || it.theme, parts: cleanParts,
+            } : it);
+            if (nextTp !== qbank.twoPart) {
+              setQuestionsFor(fileId, { ...qbank, twoPart: nextTp });
+              if (flag.chapter_id && session) {
+                try { await api.putChapterStage(flag.chapter_id, 'two_part', nextTp); } catch {}
+              }
+            }
+          }
+        } else if (qbank?.mc) {
+          // ---- single MC question fix: update qbank.mc ----
           let nextMc = qbank.mc;
           if (fix.action === 'edit') {
             nextMc = qbank.mc.map((q) => q.id === flag.question_id ? {
               ...q,
-              question: fix.question || q.question,
-              choices: fix.choices?.length === 4 ? fix.choices : q.choices,
+              question: sanitizeText(fix.question) || q.question,
+              // Strip any "A./B./C./D." labels and escape-code artifacts from the choices.
+              choices: (fix.choices?.length === 4 ? fix.choices : q.choices).map((c, i) => stripChoiceLabel(c, i)),
               correct_index: Number.isInteger(fix.correct_index) ? fix.correct_index : q.correct_index,
-              explanation: fix.explanation || q.explanation,
+              explanation: sanitizeText(fix.explanation) || q.explanation,
             } : q);
           }
           // No delete branch — every question (especially term-coverage) must be preserved.
           if (nextMc !== qbank.mc) {
             setQuestionsFor(fileId, { ...qbank, mc: nextMc });
-            // Push to server too if this chapter lives on the cloud bank.
             if (flag.chapter_id && session) {
               try { await api.putChapterStage(flag.chapter_id, 'mc', nextMc); } catch {}
             }
@@ -4310,13 +4445,13 @@ function FlagFixesPanel() {
           updated.rationale = fix.rationale;
           updated.resolved_at = Date.now();
           updated.error = undefined;
-          // Keep the corrected question so it can be reviewed later.
-          if (fix.action === 'edit') {
+          // Keep the corrected question so it can be reviewed later (MC only).
+          if (fix.action === 'edit' && !fix.two_part) {
             updated.fixed_question = {
-              question: fix.question || flag.question_snapshot.question,
-              choices: fix.choices?.length === 4 ? fix.choices : flag.question_snapshot.choices,
+              question: sanitizeText(fix.question) || flag.question_snapshot.question,
+              choices: (fix.choices?.length === 4 ? fix.choices : flag.question_snapshot.choices || []).map((c, i) => stripChoiceLabel(c, i)),
               correct_index: Number.isInteger(fix.correct_index) ? fix.correct_index : flag.question_snapshot.correct_index,
-              explanation: fix.explanation || flag.question_snapshot.explanation,
+              explanation: sanitizeText(fix.explanation) || flag.question_snapshot.explanation,
             };
           }
         }
@@ -4404,7 +4539,10 @@ function FlagRow({ flag: f, onRemove, onRequeue }) {
           'text-[var(--success-text)]'
         }`}>{f.status}</span>
       </div>
-      <div className="text-xs mt-1 text-[var(--text)]">{(f.question_snapshot?.question || f.question_snapshot?.prompt || f.question_id).slice(0, 160)}</div>
+      <div className="text-xs mt-1 text-[var(--text)]">
+        {f.question_snapshot?.theme ? `Two-part: ${f.question_snapshot.theme}` : null}
+        {(f.question_snapshot?.question || f.question_snapshot?.prompt || (f.question_snapshot?.theme ? '' : f.question_id)).slice(0, 160)}
+      </div>
       <div className="text-xs text-[var(--text-muted)] mt-1 italic">"{f.description}"</div>
       {f.rationale && <div className="text-[11px] text-[var(--accent-text)] mt-1">→ {f.rationale}</div>}
       {f.error && <div className="text-[11px] text-[var(--danger-text)] mt-1">{f.error}</div>}
