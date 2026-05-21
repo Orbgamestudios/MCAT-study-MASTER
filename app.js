@@ -3316,10 +3316,11 @@ function HomeActivity() {
 }
 
 // ---------- daily CARS ----------
-function CarsQuestion({ q, index, picked, onPick }) {
+// reveal=false: attempt mode — selectable, no correct/incorrect shown.
+// reveal=true:  review mode — locked, answers + explanations shown.
+function CarsQuestion({ q, index, picked, onPick, reveal }) {
   const letters = ['A', 'B', 'C', 'D'];
-  const answered = picked != null;
-  const correct = answered && picked === q.correct_index;
+  const noPick = picked == null;
   return (
     <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-5 space-y-3">
       <div className="flex items-baseline gap-2">
@@ -3331,17 +3332,21 @@ function CarsQuestion({ q, index, picked, onPick }) {
       </div>
       <div className="space-y-2">
         {q.choices.map((c, i) => {
-          let cls = 'border-[var(--border)] hover:bg-[var(--bg-hover)]';
-          if (answered) {
+          let cls;
+          if (reveal) {
             if (i === q.correct_index) cls = 'border-[var(--success-border)] bg-[var(--success-bg-strong)]';
             else if (i === picked) cls = 'border-[var(--danger-border)] bg-[var(--danger-bg-strong)]';
             else cls = 'border-[var(--border-soft)] opacity-60';
+          } else {
+            cls = i === picked
+              ? 'border-[var(--accent-border)] bg-[var(--accent-soft)]'
+              : 'border-[var(--border)] hover:bg-[var(--bg-hover)]';
           }
           return (
             <button
               key={i}
-              onClick={() => onPick(i)}
-              disabled={answered}
+              onClick={() => { if (!reveal) onPick(i); }}
+              disabled={reveal}
               data-no-haptic
               className={`w-full text-left border rounded-lg px-3 py-2.5 text-sm transition-colors ${cls}`}
             >
@@ -3351,10 +3356,16 @@ function CarsQuestion({ q, index, picked, onPick }) {
           );
         })}
       </div>
-      {answered && (
+      {reveal && (
         <div className="bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg p-3 space-y-2">
-          <div className={correct ? 'text-[var(--success-text)] font-medium text-sm' : 'text-[var(--danger-text)] font-medium text-sm'}>
-            {correct ? 'Correct' : `Incorrect — answer is ${letters[q.correct_index]}`}
+          <div className={
+            noPick ? 'text-[var(--text-muted)] font-medium text-sm'
+              : picked === q.correct_index ? 'text-[var(--success-text)] font-medium text-sm'
+              : 'text-[var(--danger-text)] font-medium text-sm'
+          }>
+            {noPick ? `Answer: ${letters[q.correct_index]}`
+              : picked === q.correct_index ? 'Correct'
+              : `Incorrect — answer is ${letters[q.correct_index]}, you chose ${letters[picked]}`}
           </div>
           <div className="text-sm text-[var(--text)]">{q.explanation}</div>
           {Array.isArray(q.choice_explanations) && q.choice_explanations.length > 0 && (
@@ -3375,34 +3386,59 @@ function CarsQuestion({ q, index, picked, onPick }) {
 function CarsRunner({ date, payload, onClose, alreadyDone }) {
   const { addAttempt } = useApp();
   const questions = payload.questions || [];
-  const [picks, setPicks] = useState({}); // qid -> chosen index
+  const savedResult = alreadyDone ? (getCarsResults()[date] || null) : null;
+  const [picks, setPicks] = useState(() => (savedResult && savedResult.picks) || {});
+  // attempt → graded → review. Never reveals answers before 'review'.
+  const [phase, setPhase] = useState(alreadyDone ? 'review' : 'attempt');
+  const finalizedRef = useRef(false);
+  const scrollRef = useRef(null);
+
   const answeredCount = Object.keys(picks).length;
-  const allDone = answeredCount === questions.length && questions.length > 0;
-  const score = questions.reduce((n, q) => n + (picks[q.id] === q.correct_index ? 1 : 0), 0);
-  const savedRef = useRef(false);
+  const allAnswered = answeredCount === questions.length && questions.length > 0;
+  const computedScore = questions.reduce((n, q) => n + (picks[q.id] === q.correct_index ? 1 : 0), 0);
+  // Fall back to a stored score for old results saved before per-question picks were kept.
+  const score = (answeredCount === 0 && savedResult) ? (savedResult.score || 0) : computedScore;
+  const missed = questions.length - score;
 
   const pick = (q, i) => {
-    if (picks[q.id] != null) return;
-    const correct = i === q.correct_index;
-    playSfx(correct ? 'correct' : 'wrong');
-    if (correct) vibrateCorrect(); else vibrateWrong();
+    if (phase !== 'attempt') return;
+    sfxTap(); vibrateTap();
     setPicks((p) => ({ ...p, [q.id]: i }));
-    addAttempt({
-      question_id: q.id, mode: 'mc', file_id: `cars_${date}`,
-      chapter: `Daily CARS — ${date}`, subject: 'CARS', correct, user_answer: ['A', 'B', 'C', 'D'][i],
-    });
   };
 
-  useEffect(() => {
-    if (allDone && !savedRef.current) {
-      savedRef.current = true;
-      setCarsResult(date, { score, total: questions.length, completed_at: Date.now() });
+  const scrollTop = () => { if (scrollRef.current) scrollRef.current.scrollTop = 0; };
+
+  const submit = () => {
+    if (!allAnswered) return;
+    if (score === questions.length) { playSfx('correct'); vibrateCorrect(); }
+    else { playSfx('wrong'); vibrateWrong(); }
+    setPhase('graded');
+    scrollTop();
+  };
+
+  const retry = () => { setPhase('attempt'); scrollTop(); };
+
+  const goReview = () => {
+    // Finalize once: log one attempt per question and save the day's result.
+    if (!finalizedRef.current && !alreadyDone) {
+      finalizedRef.current = true;
+      questions.forEach((q) => {
+        addAttempt({
+          question_id: q.id, mode: 'mc', file_id: `cars_${date}`,
+          chapter: `Daily CARS — ${date}`, subject: 'CARS',
+          correct: picks[q.id] === q.correct_index,
+          user_answer: ['A', 'B', 'C', 'D'][picks[q.id]] || '',
+        });
+      });
+      setCarsResult(date, { score, total: questions.length, completed_at: Date.now(), picks });
       window.dispatchEvent(new Event('mcat:carsDone'));
     }
-  }, [allDone, score, questions.length, date]);
+    setPhase('review');
+    scrollTop();
+  };
 
   return (
-    <div className="fixed inset-0 z-50 bg-[var(--bg)] overflow-y-auto">
+    <div ref={scrollRef} className="fixed inset-0 z-50 bg-[var(--bg)] overflow-y-auto">
       <div className="max-w-3xl mx-auto p-3 sm:p-6 space-y-4">
         <div className="flex items-center justify-between gap-3 sticky top-0 bg-[var(--bg)] py-2 z-10">
           <div className="min-w-0">
@@ -3410,39 +3446,85 @@ function CarsRunner({ date, payload, onClose, alreadyDone }) {
             <h2 className="font-semibold text-[var(--text-strong)] truncate">{payload.title || payload.discipline || 'CARS passage'}</h2>
           </div>
           <div className="flex items-center gap-2 shrink-0">
-            <span className="text-xs font-mono text-[var(--text-muted)]">{answeredCount}/{questions.length}</span>
+            {phase === 'attempt' && <span className="text-xs font-mono text-[var(--text-muted)]">{answeredCount}/{questions.length}</span>}
+            {phase === 'review' && <span className="text-xs font-mono text-[var(--text-muted)]">{score}/{questions.length}</span>}
             <button onClick={onClose} className="text-xs px-3 py-1.5 border border-[var(--border)] rounded hover:bg-[var(--bg-hover)]">Close</button>
           </div>
         </div>
 
-        {/* Passage */}
-        <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-6">
-          <div className="text-[10px] uppercase tracking-wide text-[var(--text-faint)] mb-2">
-            {payload.discipline}{payload.source ? ` · ${payload.source}` : ''}
+        {/* Graded screen — score only, no answers revealed */}
+        {phase === 'graded' ? (
+          <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-6 text-center space-y-3">
+            <div className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Your score</div>
+            <div className="text-5xl font-bold text-[var(--text-strong)]">{score}/{questions.length}</div>
+            {score === questions.length ? (
+              <>
+                <p className="text-sm text-[var(--success-text)]">Perfect — every one. These are tuned harder than the real exam.</p>
+                <button onClick={goReview} className="text-sm px-4 py-2 bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] rounded-lg font-medium">
+                  Review answers
+                </button>
+              </>
+            ) : (
+              <>
+                <p className="text-sm text-[var(--text-muted)]">
+                  {missed} wrong. Go back and fix what you can before the answers are revealed — or review now to see them.
+                </p>
+                <div className="flex gap-2 justify-center">
+                  <button onClick={retry} className="text-sm px-4 py-2 bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] rounded-lg font-medium">
+                    Retry
+                  </button>
+                  <button onClick={goReview} className="text-sm px-4 py-2 border border-[var(--border)] hover:bg-[var(--bg-hover)] rounded-lg">
+                    Review answers
+                  </button>
+                </div>
+              </>
+            )}
           </div>
-          {String(payload.passage || '').split(/\n\s*\n/).map((para, i) => (
-            <p key={i} className="text-sm sm:text-base leading-relaxed text-[var(--text)] mb-3 last:mb-0">{para.trim()}</p>
-          ))}
-        </div>
-
-        {questions.map((q, i) => (
-          <CarsQuestion key={q.id} q={q} index={i} picked={picks[q.id] != null ? picks[q.id] : null} onPick={(idx) => pick(q, idx)} />
-        ))}
-
-        {allDone && (
-          <div className="bg-[var(--bg-card)] border border-[var(--accent-border)] rounded-2xl p-5 text-center">
-            <div className="text-xs uppercase tracking-wide text-[var(--text-muted)]">CARS complete</div>
-            <div className="text-4xl font-bold mt-1 text-[var(--text-strong)]">{score}/{questions.length}</div>
-            <div className="text-sm text-[var(--text-muted)] mt-1">
-              {score === questions.length ? 'Flawless — these are tuned harder than the real exam.'
-                : score >= questions.length - 1 ? 'Strong. That is real-exam-ready reading.'
-                : score >= questions.length - 2 ? 'Solid. Review the misses below.'
-                : 'Tough set. Read the explanations carefully — that is the work.'}
+        ) : (
+          <>
+            {/* Passage */}
+            <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-6">
+              <div className="text-[10px] uppercase tracking-wide text-[var(--text-faint)] mb-2">
+                {payload.discipline}{payload.source ? ` · ${payload.source}` : ''}
+              </div>
+              {String(payload.passage || '').split(/\n\s*\n/).map((para, i) => (
+                <p key={i} className="text-sm sm:text-base leading-relaxed text-[var(--text)] mb-3 last:mb-0">{para.trim()}</p>
+              ))}
             </div>
-            <button onClick={onClose} className="mt-3 text-sm px-4 py-2 bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] rounded-lg font-medium">
-              Done
-            </button>
-          </div>
+
+            {phase === 'review' && (
+              <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 text-center">
+                <span className="text-sm text-[var(--text-muted)]">Score: </span>
+                <span className="text-lg font-bold text-[var(--text-strong)]">{score}/{questions.length}</span>
+              </div>
+            )}
+
+            {questions.map((q, i) => (
+              <CarsQuestion
+                key={q.id}
+                q={q}
+                index={i}
+                picked={picks[q.id] != null ? picks[q.id] : null}
+                onPick={(idx) => pick(q, idx)}
+                reveal={phase === 'review'}
+              />
+            ))}
+
+            {phase === 'attempt' && (
+              <button
+                onClick={submit}
+                disabled={!allAnswered}
+                className="w-full text-sm py-3 bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] disabled:opacity-40 rounded-lg font-semibold"
+              >
+                {allAnswered ? 'Submit answers' : `Answer all ${questions.length} to submit (${answeredCount}/${questions.length})`}
+              </button>
+            )}
+            {phase === 'review' && (
+              <button onClick={onClose} className="w-full text-sm py-3 bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] rounded-lg font-medium">
+                Done
+              </button>
+            )}
+          </>
         )}
       </div>
     </div>
@@ -3542,10 +3624,10 @@ function DailyCarsCard() {
     </div>
   );
 
-  // ready
+  // ready — accent border while undone, regular border once completed
   return (
     <>
-      <div className="bg-[var(--bg-card)] border border-[var(--accent-border)] rounded-2xl p-4 sm:p-5">
+      <div className={`bg-[var(--bg-card)] border rounded-2xl p-4 sm:p-5 ${result ? 'border-[var(--border-soft)]' : 'border-[var(--accent-border)]'}`}>
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
