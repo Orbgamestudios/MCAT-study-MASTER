@@ -2861,38 +2861,11 @@ function StudyView() {
 // ---------- home: bird hero ----------
 // The bird sits in normal document flow directly below the speech bubble, so the
 // card grows to fully contain it and the gap to the bubble is constant for any
-// quote length. The offsets below are user-adjustable: drag the bird to position
-// it, the gap/shift are saved to localStorage. Read them off the on-screen badge
-// and tell me the values to lock in, then we remove the drag UI.
-const BIRD_POS_KEY = 'mcat:birdPos2';
-const BIRD_DEFAULT = { gap: -8, shift: -36 }; // gap = px below bubble, shift = px (neg = rightward)
+// quote length. Offsets locked to the user-calibrated values.
+const BIRD_GAP = 5;    // px below the speech bubble
+const BIRD_SHIFT = 4;  // px horizontal nudge (negative = rightward)
 
 function BirdHero({ username, quote }) {
-  const [pos, setPos] = useState(() => {
-    const p = storage.get(BIRD_POS_KEY, null);
-    return p && typeof p.gap === 'number' && typeof p.shift === 'number' ? p : BIRD_DEFAULT;
-  });
-  const dragRef = useRef(null);
-
-  const onPointerDown = (e) => {
-    e.preventDefault();
-    dragRef.current = { startX: e.clientX, startY: e.clientY, startGap: pos.gap, startShift: pos.shift };
-    try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
-  };
-  const onPointerMove = (e) => {
-    const s = dragRef.current;
-    if (!s) return;
-    const dx = e.clientX - s.startX;
-    const dy = e.clientY - s.startY;
-    // drag down -> larger gap; drag right -> more negative shift
-    setPos({ gap: Math.round(s.startGap + dy), shift: Math.round(s.startShift - dx) });
-  };
-  const onPointerUp = (e) => {
-    if (dragRef.current) { storage.set(BIRD_POS_KEY, pos); dragRef.current = null; }
-    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch {}
-  };
-  const reset = () => { setPos(BIRD_DEFAULT); storage.set(BIRD_POS_KEY, BIRD_DEFAULT); };
-
   return (
     <div className="relative bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl px-4 sm:px-6 pt-5 sm:pt-6 pb-0 overflow-hidden">
       <div className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Welcome back</div>
@@ -2905,43 +2878,21 @@ function BirdHero({ username, quote }) {
         </div>
       </div>
 
-      {/* Bird — in flow, so the card grows to contain it and the gap above stays constant.
-          Draggable for positioning; offsets persist to localStorage. */}
+      {/* Bird — in flow, so the card grows to contain it and the gap above stays constant. */}
       <img
         src="assets/bird.png"
         alt=""
         draggable="false"
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerCancel={onPointerUp}
-        data-no-haptic
-        className="block select-none cursor-grab active:cursor-grabbing"
+        className="block select-none pointer-events-none"
         style={{
           width: 'clamp(440px, 116vw, 680px)',
           maxWidth: 'none',
-          marginTop: `${pos.gap}px`,
+          marginTop: `${BIRD_GAP}px`,
           position: 'relative',
-          right: `${pos.shift}px`,
+          right: `${BIRD_SHIFT}px`,
           zIndex: 0,
-          touchAction: 'none',
-          WebkitUserSelect: 'none',
-          userSelect: 'none',
         }}
       />
-
-      {/* Temporary positioning readout — drag the bird, then send me these numbers. */}
-      <div className="absolute top-2 right-2 z-20 flex items-center gap-1">
-        <div className="bg-[var(--bg-elev)] border border-[var(--border-soft)] rounded-md px-2 py-1 text-[10px] font-mono text-[var(--text-muted)]">
-          gap:{pos.gap} · shift:{pos.shift}
-        </div>
-        <button
-          onClick={reset}
-          className="bg-[var(--bg-elev)] border border-[var(--border-soft)] rounded-md px-2 py-1 text-[10px] text-[var(--text-muted)] hover:bg-[var(--bg-hover)]"
-        >
-          reset
-        </button>
-      </div>
     </div>
   );
 }
@@ -5128,7 +5079,7 @@ function Shell() {
 
   return (
     <div className="min-h-full flex flex-col">
-      <header className="border-b border-[var(--border-soft)] px-3 sm:px-5 py-2.5 sm:py-3 flex flex-wrap items-center justify-between gap-y-2 gap-x-3">
+      <header className="sticky top-0 z-40 border-b border-[var(--border-soft)] bg-[var(--bg)] px-3 sm:px-5 py-2.5 sm:py-3 flex flex-wrap items-center justify-between gap-y-2 gap-x-3">
         <div className="flex items-center gap-2 sm:gap-3 order-1">
           <div className="w-7 h-7 rounded bg-gradient-to-br from-[var(--accent)] to-[var(--accent-2)]" />
           <div className="font-semibold text-sm sm:text-base">MCAT Study</div>
