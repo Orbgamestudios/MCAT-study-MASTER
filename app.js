@@ -27,6 +27,7 @@ const KEYS = {
   reaudit: 'mcat:reaudit', // boolean — show Audit button on already-audited chapters
   volume: 'mcat:volume', // 0-1, global SFX volume multiplier (default 1)
   bankSeen: 'mcat:bankSeen', // timestamp — last time the user reviewed the Bank tab
+  cars: 'mcat:cars', // { [date]: { score, total, completed_at } } — daily CARS results
 };
 
 // Theme is a (palette, mode) pair. Palette picks the colour family; mode picks
@@ -83,6 +84,30 @@ const QUOTES = [
   "The brain that learns biochem is the same brain that built it. Trust it.",
   "Slow is smooth. Smooth is fast. Smooth is a great MCAT score.",
 ];
+
+// ---------- daily CARS helpers ----------
+const CARS_DISCIPLINES = [
+  'Philosophy', 'History', 'Literature', 'Ethics', 'Political Science', 'Sociology',
+  'Art', 'Anthropology', 'Music', 'Economics', 'Religion', 'Psychology',
+  'Architecture', 'Linguistics', 'Popular Culture', 'Studies of Diverse Cultures',
+  'Theater', 'Geography', 'Archaeology', 'Education',
+];
+function todayStr(d = new Date()) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+// Rotate discipline by day-of-year so consecutive days differ.
+function carsDisciplineFor(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00');
+  const start = new Date(d.getFullYear(), 0, 0);
+  const dayOfYear = Math.floor((d - start) / 86400000);
+  return CARS_DISCIPLINES[dayOfYear % CARS_DISCIPLINES.length];
+}
+function getCarsResults() { try { return JSON.parse(localStorage.getItem('mcat:cars')) || {}; } catch { return {}; } }
+function setCarsResult(date, result) {
+  const all = getCarsResults();
+  all[date] = result;
+  try { localStorage.setItem('mcat:cars', JSON.stringify(all)); } catch {}
+}
 
 const DEFAULT_GITHUB = {
   token: '',
@@ -913,10 +938,77 @@ function makeClient(getKey) {
     return all;
   }
 
+  // ---- daily CARS generation ----
+  // See CARS_GENERATION.md — single source of truth for these instructions.
+  const CARS_SCHEMA = {
+    type: 'OBJECT',
+    properties: {
+      passage: { type: 'STRING' },
+      discipline: { type: 'STRING' },
+      title: { type: 'STRING' },
+      source: { type: 'STRING' },
+      questions: {
+        type: 'ARRAY',
+        items: {
+          type: 'OBJECT',
+          properties: {
+            question: { type: 'STRING' },
+            choices: { type: 'ARRAY', items: { type: 'STRING' } },
+            correct_index: { type: 'INTEGER' },
+            category: { type: 'STRING' },
+            subtype: { type: 'STRING' },
+            explanation: { type: 'STRING' },
+            choice_explanations: { type: 'ARRAY', items: { type: 'STRING' } },
+          },
+          required: ['question', 'choices', 'correct_index', 'category', 'subtype', 'explanation', 'choice_explanations'],
+        },
+      },
+    },
+    required: ['passage', 'discipline', 'title', 'questions'],
+  };
+
+  async function generateDailyCars(discipline) {
+    const resp = await generate({
+      maxOutputTokens: 32768,
+      disableThinking: true,
+      systemInstruction:
+        'You write original MCAT CARS (Critical Analysis and Reasoning Skills) practice sets — ' +
+        'one academic passage plus six multiple-choice questions — for a study app. The passages are ' +
+        'humanities or social-science prose, 500-600 words, built around a single arguable thesis with ' +
+        'real nuance (a concession, a fine distinction, a tonal shift). Never copy existing text; write ' +
+        'original prose. Questions test analysis of the passage only, never outside knowledge. Generate ' +
+        'exactly 6 questions covering all three AAMC categories (Foundations of Comprehension, Reasoning ' +
+        'Within the Text, Reasoning Beyond the Text), each with exactly 4 choices and a correct_index 0-3. ' +
+        'THESE MUST BE HARDER THAN THE REAL MCAT: distractors must be technically-true-but-unresponsive, ' +
+        'right-concept-wrong-scope, reversed relationships, too-extreme, or correct-for-the-wrong-paragraph ' +
+        '— never obviously wrong. All four choices must match in length and register so the answer never ' +
+        'stands out. At least two questions must require combining two or more paragraphs. Include at ' +
+        'least one LEAST-supported / EXCEPT-style question. For every question give a 2-4 sentence ' +
+        'explanation and a one-line rationale for each of the four choices (choice_explanations, 4 entries).',
+      contents: [{
+        role: 'user',
+        parts: [{ text:
+          `Generate today's CARS set. Target discipline: ${discipline}. Write the passage, then six ` +
+          `questions per the rules. Make it harder than a real MCAT CARS section — a strong student ` +
+          `should expect to miss one or two.`,
+        }],
+      }],
+      responseSchema: CARS_SCHEMA,
+    });
+    const data = extractJson(resp);
+    // Tag questions with ids + a stable mode for the quiz runner.
+    data.questions = (data.questions || []).map((q, i) => ({
+      id: `cars_${Date.now()}_${i}`,
+      mode: 'mc',
+      ...q,
+    }));
+    return data;
+  }
+
   return {
     uploadFile, deleteFile, generate, ping,
     extractFromPdf, generateMCQuestions, generateShortAnswers, generateTermQuestions, generateTwoPartQuestions,
-    fixFlaggedQuestion, auditQuestions,
+    fixFlaggedQuestion, auditQuestions, generateDailyCars,
   };
 }
 
@@ -956,6 +1048,12 @@ function makeApiClient(getToken) {
     meStats: () => call('/me/stats', { auth: true }),
     leaderboard: () => call('/leaderboard'),
     activity: () => call('/activity'),
+
+    // ---- daily CARS ----
+    listCars: () => call('/cars'),
+    getCars: (date) => call(`/cars/${encodeURIComponent(date)}`),
+    postCars: ({ date, discipline, title, payload }) =>
+      call('/cars', { method: 'POST', body: { date, discipline, title, payload }, auth: true }),
     userProfile: (username) => call(`/u/${encodeURIComponent(username)}`),
 
     // Bank publish + pull. body for putBank is the raw JSON string of the bank.
@@ -3030,6 +3128,324 @@ function HomeActivity() {
   );
 }
 
+// ---------- daily CARS ----------
+function CarsQuestion({ q, index, picked, onPick }) {
+  const letters = ['A', 'B', 'C', 'D'];
+  const answered = picked != null;
+  const correct = answered && picked === q.correct_index;
+  return (
+    <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-5 space-y-3">
+      <div className="flex items-baseline gap-2">
+        <span className="text-[var(--text-faint)] font-mono text-sm shrink-0">{index + 1}.</span>
+        <div className="min-w-0">
+          <div className="text-[10px] uppercase tracking-wide text-[var(--accent-text)]">{q.category}{q.subtype ? ` · ${q.subtype}` : ''}</div>
+          <p className="text-sm sm:text-base leading-relaxed text-[var(--text)] mt-0.5">{q.question}</p>
+        </div>
+      </div>
+      <div className="space-y-2">
+        {q.choices.map((c, i) => {
+          let cls = 'border-[var(--border)] hover:bg-[var(--bg-hover)]';
+          if (answered) {
+            if (i === q.correct_index) cls = 'border-[var(--success-border)] bg-[var(--success-bg-strong)]';
+            else if (i === picked) cls = 'border-[var(--danger-border)] bg-[var(--danger-bg-strong)]';
+            else cls = 'border-[var(--border-soft)] opacity-60';
+          }
+          return (
+            <button
+              key={i}
+              onClick={() => onPick(i)}
+              disabled={answered}
+              data-no-haptic
+              className={`w-full text-left border rounded-lg px-3 py-2.5 text-sm transition-colors ${cls}`}
+            >
+              <span className="text-[var(--text-faint)] mr-2">{letters[i]}.</span>
+              {c}
+            </button>
+          );
+        })}
+      </div>
+      {answered && (
+        <div className="bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg p-3 space-y-2">
+          <div className={correct ? 'text-[var(--success-text)] font-medium text-sm' : 'text-[var(--danger-text)] font-medium text-sm'}>
+            {correct ? 'Correct' : `Incorrect — answer is ${letters[q.correct_index]}`}
+          </div>
+          <div className="text-sm text-[var(--text)]">{q.explanation}</div>
+          {Array.isArray(q.choice_explanations) && q.choice_explanations.length > 0 && (
+            <ul className="space-y-1 pt-1 border-t border-[var(--border-soft)]">
+              {q.choice_explanations.map((ce, i) => (
+                <li key={i} className="text-xs text-[var(--text-muted)]">
+                  <span className={`font-medium ${i === q.correct_index ? 'text-[var(--success-text)]' : 'text-[var(--text-faint)]'}`}>{letters[i]}.</span> {ce}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CarsRunner({ date, payload, onClose, alreadyDone }) {
+  const { addAttempt } = useApp();
+  const questions = payload.questions || [];
+  const [picks, setPicks] = useState({}); // qid -> chosen index
+  const answeredCount = Object.keys(picks).length;
+  const allDone = answeredCount === questions.length && questions.length > 0;
+  const score = questions.reduce((n, q) => n + (picks[q.id] === q.correct_index ? 1 : 0), 0);
+  const savedRef = useRef(false);
+
+  const pick = (q, i) => {
+    if (picks[q.id] != null) return;
+    const correct = i === q.correct_index;
+    playSfx(correct ? 'correct' : 'wrong');
+    if (correct) vibrateCorrect(); else vibrateWrong();
+    setPicks((p) => ({ ...p, [q.id]: i }));
+    addAttempt({
+      question_id: q.id, mode: 'mc', file_id: `cars_${date}`,
+      chapter: `Daily CARS — ${date}`, subject: 'CARS', correct, user_answer: ['A', 'B', 'C', 'D'][i],
+    });
+  };
+
+  useEffect(() => {
+    if (allDone && !savedRef.current) {
+      savedRef.current = true;
+      setCarsResult(date, { score, total: questions.length, completed_at: Date.now() });
+      window.dispatchEvent(new Event('mcat:carsDone'));
+    }
+  }, [allDone, score, questions.length, date]);
+
+  return (
+    <div className="fixed inset-0 z-50 bg-[var(--bg)] overflow-y-auto">
+      <div className="max-w-3xl mx-auto p-3 sm:p-6 space-y-4">
+        <div className="flex items-center justify-between gap-3 sticky top-0 bg-[var(--bg)] py-2 z-10">
+          <div className="min-w-0">
+            <div className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Daily CARS · {date}</div>
+            <h2 className="font-semibold text-[var(--text-strong)] truncate">{payload.title || payload.discipline || 'CARS passage'}</h2>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <span className="text-xs font-mono text-[var(--text-muted)]">{answeredCount}/{questions.length}</span>
+            <button onClick={onClose} className="text-xs px-3 py-1.5 border border-[var(--border)] rounded hover:bg-[var(--bg-hover)]">Close</button>
+          </div>
+        </div>
+
+        {/* Passage */}
+        <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-6">
+          <div className="text-[10px] uppercase tracking-wide text-[var(--text-faint)] mb-2">
+            {payload.discipline}{payload.source ? ` · ${payload.source}` : ''}
+          </div>
+          {String(payload.passage || '').split(/\n\s*\n/).map((para, i) => (
+            <p key={i} className="text-sm sm:text-base leading-relaxed text-[var(--text)] mb-3 last:mb-0">{para.trim()}</p>
+          ))}
+        </div>
+
+        {questions.map((q, i) => (
+          <CarsQuestion key={q.id} q={q} index={i} picked={picks[q.id] != null ? picks[q.id] : null} onPick={(idx) => pick(q, idx)} />
+        ))}
+
+        {allDone && (
+          <div className="bg-[var(--bg-card)] border border-[var(--accent-border)] rounded-2xl p-5 text-center">
+            <div className="text-xs uppercase tracking-wide text-[var(--text-muted)]">CARS complete</div>
+            <div className="text-4xl font-bold mt-1 text-[var(--text-strong)]">{score}/{questions.length}</div>
+            <div className="text-sm text-[var(--text-muted)] mt-1">
+              {score === questions.length ? 'Flawless — these are tuned harder than the real exam.'
+                : score >= questions.length - 1 ? 'Strong. That is real-exam-ready reading.'
+                : score >= questions.length - 2 ? 'Solid. Review the misses below.'
+                : 'Tough set. Read the explanations carefully — that is the work.'}
+            </div>
+            <button onClick={onClose} className="mt-3 text-sm px-4 py-2 bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] rounded-lg font-medium">
+              Done
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Home card — today's CARS. Generates the set if nobody has yet (and the user has a key).
+function DailyCarsCard() {
+  const { api, client, apiKey, session } = useApp();
+  const today = todayStr();
+  const [state, setState] = useState('loading'); // loading | ready | generating | unavailable | error
+  const [payload, setPayload] = useState(null);
+  const [err, setErr] = useState('');
+  const [running, setRunning] = useState(false);
+  const [tick, setTick] = useState(0);
+  const result = getCarsResults()[today];
+
+  useEffect(() => {
+    let cancelled = false;
+    setState('loading'); setErr('');
+    api.getCars(today)
+      .then((d) => { if (!cancelled) { setPayload(d.payload); setState('ready'); } })
+      .catch(async (e) => {
+        if (cancelled) return;
+        if (e.status !== 404) { setErr(e.message); setState('error'); return; }
+        // Not generated yet. Generate if signed in with a key; else wait.
+        if (!apiKey || !session) { setState('unavailable'); return; }
+        setState('generating');
+        try {
+          const discipline = carsDisciplineFor(today);
+          const gen = await client.generateDailyCars(discipline);
+          if (!gen?.questions?.length) throw new Error('Generation returned no questions.');
+          await api.postCars({ date: today, discipline: gen.discipline || discipline, title: gen.title || '', payload: gen });
+          if (!cancelled) { setPayload(gen); setState('ready'); }
+        } catch (ge) {
+          // Someone else may have generated it in the meantime — try one more fetch.
+          try {
+            const d2 = await api.getCars(today);
+            if (!cancelled) { setPayload(d2.payload); setState('ready'); return; }
+          } catch {}
+          if (!cancelled) { setErr(ge.message); setState('error'); }
+        }
+      });
+    return () => { cancelled = true; };
+  }, [api, today, tick, apiKey, session]);
+
+  const card = (inner) => (
+    <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-5">{inner}</div>
+  );
+
+  if (state === 'loading') return card(<div className="text-sm text-[var(--text-muted)]">Checking today's CARS…</div>);
+  if (state === 'generating') return card(
+    <div>
+      <h2 className="font-semibold text-[var(--text-strong)]">Daily CARS</h2>
+      <p className="text-sm text-[var(--text-muted)] mt-1">Generating today's passage with Gemini — about 20 seconds…</p>
+    </div>
+  );
+  if (state === 'unavailable') return card(
+    <div>
+      <h2 className="font-semibold text-[var(--text-strong)]">Daily CARS</h2>
+      <p className="text-sm text-[var(--text-muted)] mt-1">
+        Today's CARS hasn't been generated yet. It appears once someone signed in with a Gemini API key opens the app.
+      </p>
+    </div>
+  );
+  if (state === 'error') return card(
+    <div className="flex items-center justify-between gap-3">
+      <div>
+        <h2 className="font-semibold text-[var(--text-strong)]">Daily CARS</h2>
+        <p className="text-sm text-[var(--danger-text)] mt-1">{err}</p>
+      </div>
+      <button onClick={() => setTick((t) => t + 1)} className="text-xs px-3 py-1.5 border border-[var(--border)] rounded hover:bg-[var(--bg-hover)]">Retry</button>
+    </div>
+  );
+
+  // ready
+  return (
+    <>
+      <div className="bg-[var(--bg-card)] border border-[var(--accent-border)] rounded-2xl p-4 sm:p-5">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <h2 className="font-semibold text-[var(--text-strong)]">Today's CARS</h2>
+              {!result && <span className="w-2 h-2 rounded-full bg-[var(--danger-border)]" />}
+            </div>
+            <div className="text-sm text-[var(--text)] mt-0.5">{payload?.title}</div>
+            <div className="text-xs text-[var(--text-muted)] mt-0.5">
+              {payload?.discipline} · {payload?.questions?.length || 0} questions · tuned harder than the real exam
+              {result && <span className="text-[var(--success-text)]"> · done {result.score}/{result.total}</span>}
+            </div>
+          </div>
+          <button
+            onClick={() => setRunning(true)}
+            className="shrink-0 text-sm px-4 py-2 bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] rounded-lg font-medium"
+          >
+            {result ? 'Review' : 'Start'}
+          </button>
+        </div>
+      </div>
+      {running && payload && (
+        <CarsRunner
+          date={today}
+          payload={payload}
+          alreadyDone={!!result}
+          onClose={() => { setRunning(false); setTick((t) => t + 1); }}
+        />
+      )}
+    </>
+  );
+}
+
+// CARS archive — every past day, openable from the Bank tab.
+function CarsArchive() {
+  const { api } = useApp();
+  const [days, setDays] = useState(null);
+  const [err, setErr] = useState('');
+  const [open, setOpen] = useState(null); // { date, payload }
+  const [loadingDate, setLoadingDate] = useState(null);
+  const today = todayStr();
+  const results = getCarsResults();
+
+  useEffect(() => {
+    let cancelled = false;
+    api.listCars()
+      .then((d) => { if (!cancelled) setDays(d.days || []); })
+      .catch((e) => { if (!cancelled) setErr(e.message); });
+    return () => { cancelled = true; };
+  }, [api]);
+
+  const openDay = async (date) => {
+    setLoadingDate(date);
+    try {
+      const d = await api.getCars(date);
+      setOpen({ date, payload: d.payload });
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setLoadingDate(null);
+    }
+  };
+
+  return (
+    <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-5">
+      <h3 className="font-semibold text-[var(--text-strong)]">Daily CARS archive</h3>
+      <p className="text-sm text-[var(--text-muted)] mb-3">Every day's CARS passage. Open any one to read it and do the questions.</p>
+      {err && <div className="text-sm text-[var(--danger-text)] mb-2">{err}</div>}
+      {!days && <div className="text-sm text-[var(--text-muted)]">Loading…</div>}
+      {days && days.length === 0 && (
+        <div className="text-sm text-[var(--text-muted)]">No CARS days yet — the first appears once today's is generated.</div>
+      )}
+      {days && days.length > 0 && (
+        <ul className="divide-y divide-[var(--border-soft)]">
+          {days.map((d) => {
+            const r = results[d.date];
+            return (
+              <li key={d.date} className="py-2.5 flex items-center gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm text-[var(--text)]">
+                    <span className="font-medium">{d.date}{d.date === today ? ' · today' : ''}</span>
+                    {d.title && <span className="text-[var(--text-muted)]"> — {d.title}</span>}
+                  </div>
+                  <div className="text-xs text-[var(--text-faint)]">
+                    {d.discipline}
+                    {r && <span className="text-[var(--success-text)]"> · done {r.score}/{r.total}</span>}
+                  </div>
+                </div>
+                <button
+                  onClick={() => openDay(d.date)}
+                  disabled={loadingDate === d.date}
+                  className="shrink-0 text-xs px-3 py-1.5 bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] disabled:opacity-40 rounded font-medium"
+                >
+                  {loadingDate === d.date ? 'Loading…' : (r ? 'Review' : 'Open')}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {open && open.payload && (
+        <CarsRunner
+          date={open.date}
+          payload={open.payload}
+          alreadyDone={!!results[open.date]}
+          onClose={() => setOpen(null)}
+        />
+      )}
+    </div>
+  );
+}
+
 // ---------- home view ----------
 function HomeView({ onGoToStudy }) {
   const { session, files, questions, extractions, attempts } = useApp();
@@ -3078,6 +3494,8 @@ function HomeView({ onGoToStudy }) {
     <div className="space-y-4">
       <BirdHero username={username} quote={quote} />
 
+
+      <DailyCarsCard />
 
       <HomeActivity />
 
@@ -4808,6 +5226,7 @@ function BankTab() {
 
   return (
     <div className="space-y-4">
+      <CarsArchive />
       {changedChapters.length > 0 && !summaryDismissed && (
         <div className="bg-[var(--accent-soft)] border border-[var(--accent-border)] rounded-2xl p-4 sm:p-5">
           <div className="flex items-start justify-between gap-3">
@@ -5133,6 +5552,20 @@ function Shell() {
     return () => window.removeEventListener('mcat:bankSeen', onSeen);
   }, []);
 
+  // Home dot: today's CARS is ready but the user hasn't done it yet.
+  const [carsReady, setCarsReady] = useState(false);
+  const recheckCars = useCallback(() => {
+    api.getCars(todayStr())
+      .then(() => { setCarsReady(!getCarsResults()[todayStr()]); })
+      .catch(() => { setCarsReady(false); });
+  }, [api]);
+  useEffect(() => { recheckCars(); }, [recheckCars]);
+  useEffect(() => {
+    const onDone = () => setCarsReady(false);
+    window.addEventListener('mcat:carsDone', onDone);
+    return () => window.removeEventListener('mcat:carsDone', onDone);
+  }, []);
+
   // Global HUD click feedback: tap sound + short vibration on any non-content button.
   // Quiz answer buttons (MC/SinglePart) carry data-no-haptic so they don't double up
   // with the correct/wrong sound that already fires on submit.
@@ -5178,7 +5611,7 @@ function Shell() {
                 : 'text-[var(--text-muted)] hover:text-[var(--text-strong)]'}`}
             >
               {label}
-              {k === 'banks' && bankHasUpdates && (
+              {((k === 'banks' && bankHasUpdates) || (k === 'home' && carsReady)) && (
                 <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-[var(--danger-border)]" />
               )}
             </button>

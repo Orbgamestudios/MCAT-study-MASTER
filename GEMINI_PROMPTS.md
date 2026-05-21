@@ -292,6 +292,14 @@ ever deletes:
   during a quiz; Gemini edits each flagged question individually. See `FLAG_FIXES.md`.
   Rate-limit aware: unprocessed flags stay queued in `localStorage` for the next session.
 
+## Daily CARS
+
+Separate from the chapter pipeline, the app generates one **CARS** (Critical Analysis
+and Reasoning Skills) practice set per day — an original academic passage plus six
+deliberately-hard questions. See `CARS_GENERATION.md` for the full spec and prompt. The
+`generateDailyCars` client function and the `cars` server table back it; the set shows on
+the Home tab for the day and is archived in the Bank tab afterwards.
+
 ## Out-of-band processing (Claude Code, etc.)
 
 If you ever want to bypass Gemini entirely and use Claude Code's tokens to process a
