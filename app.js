@@ -2672,6 +2672,96 @@ function FlagQuestionModal({ item, onClose }) {
 }
 
 // ---------- quiz: MC ----------
+// Escape a string for use inside a RegExp literal.
+function escapeRegex(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
+// Pick key_terms from this question's chapter that actually appear in the
+// question, choices, or explanation. Whole-word match (case-insensitive) so
+// "ion" doesn't latch onto "action". Capped at 6 so the post-answer card stays
+// short. Returns [] for non-MC items or chapters with no extracted terms.
+function relatedTermsForItem(item, extractions) {
+  if (!item || !item.q) return [];
+  const ext = extractions?.[item.file_id];
+  const terms = ext?.key_terms;
+  if (!terms?.length) return [];
+  const haystack = [
+    item.q.question || '',
+    ...(item.q.choices || []),
+    item.q.explanation || '',
+  ].join(' ');
+  // Prefer longer terms first — they're more specific and avoid partial overlap
+  // (e.g. "G protein" picked over "protein" when both appear).
+  const ranked = terms.slice().sort((a, b) => (b.term?.length || 0) - (a.term?.length || 0));
+  const matches = [];
+  const seen = new Set();
+  for (const kt of ranked) {
+    const term = (kt.term || '').trim();
+    if (!term || seen.has(term.toLowerCase())) continue;
+    let hit;
+    try { hit = new RegExp(`\\b${escapeRegex(term)}\\b`, 'i').test(haystack); }
+    catch { hit = haystack.toLowerCase().includes(term.toLowerCase()); }
+    if (hit) {
+      matches.push(kt);
+      seen.add(term.toLowerCase());
+      if (matches.length >= 6) break;
+    }
+  }
+  return matches;
+}
+
+// Single click-to-flip flashcard. Front = term, back = definition.
+function Flashcard({ term, definition }) {
+  const [flipped, setFlipped] = useState(false);
+  return (
+    <button
+      onClick={() => setFlipped((f) => !f)}
+      data-no-haptic
+      className="relative w-full h-24 sm:h-28 text-left"
+      style={{ perspective: '1000px' }}
+      aria-label={flipped ? `Definition of ${term}` : `Show definition of ${term}`}
+    >
+      <div
+        className="absolute inset-0 transition-transform duration-300"
+        style={{ transformStyle: 'preserve-3d', transform: flipped ? 'rotateY(180deg)' : 'none' }}
+      >
+        <div
+          className="absolute inset-0 bg-[var(--bg-elev)] border border-[var(--border)] rounded-lg p-3 flex flex-col justify-center"
+          style={{ backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden' }}
+        >
+          <div className="text-[10px] uppercase tracking-wide text-[var(--text-faint)]">Term</div>
+          <div className="text-sm sm:text-base font-semibold text-[var(--text-strong)] leading-snug">{term}</div>
+          <div className="text-[10px] text-[var(--text-fainter)] mt-auto">Tap to flip</div>
+        </div>
+        <div
+          className="absolute inset-0 bg-[var(--accent-soft)] border border-[var(--accent-border)] rounded-lg p-3 overflow-y-auto"
+          style={{ backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden', transform: 'rotateY(180deg)' }}
+        >
+          <div className="text-[10px] uppercase tracking-wide text-[var(--accent-text)]">{term}</div>
+          <div className="text-xs sm:text-sm text-[var(--text)] leading-snug mt-0.5">{definition}</div>
+        </div>
+      </div>
+    </button>
+  );
+}
+
+function RelatedFlashcards({ item }) {
+  const { extractions } = useApp();
+  const related = useMemo(() => relatedTermsForItem(item, extractions), [item, extractions]);
+  if (related.length === 0) return null;
+  return (
+    <div className="border-t border-[var(--border-soft)] pt-3 mt-3">
+      <div className="text-xs uppercase tracking-wide text-[var(--text-muted)] mb-2">
+        Related terms · {related.length}
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        {related.map((kt) => (
+          <Flashcard key={kt.term} term={kt.term} definition={kt.definition} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function MCQuestion({ item, onAnswer, nextSlot, onFlag }) {
   const [picked, setPicked] = useState(null);
   const shuffled = useMemo(() => {
@@ -2733,6 +2823,7 @@ function MCQuestion({ item, onAnswer, nextSlot, onFlag }) {
           <div className="bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg p-3 text-sm text-[var(--text)]">
             {item.q.explanation}
           </div>
+          <RelatedFlashcards item={item} />
         </>
       )}
     </div>
