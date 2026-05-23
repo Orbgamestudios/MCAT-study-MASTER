@@ -2709,36 +2709,34 @@ function relatedTermsForItem(item, extractions) {
   return matches;
 }
 
-// Single click-to-flip flashcard. Front = term, back = definition.
+// Click-to-flip flashcard. Front = term, back = definition. Both faces are
+// stacked in the same grid cell so the card auto-sizes to whichever face is
+// taller — no internal scrollbar, no clipped definitions.
 function Flashcard({ term, definition }) {
   const [flipped, setFlipped] = useState(false);
   return (
     <button
       onClick={() => setFlipped((f) => !f)}
       data-no-haptic
-      className="relative w-full h-24 sm:h-28 text-left"
-      style={{ perspective: '1000px' }}
+      className="relative w-full text-left grid rounded-lg overflow-hidden"
       aria-label={flipped ? `Definition of ${term}` : `Show definition of ${term}`}
     >
       <div
-        className="absolute inset-0 transition-transform duration-300"
-        style={{ transformStyle: 'preserve-3d', transform: flipped ? 'rotateY(180deg)' : 'none' }}
+        className="bg-[var(--bg-elev)] border border-[var(--border)] rounded-lg p-3 flex flex-col justify-center transition-opacity duration-200"
+        style={{ gridArea: '1 / 1', opacity: flipped ? 0 : 1, pointerEvents: flipped ? 'none' : 'auto' }}
+        aria-hidden={flipped}
       >
-        <div
-          className="absolute inset-0 bg-[var(--bg-elev)] border border-[var(--border)] rounded-lg p-3 flex flex-col justify-center"
-          style={{ backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden' }}
-        >
-          <div className="text-[10px] uppercase tracking-wide text-[var(--text-faint)]">Term</div>
-          <div className="text-sm sm:text-base font-semibold text-[var(--text-strong)] leading-snug">{term}</div>
-          <div className="text-[10px] text-[var(--text-fainter)] mt-auto">Tap to flip</div>
-        </div>
-        <div
-          className="absolute inset-0 bg-[var(--accent-soft)] border border-[var(--accent-border)] rounded-lg p-3 overflow-y-auto"
-          style={{ backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden', transform: 'rotateY(180deg)' }}
-        >
-          <div className="text-[10px] uppercase tracking-wide text-[var(--accent-text)]">{term}</div>
-          <div className="text-xs sm:text-sm text-[var(--text)] leading-snug mt-0.5">{definition}</div>
-        </div>
+        <div className="text-[10px] uppercase tracking-wide text-[var(--text-faint)]">Term</div>
+        <div className="text-sm sm:text-base font-semibold text-[var(--text-strong)] leading-snug">{term}</div>
+        <div className="text-[10px] text-[var(--text-fainter)] mt-1">Tap to flip</div>
+      </div>
+      <div
+        className="bg-[var(--accent-soft)] border border-[var(--accent-border)] rounded-lg p-3 transition-opacity duration-200"
+        style={{ gridArea: '1 / 1', opacity: flipped ? 1 : 0, pointerEvents: flipped ? 'auto' : 'none' }}
+        aria-hidden={!flipped}
+      >
+        <div className="text-[10px] uppercase tracking-wide text-[var(--accent-text)]">{term}</div>
+        <div className="text-xs sm:text-sm text-[var(--text)] leading-snug mt-0.5">{definition}</div>
       </div>
     </button>
   );
@@ -3619,31 +3617,32 @@ function CarsRunner({ date, payload, onClose, alreadyDone }) {
     else { playSfx('wrong'); vibrateWrong(); }
     setPhase('graded');
     scrollTop();
-  };
-
-  const retry = () => { setPhase('attempt'); scrollTop(); };
-
-  const goReview = () => {
-    // Finalize once: log one attempt per question and save the day's result.
+    // Lock the first-attempt score the moment the user submits. Retrying or
+    // reviewing after this point never re-uploads — stats reflect the genuine
+    // first try, not whatever they cleaned up on a do-over.
     if (!finalizedRef.current && !alreadyDone) {
       finalizedRef.current = true;
+      const firstScore = score;
+      const firstPicks = { ...picks };
       questions.forEach((q) => {
         addAttempt({
           question_id: q.id, mode: 'mc', file_id: `cars_${date}`,
           chapter: `Daily CARS — ${date}`, subject: 'CARS',
-          correct: picks[q.id] === q.correct_index,
-          user_answer: ['A', 'B', 'C', 'D'][picks[q.id]] || '',
+          correct: firstPicks[q.id] === q.correct_index,
+          user_answer: ['A', 'B', 'C', 'D'][firstPicks[q.id]] || '',
         });
       });
-      setCarsResult(date, { score, total: questions.length, completed_at: Date.now(), picks });
+      setCarsResult(date, { score: firstScore, total: questions.length, completed_at: Date.now(), picks: firstPicks });
       window.dispatchEvent(new Event('mcat:carsDone'));
       // Force-sync the freshly logged win/loss attempts. Deferred so the batched
       // addAttempt state updates have flushed to localStorage before flushSync reads it.
       setTimeout(() => { try { flushSync(); } catch {} }, 120);
     }
-    setPhase('review');
-    scrollTop();
   };
+
+  const retry = () => { setPhase('attempt'); scrollTop(); };
+
+  const goReview = () => { setPhase('review'); scrollTop(); };
 
   return (
     <div ref={scrollRef} className="fixed inset-0 z-50 bg-[var(--bg)] overflow-y-auto">
