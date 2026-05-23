@@ -4711,6 +4711,223 @@ function StatBar({ correct, total, label }) {
   );
 }
 
+// ---------- predictive MCAT score ----------
+// AAMC content breakdown per section, used to weight each app subject's measured
+// accuracy into that section's predicted score. Sources: AAMC's "What's on the
+// MCAT Exam?" foundational concepts breakdown — Chem/Phys (Bio 5 / Biochem 25 /
+// Gen Chem 30 / Org Chem 15 / Physics 25), Bio/Biochem (Bio 65 / Biochem 25 /
+// Gen Chem 5 / Org Chem 5), Psych/Soc (Psych 65 / Soc 30 / Bio 5). CARS is
+// passage-based — no subject content. "Chemistry" in the app collapses both Gen
+// Chem and Org Chem into one bucket, so its weight is the sum of both. "Behavioral
+// Science" rolls up psych + soc — weighted as 95% of PS (65 + 30).
+const MCAT_SECTIONS = [
+  {
+    key: 'cp',
+    label: 'Chem/Phys',
+    // Sums to 1.00 — Biology 0.05 + Biochem 0.25 + Chemistry 0.45 + Physics 0.25
+    weights: { Biology: 0.05, Biochemistry: 0.25, Chemistry: 0.45, Physics: 0.25 },
+  },
+  {
+    key: 'cars',
+    label: 'CARS',
+    weights: { CARS: 1.00 },
+  },
+  {
+    key: 'bb',
+    label: 'Bio/Biochem',
+    // Sums to 1.00 — Biology 0.65 + Biochem 0.25 + Chemistry 0.10 (gen+org)
+    weights: { Biology: 0.65, Biochemistry: 0.25, Chemistry: 0.10 },
+  },
+  {
+    key: 'ps',
+    label: 'Psych/Soc',
+    // Sums to 1.00 — Psych 0.65 + Soc 0.30 + Bio 0.05. Behavioral Science is a
+    // catch-all that gets the full 0.95 psych+soc weight if used standalone.
+    weights: { Psychology: 0.65, Sociology: 0.30, Biology: 0.05, 'Behavioral Science': 0.95 },
+  },
+];
+
+// Bayesian shrinkage: a Beta(α, β) prior centred on 0.55 with weight ~8 attempts.
+// Keeps tiny samples honest (5/5 doesn't project a perfect 132) and tightens the
+// standard deviation as each subject's N grows toward 200.
+// Score scale: MCAT section is 118–132 (centre 125), linear map score = 118 + 14·p.
+const MCAT_PRIOR_MEAN = 0.55;
+const MCAT_PRIOR_STRENGTH = 8;
+const SECTION_MIN = 118, SECTION_MAX = 132, SECTION_RANGE = SECTION_MAX - SECTION_MIN; // 14
+
+// Per-subject posterior: returns null if no attempts. n is capped at 200 most-recent.
+function subjectPosterior(attemptsForSubject) {
+  if (!attemptsForSubject.length) return null;
+  // attemptsForSubject is already sorted newest-first by caller.
+  const last = attemptsForSubject.slice(0, 200);
+  const correct = last.reduce((s, a) => s + (a.correct ? 1 : 0), 0);
+  const total = last.length;
+  const a = correct + MCAT_PRIOR_MEAN * MCAT_PRIOR_STRENGTH;
+  const b = (total - correct) + (1 - MCAT_PRIOR_MEAN) * MCAT_PRIOR_STRENGTH;
+  const mean = a / (a + b);
+  // Variance of the Beta posterior, then mapped to score-space.
+  const variance = (a * b) / (((a + b) ** 2) * (a + b + 1));
+  return { n: total, accuracy: correct / total, mean, variance };
+}
+
+function predictMcatScores(attempts) {
+  // Group attempts by subject (newest-first within each subject).
+  const sorted = attempts.slice().sort((a, b) => (b.ts || 0) - (a.ts || 0));
+  const bySubject = new Map();
+  for (const a of sorted) {
+    if (!a.subject) continue;
+    if (!bySubject.has(a.subject)) bySubject.set(a.subject, []);
+    bySubject.get(a.subject).push(a);
+  }
+  const posteriors = new Map();
+  for (const [subject, list] of bySubject) {
+    const p = subjectPosterior(list);
+    if (p) posteriors.set(subject, p);
+  }
+
+  const sections = MCAT_SECTIONS.map((sec) => {
+    // Pull each subject's contribution to this section, ignoring ones with no data.
+    const present = Object.entries(sec.weights)
+      .map(([subject, weight]) => {
+        const post = posteriors.get(subject);
+        return post ? { subject, weight, post } : null;
+      })
+      .filter(Boolean);
+    if (!present.length) return { ...sec, completed: false, n: 0, subjects: [] };
+
+    // Renormalise the weights across only the subjects with data — so a section
+    // doesn't get penalised for sub-areas the user hasn't studied yet.
+    const wSum = present.reduce((s, x) => s + x.weight, 0);
+    let mean = 0, variance = 0;
+    for (const { weight, post } of present) {
+      const w = weight / wSum;
+      mean += w * post.mean;
+      // Var of a weighted sum of independent vars: Σ wᵢ² · varᵢ
+      variance += w * w * post.variance;
+    }
+    const score = SECTION_MIN + SECTION_RANGE * mean;
+    const stdev = SECTION_RANGE * Math.sqrt(variance);
+    const nUsed = present.reduce((s, x) => s + x.post.n, 0);
+    return {
+      ...sec,
+      completed: true,
+      n: nUsed,
+      subjects: present.map((p) => ({
+        subject: p.subject,
+        weight: p.weight / wSum,            // renormalised weight (for tooltip/breakdown)
+        rawWeight: p.weight,
+        n: p.post.n,
+        accuracy: p.post.accuracy,
+      })),
+      score: Math.max(SECTION_MIN, Math.min(SECTION_MAX, score)),
+      stdev,
+    };
+  });
+
+  // Total: only sections the user has any data for. Variance of a sum of
+  // independents = sum of variances; sqrt that for the stdev on the total.
+  const done = sections.filter((s) => s.completed);
+  const total = done.length
+    ? {
+        score: done.reduce((s, x) => s + x.score, 0),
+        stdev: Math.sqrt(done.reduce((s, x) => s + x.stdev ** 2, 0)),
+        sectionsCompleted: done.length,
+        allFour: done.length === MCAT_SECTIONS.length,
+      }
+    : null;
+  return { sections, total };
+}
+
+function McatPredictionCard({ attempts }) {
+  const pred = useMemo(() => predictMcatScores(attempts), [attempts]);
+  const { sections, total } = pred;
+  const [expanded, setExpanded] = useState(false);
+  const anyCompleted = sections.some((s) => s.completed);
+  if (!anyCompleted) return null;
+  const fmt = (n) => n.toFixed(1).replace(/\.0$/, '');
+  return (
+    <div className="bg-[var(--bg-card)] border border-[var(--accent-border)] rounded-2xl p-5 sm:p-6">
+      <div className="flex items-baseline justify-between gap-3 mb-3">
+        <div>
+          <div className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Predicted MCAT</div>
+          <div className="text-4xl sm:text-5xl font-bold text-[var(--text-strong)] mt-1">
+            {total ? Math.round(total.score) : '—'}
+            {total && (
+              <span className="text-base sm:text-lg font-medium text-[var(--text-muted)] ml-2">
+                ± {fmt(total.stdev)}
+              </span>
+            )}
+          </div>
+          {total && !total.allFour && (
+            <div className="text-xs text-[var(--text-faint)] mt-1">
+              partial — {total.sectionsCompleted}/4 sections studied
+            </div>
+          )}
+        </div>
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        {sections.map((s) => (
+          <div
+            key={s.key}
+            className="bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-xl px-3 py-2.5"
+          >
+            <div className="text-[10px] uppercase tracking-wide text-[var(--text-muted)]">{s.label}</div>
+            {s.completed ? (
+              <>
+                <div className="text-xl font-bold text-[var(--text-strong)] mt-0.5">
+                  {Math.round(s.score)}
+                  <span className="text-xs font-medium text-[var(--text-muted)] ml-1">± {fmt(s.stdev)}</span>
+                </div>
+                <div className="text-[10px] text-[var(--text-faint)] mt-0.5">
+                  n={s.n}
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="text-xl font-bold text-[var(--text-fainter)] mt-0.5">—</div>
+                <div className="text-[10px] text-[var(--text-faint)] mt-0.5">not yet studied</div>
+              </>
+            )}
+          </div>
+        ))}
+      </div>
+      {expanded && (
+        <div className="mt-3 space-y-2 text-[11px]">
+          {sections.filter((s) => s.completed).map((s) => (
+            <div key={s.key} className="bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg p-2.5">
+              <div className="font-semibold text-[var(--text)] mb-1">{s.label} — {Math.round(s.score)} ± {fmt(s.stdev)}</div>
+              <div className="space-y-0.5">
+                {s.subjects.map((sub) => (
+                  <div key={sub.subject} className="flex items-center justify-between gap-2 text-[var(--text-muted)]">
+                    <span className="truncate">
+                      <span className="text-[var(--text)]">{sub.subject}</span>
+                      <span className="text-[var(--text-fainter)]"> · AAMC weight {Math.round(sub.rawWeight * 100)}% → {Math.round(sub.weight * 100)}% used</span>
+                    </span>
+                    <span className="shrink-0 font-mono text-[var(--text-faint)]">
+                      n={sub.n} · {Math.round(sub.accuracy * 100)}%
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="flex items-center justify-between gap-3 mt-3">
+        <div className="text-[11px] text-[var(--text-faint)] leading-snug flex-1">
+          Per-subject accuracy from your last 200 attempts each, weighted into sections by AAMC content (e.g. Bio/Biochem = 65% Biology + 25% Biochem + 10% Chemistry), shrunk toward a 55% prior. App questions are tuned harder than the real exam — treat as a floor.
+        </div>
+        <button
+          onClick={() => setExpanded((x) => !x)}
+          className="shrink-0 text-xs px-2.5 py-1 border border-[var(--border)] rounded hover:bg-[var(--bg-hover)]"
+        >
+          {expanded ? 'Hide breakdown' : 'Breakdown'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function StatsView() {
   const { attempts, files, questions, clearAttempts } = useApp();
 
@@ -6755,6 +6972,7 @@ function Shell() {
               ? <UserProfile username={profileUser} onBack={() => setProfileUser(null)} />
               : (
                 <>
+                  <McatPredictionCard attempts={attempts} />
                   <Leaderboard onPickUser={(u) => setProfileUser(u)} />
                   <CarsCalendar />
                   {session && <ServerStatsView />}
