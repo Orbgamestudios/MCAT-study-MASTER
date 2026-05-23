@@ -28,6 +28,7 @@ const KEYS = {
   volume: 'mcat:volume', // 0-1, global SFX volume multiplier (default 1)
   bankSeen: 'mcat:bankSeen', // timestamp — last time the user reviewed the Bank tab
   cars: 'mcat:cars', // { [date]: { score, total, completed_at } } — daily CARS results
+  connectionsResults: 'mcat:connectionsResults', // { [date]: { solved, mistakes, completed_at } }
 };
 
 // Theme is a (palette, mode) pair. Palette picks the colour family; mode picks
@@ -154,6 +155,24 @@ function setCarsCachePayload(date, payload) {
   const keys = Object.keys(all).sort();
   while (keys.length > 60) delete all[keys.shift()];
   try { localStorage.setItem('mcat:carsCache', JSON.stringify(all)); } catch {}
+}
+
+// ---------- daily Connections helpers ----------
+function getConnectionsCache() { try { return JSON.parse(localStorage.getItem('mcat:connectionsCache')) || {}; } catch { return {}; } }
+function getConnectionsCachePayload(date) { return getConnectionsCache()[date] || null; }
+function setConnectionsCachePayload(date, payload) {
+  if (!payload) return;
+  const all = getConnectionsCache();
+  all[date] = payload;
+  const keys = Object.keys(all).sort();
+  while (keys.length > 60) delete all[keys.shift()];
+  try { localStorage.setItem('mcat:connectionsCache', JSON.stringify(all)); } catch {}
+}
+function getConnectionsResults() { try { return JSON.parse(localStorage.getItem('mcat:connectionsResults')) || {}; } catch { return {}; } }
+function setConnectionsResult(date, result) {
+  const all = getConnectionsResults();
+  all[date] = result;
+  try { localStorage.setItem('mcat:connectionsResults', JSON.stringify(all)); } catch {}
 }
 
 const DEFAULT_GITHUB = {
@@ -1176,10 +1195,73 @@ function makeClient(getKey) {
     }));
   }
 
+  // ---- daily Connections generation ----
+  // 16 MCAT terms grouped into 4 themed categories of 4. Difficulty is colour-coded
+  // green (easiest), yellow, blue, purple (hardest) — matches NYT Connections.
+  const CONNECTIONS_SCHEMA = {
+    type: 'OBJECT',
+    properties: {
+      title: { type: 'STRING' },
+      groups: {
+        type: 'ARRAY',
+        items: {
+          type: 'OBJECT',
+          properties: {
+            category: { type: 'STRING' },
+            difficulty: { type: 'STRING' }, // "green" | "yellow" | "blue" | "purple"
+            terms: { type: 'ARRAY', items: { type: 'STRING' } },
+          },
+          required: ['category', 'difficulty', 'terms'],
+        },
+      },
+    },
+    required: ['title', 'groups'],
+  };
+
+  async function generateDailyConnections(termPool, dateStr) {
+    // termPool: [{ term, subject, chapter, definition }] across all chapters.
+    // Send a compact representation to keep the prompt small.
+    const lines = termPool.map((t) =>
+      `- ${t.term}${t.subject ? ` [${t.subject}]` : ''}${t.definition ? `: ${t.definition.slice(0, 140)}` : ''}`
+    );
+    const resp = await generate({
+      maxOutputTokens: 8192,
+      disableThinking: true,
+      systemInstruction:
+        'You design daily "Connections" puzzles (NYT-style) for an MCAT study app. A puzzle is exactly 16 MCAT ' +
+        'terms drawn from the supplied pool, grouped into 4 categories of 4 terms each. Every category is a ' +
+        'genuine, defensible MCAT-relevant connection (a shared mechanism, anatomical system, hormone family, ' +
+        'cognitive bias family, amino-acid class, neurotransmitter system, lab technique, error type, etc.) — ' +
+        'not a superficial word-game connection. The four difficulty tiers, in order, must be:\n' +
+        '  • green  — easiest, the most obvious shared category a first-year student would catch\n' +
+        '  • yellow — second-easiest, a clear category but requires recalling the definition\n' +
+        '  • blue   — second-hardest, a subtle or cross-disciplinary link\n' +
+        '  • purple — hardest, a tricky or non-obvious link; ideally includes terms that LOOK like they belong ' +
+        'in another category (red herrings).\n' +
+        'Hard constraints: each term must appear in exactly ONE group; the 16 chosen terms must all come from ' +
+        'the supplied pool (use the term name EXACTLY as given); never invent terms; never use the same term ' +
+        'twice. Category labels are short noun phrases (≤ 60 chars). Set `difficulty` to one of green/yellow/' +
+        'blue/purple. Pick a varied mix of subjects (not all bio, not all psych). Make at least one purple ' +
+        'category that genuinely requires lateral thinking — that is the heart of a good Connections puzzle.',
+      contents: [{
+        role: 'user',
+        parts: [{ text:
+          `Generate today's MCAT Connections puzzle (date: ${dateStr}). Choose 16 terms from this pool of ` +
+          `${termPool.length} terms and group them into 4 categories of 4 with green/yellow/blue/purple ` +
+          `difficulty. Return a short overall title for the puzzle.\n\n` +
+          `Term pool:\n${lines.join('\n')}`,
+        }],
+      }],
+      responseSchema: CONNECTIONS_SCHEMA,
+    });
+    return extractJson(resp);
+  }
+
   return {
     uploadFile, deleteFile, generate, ping,
     extractFromPdf, generateMCQuestions, generateShortAnswers, generateTermQuestions, generateTwoPartQuestions,
     fixFlaggedQuestion, auditQuestions, generateDailyCars, generateCarsQuestions,
+    generateDailyConnections,
   };
 }
 
@@ -1215,6 +1297,7 @@ function makeApiClient(getToken) {
     login: ({ username, pin }) => call('/login', { method: 'POST', body: { username, pin } }),
     logout: () => call('/logout', { method: 'POST', auth: true }),
     me: () => call('/me', { auth: true }),
+    ping: () => call('/ping', { method: 'POST', auth: true }),
     postAttempts: (attempts) => call('/attempts', { method: 'POST', body: { attempts }, auth: true }),
     meStats: () => call('/me/stats', { auth: true }),
     leaderboard: () => call('/leaderboard'),
@@ -1226,6 +1309,13 @@ function makeApiClient(getToken) {
     getCarsPassage: (date) => call(`/cars/passage?date=${encodeURIComponent(date)}`),
     postCars: ({ date, discipline, title, payload }) =>
       call('/cars', { method: 'POST', body: { date, discipline, title, payload }, auth: true }),
+
+    // ---- daily Connections ----
+    listConnections: () => call('/connections'),
+    getConnections: (date) => call(`/connections/${encodeURIComponent(date)}`),
+    postConnections: ({ date, title, payload }) =>
+      call('/connections', { method: 'POST', body: { date, title, payload }, auth: true }),
+
     userProfile: (username) => call(`/u/${encodeURIComponent(username)}`),
 
     // Bank publish + pull. body for putBank is the raw JSON string of the bank.
@@ -3273,45 +3363,67 @@ function HomeActivity() {
   const { api, session } = useApp();
   const [rows, setRows] = useState(null);
   const [err, setErr] = useState('');
+  const [tick, setTick] = useState(0);
 
+  // Refetch on a slow interval so the green-dot status stays accurate.
   useEffect(() => {
     let cancelled = false;
     api.activity()
       .then((d) => { if (!cancelled) setRows(d.activity || []); })
       .catch((e) => { if (!cancelled) setErr(e.message); });
     return () => { cancelled = true; };
-  }, [api]);
+  }, [api, tick]);
+  useEffect(() => {
+    const t = setInterval(() => setTick((x) => x + 1), 45 * 1000);
+    return () => clearInterval(t);
+  }, []);
 
   if (err) return null; // silent — Home is a happy place
   if (!rows) {
     return (
       <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-5">
-        <h2 className="font-semibold text-[var(--text-strong)] mb-1">Who else is studying</h2>
+        <h2 className="font-semibold text-[var(--text-strong)] mb-1">Who's in the app</h2>
         <p className="text-sm text-[var(--text-muted)]">Loading…</p>
       </div>
     );
   }
-  // Hide own row to keep it useful — show up to 8 others.
+  const ONLINE_WINDOW = 5 * 60 * 1000;        // green dot
+  const STUDYING_WINDOW = 5 * 60 * 1000;      // attempt within 5 min → "studying X"
   const others = rows.filter((r) => !session || r.username !== session.username).slice(0, 8);
   if (!others.length) return null;
 
   return (
     <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-5">
-      <h2 className="font-semibold text-[var(--text-strong)] mb-2">Who else is studying</h2>
+      <h2 className="font-semibold text-[var(--text-strong)] mb-2">Who's in the app</h2>
       <ul className="divide-y divide-[var(--border-soft)]">
-        {others.map((r) => (
-          <li key={r.username} className="py-2 flex items-center gap-3">
-            <div className="w-2 h-2 rounded-full shrink-0" style={{ background: Date.now() - r.ts < 5 * 60 * 1000 ? 'var(--success-border)' : 'var(--text-fainter)' }} />
-            <div className="min-w-0 flex-1">
-              <div className="text-sm text-[var(--text)] truncate">
-                <span className="font-medium">@{r.username}</span>
-                <span className="text-[var(--text-muted)]"> · {r.subject || 'studying'}</span>
+        {others.map((r) => {
+          const online = r.ts && (Date.now() - r.ts < ONLINE_WINDOW);
+          const studyingNow = r.attempt_ts && (Date.now() - r.attempt_ts < STUDYING_WINDOW);
+          // What to show on the second line:
+          //   - studying right now → subject (current chapter)
+          //   - online but idle    → "online"
+          //   - offline            → last subject seen + when
+          const status = studyingNow
+            ? (r.subject || 'studying')
+            : (online ? 'online' : (r.subject ? `last: ${r.subject}` : 'offline'));
+          return (
+            <li key={r.username} className="py-2 flex items-center gap-3">
+              <div
+                className="w-2 h-2 rounded-full shrink-0"
+                style={{ background: online ? 'var(--success-border)' : 'var(--text-fainter)' }}
+                title={online ? 'online' : 'offline'}
+              />
+              <div className="min-w-0 flex-1">
+                <div className="text-sm text-[var(--text)] truncate">
+                  <span className="font-medium">@{r.username}</span>
+                  <span className="text-[var(--text-muted)]"> · {status}</span>
+                </div>
+                {studyingNow && r.chapter && <div className="text-xs text-[var(--text-faint)] truncate">{r.chapter}</div>}
               </div>
-              {r.chapter && <div className="text-xs text-[var(--text-faint)] truncate">{r.chapter}</div>}
-            </div>
-            <div className="text-xs text-[var(--text-faint)] shrink-0">{relativeTime(r.ts)}</div>
-          </li>
-        ))}
+              <div className="text-xs text-[var(--text-faint)] shrink-0">{relativeTime(r.ts)}</div>
+            </li>
+          );
+        })}
       </ul>
     </div>
   );
@@ -3748,6 +3860,550 @@ function CarsArchive() {
   );
 }
 
+// ---------- daily Connections ----------
+// NYT-style fixed palette so the puzzle reads the same in every theme.
+const CONNECTIONS_DIFFICULTY_ORDER = ['green', 'yellow', 'blue', 'purple'];
+const CONNECTIONS_COLORS = {
+  green:  { bg: '#a0c35a', text: '#1a2b07' },
+  yellow: { bg: '#f9df6d', text: '#3a2c00' },
+  blue:   { bg: '#b0c4ef', text: '#0c1d4a' },
+  purple: { bg: '#ba81c5', text: '#2e0a3a' },
+};
+function normalizeDifficulty(d) {
+  const k = (d || '').toLowerCase();
+  return CONNECTIONS_COLORS[k] ? k : 'green';
+}
+// Stable shuffle for initial render so the same day's puzzle has the same starting
+// layout for every user (date-seeded), but the in-game Shuffle button is free-form.
+function seededShuffle(arr, seedStr) {
+  let h = 1779033703 ^ seedStr.length;
+  for (let i = 0; i < seedStr.length; i++) {
+    h = Math.imul(h ^ seedStr.charCodeAt(i), 3432918353);
+    h = (h << 13) | (h >>> 19);
+  }
+  let a = h >>> 0;
+  const rng = () => {
+    a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  const out = arr.slice();
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+}
+
+function ConnectionsRunner({ date, payload, onClose, alreadyDone }) {
+  const { addAttempt, flushSync } = useApp();
+  const groups = useMemo(() => {
+    // Sort by canonical difficulty order so the reveal-on-solve sequence reads green → purple.
+    const list = (payload.groups || []).map((g) => ({ ...g, difficulty: normalizeDifficulty(g.difficulty) }));
+    list.sort((a, b) => CONNECTIONS_DIFFICULTY_ORDER.indexOf(a.difficulty) - CONNECTIONS_DIFFICULTY_ORDER.indexOf(b.difficulty));
+    return list;
+  }, [payload]);
+  const termToGroup = useMemo(() => {
+    const m = new Map();
+    groups.forEach((g) => g.terms.forEach((t) => m.set(t, g)));
+    return m;
+  }, [groups]);
+  const allTerms = useMemo(() => groups.flatMap((g) => g.terms), [groups]);
+
+  const savedResult = alreadyDone ? (getConnectionsResults()[date] || null) : null;
+  const startSolved = savedResult?.solvedCategories || [];
+  const [solved, setSolved] = useState(() => startSolved); // [categoryName...] in solve order
+  const [order, setOrder] = useState(() => {
+    const remaining = allTerms.filter((t) => !startSolved.some((cat) => groups.find((g) => g.category === cat)?.terms.includes(t)));
+    return seededShuffle(remaining, `connections:${date}`);
+  });
+  const [selected, setSelected] = useState([]);
+  const [mistakes, setMistakes] = useState(savedResult?.mistakes || 0);
+  const [phase, setPhase] = useState(() => {
+    if (!savedResult) return 'play';
+    return savedResult.won ? 'won' : 'lost';
+  });
+  const [message, setMessage] = useState('');
+  const [shaking, setShaking] = useState(false);
+  const finalizedRef = useRef(!!savedResult);
+
+  const solvedGroups = solved.map((cat) => groups.find((g) => g.category === cat)).filter(Boolean);
+  const unsolvedGroups = groups.filter((g) => !solved.includes(g.category));
+
+  const toggle = (term) => {
+    if (phase !== 'play') return;
+    if (solved.some((cat) => groups.find((g) => g.category === cat)?.terms.includes(term))) return;
+    sfxTap(); vibrateTap();
+    setMessage('');
+    setSelected((s) => {
+      if (s.includes(term)) return s.filter((x) => x !== term);
+      if (s.length >= 4) return s;
+      return [...s, term];
+    });
+  };
+
+  const shuffle = () => {
+    if (phase !== 'play') return;
+    sfxTap(); vibrateTap();
+    setMessage('');
+    setOrder((o) => {
+      // Fisher-Yates with a new seed each click.
+      const out = o.slice();
+      for (let i = out.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [out[i], out[j]] = [out[j], out[i]];
+      }
+      return out;
+    });
+  };
+
+  const deselect = () => {
+    if (phase !== 'play') return;
+    sfxTap();
+    setSelected([]);
+    setMessage('');
+  };
+
+  const finalize = (won, finalSolved, finalMistakes) => {
+    if (finalizedRef.current) return;
+    finalizedRef.current = true;
+    // Log one attempt per group: correct if that group was solved (i.e. user identified it).
+    const solvedSet = new Set(finalSolved);
+    groups.forEach((g) => {
+      addAttempt({
+        question_id: `connections_${date}_${g.category.slice(0, 40)}`,
+        mode: 'connections',
+        file_id: `connections_${date}`,
+        chapter: `Daily Connections — ${date}`,
+        subject: 'Connections',
+        correct: solvedSet.has(g.category),
+        user_answer: g.category,
+      });
+    });
+    setConnectionsResult(date, {
+      won,
+      solvedCategories: finalSolved,
+      mistakes: finalMistakes,
+      total: 4,
+      completed_at: Date.now(),
+    });
+    window.dispatchEvent(new Event('mcat:connectionsDone'));
+    setTimeout(() => { try { flushSync(); } catch {} }, 120);
+  };
+
+  const submit = () => {
+    if (phase !== 'play' || selected.length !== 4) return;
+    const cats = selected.map((t) => termToGroup.get(t)?.category);
+    const allSame = cats.every((c) => c && c === cats[0]);
+    if (allSame) {
+      playSfx('correct'); vibrateCorrect();
+      const newSolved = [...solved, cats[0]];
+      const remaining = order.filter((t) => !selected.includes(t));
+      setSolved(newSolved);
+      setOrder(remaining);
+      setSelected([]);
+      setMessage('');
+      if (newSolved.length === 4) {
+        setPhase('won');
+        finalize(true, newSolved, mistakes);
+      }
+    } else {
+      playSfx('wrong'); vibrateWrong();
+      // One-away check: 3 of 4 in some category.
+      const counts = {};
+      cats.forEach((c) => { if (c) counts[c] = (counts[c] || 0) + 1; });
+      const oneAway = Object.values(counts).some((n) => n === 3);
+      const newMistakes = mistakes + 1;
+      setMistakes(newMistakes);
+      setShaking(true);
+      setTimeout(() => setShaking(false), 500);
+      setMessage(oneAway ? 'One away…' : 'Not quite');
+      if (newMistakes >= 4) {
+        // Reveal remaining groups in difficulty order and end as a loss.
+        const finalSolved = [...solved, ...unsolvedGroups.map((g) => g.category)];
+        setSolved(finalSolved);
+        setOrder([]);
+        setSelected([]);
+        setPhase('lost');
+        finalize(false, solved, newMistakes); // user actually solved only `solved`
+      }
+    }
+  };
+
+  const dots = [0, 1, 2, 3];
+  const mistakesLeft = 4 - mistakes;
+
+  return (
+    <div className="fixed inset-0 z-50 bg-[var(--bg)] overflow-y-auto">
+      <style>{`
+        @keyframes conn-shake { 10%,90%{transform:translateX(-2px)} 20%,80%{transform:translateX(3px)} 30%,50%,70%{transform:translateX(-5px)} 40%,60%{transform:translateX(5px)} }
+        .conn-shake { animation: conn-shake 0.45s ease-in-out; }
+      `}</style>
+      <div className="max-w-2xl mx-auto p-3 sm:p-6 space-y-4">
+        <div className="flex items-center justify-between gap-3 sticky top-0 bg-[var(--bg)] py-2 z-10">
+          <div className="min-w-0">
+            <div className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Daily Connections · {date}</div>
+            <h2 className="font-semibold text-[var(--text-strong)] truncate">{payload.title || 'MCAT Connections'}</h2>
+          </div>
+          <button onClick={onClose} className="shrink-0 text-xs px-3 py-1.5 border border-[var(--border)] rounded hover:bg-[var(--bg-hover)]">Close</button>
+        </div>
+
+        <div className="bg-[var(--bg-card-soft)] border border-[var(--border-soft)] rounded-xl p-3 text-sm text-[var(--text-muted)]">
+          Pick 4 terms that share a hidden MCAT connection. Solve all 4 groups — green is easiest, purple is hardest. 4 mistakes and it's over.
+        </div>
+
+        {/* Solved groups */}
+        {solvedGroups.length > 0 && (
+          <div className="space-y-2">
+            {solvedGroups.map((g) => {
+              const c = CONNECTIONS_COLORS[g.difficulty];
+              return (
+                <div
+                  key={g.category}
+                  className="rounded-xl px-4 py-3 text-center"
+                  style={{ background: c.bg, color: c.text }}
+                >
+                  <div className="text-xs uppercase tracking-wide font-semibold opacity-80">{g.difficulty}</div>
+                  <div className="font-bold text-base sm:text-lg">{g.category}</div>
+                  <div className="text-sm mt-0.5">{g.terms.join(' · ')}</div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Unsolved grid */}
+        {order.length > 0 && (
+          <div className={`grid grid-cols-4 gap-1.5 sm:gap-2 ${shaking ? 'conn-shake' : ''}`}>
+            {order.map((term) => {
+              const isSel = selected.includes(term);
+              return (
+                <button
+                  key={term}
+                  onClick={() => toggle(term)}
+                  disabled={phase !== 'play'}
+                  data-no-haptic
+                  className={
+                    `aspect-square rounded-lg px-1 py-1 text-[10px] sm:text-xs font-semibold leading-tight ` +
+                    `flex items-center justify-center text-center break-words transition-colors ` +
+                    (isSel
+                      ? 'bg-[var(--text-strong)] text-[var(--bg)] '
+                      : 'bg-[var(--bg-elev)] hover:bg-[var(--bg-hover)] text-[var(--text)] ')
+                  }
+                  style={isSel ? {} : { border: '1px solid var(--border-soft)' }}
+                >
+                  <span className="px-0.5">{term}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Mistakes + status */}
+        <div className="flex items-center justify-between gap-3 px-1">
+          <div className="flex items-center gap-2 text-sm text-[var(--text-muted)]">
+            <span>Mistakes remaining:</span>
+            <div className="flex gap-1.5">
+              {dots.map((i) => (
+                <span
+                  key={i}
+                  className={`inline-block w-2.5 h-2.5 rounded-full ${i < mistakesLeft ? 'bg-[var(--text-strong)]' : 'bg-[var(--border)]'}`}
+                />
+              ))}
+            </div>
+          </div>
+          {message && (
+            <span className={`text-sm font-medium ${phase === 'play' ? 'text-[var(--danger-text)]' : 'text-[var(--text-muted)]'}`}>
+              {message}
+            </span>
+          )}
+        </div>
+
+        {/* Win / Loss banner */}
+        {phase === 'won' && (
+          <div className="bg-[var(--success-bg-strong)] border border-[var(--success-border)] rounded-xl p-4 text-center">
+            <div className="font-semibold text-[var(--success-text)]">Solved — {mistakes} mistake{mistakes === 1 ? '' : 's'}</div>
+            <div className="text-sm text-[var(--text)] mt-1">Come back tomorrow for a new puzzle.</div>
+          </div>
+        )}
+        {phase === 'lost' && (
+          <div className="bg-[var(--danger-bg-strong)] border border-[var(--danger-border)] rounded-xl p-4 text-center">
+            <div className="font-semibold text-[var(--danger-text)]">Out of mistakes</div>
+            <div className="text-sm text-[var(--text)] mt-1">Answers revealed above. Try tomorrow's puzzle.</div>
+          </div>
+        )}
+
+        {/* Controls */}
+        {phase === 'play' ? (
+          <div className="grid grid-cols-3 gap-2">
+            <button
+              onClick={shuffle}
+              className="text-sm py-2.5 border border-[var(--border)] rounded-lg hover:bg-[var(--bg-hover)]"
+            >
+              Shuffle
+            </button>
+            <button
+              onClick={deselect}
+              disabled={selected.length === 0}
+              className="text-sm py-2.5 border border-[var(--border)] rounded-lg hover:bg-[var(--bg-hover)] disabled:opacity-40"
+            >
+              Deselect
+            </button>
+            <button
+              onClick={submit}
+              disabled={selected.length !== 4}
+              className="text-sm py-2.5 bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] disabled:opacity-40 rounded-lg font-semibold"
+            >
+              Submit
+            </button>
+          </div>
+        ) : (
+          <button onClick={onClose} className="w-full text-sm py-3 bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] rounded-lg font-medium">
+            Done
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Home card — today's Connections puzzle. Generates if nobody has yet (and the user has a key).
+function DailyConnectionsCard() {
+  const { api, client, apiKey, session, extractions, files } = useApp();
+  const today = todayStr();
+  const cached = getConnectionsCachePayload(today);
+  const [state, setState] = useState(cached ? 'ready' : 'loading'); // loading | ready | generating | unavailable | needs-terms | error
+  const [payload, setPayload] = useState(cached);
+  const [err, setErr] = useState('');
+  const [running, setRunning] = useState(false);
+  const [tick, setTick] = useState(0);
+  const result = getConnectionsResults()[today];
+
+  // Build the term pool from every chapter's extracted key_terms.
+  const termPool = useMemo(() => {
+    const out = [];
+    const seen = new Set();
+    for (const f of files) {
+      const ext = extractions[f.file_id];
+      if (!ext?.key_terms) continue;
+      for (const kt of ext.key_terms) {
+        const key = (kt.term || '').trim();
+        if (!key || seen.has(key.toLowerCase())) continue;
+        seen.add(key.toLowerCase());
+        out.push({
+          term: key,
+          definition: kt.definition || '',
+          subject: f.subject || '',
+          chapter: f.chapter || f.name || '',
+        });
+      }
+    }
+    return out;
+  }, [files, extractions]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!getConnectionsCachePayload(today)) setState('loading');
+    setErr('');
+    api.getConnections(today)
+      .then((d) => {
+        if (cancelled) return;
+        setConnectionsCachePayload(today, d.payload);
+        setPayload(d.payload);
+        setState('ready');
+      })
+      .catch(async (e) => {
+        if (cancelled) return;
+        if (e.status !== 404) { setErr(e.message); setState('error'); return; }
+        if (!apiKey || !session) { setState('unavailable'); return; }
+        if (termPool.length < 24) { setState('needs-terms'); return; }
+        setState('generating');
+        try {
+          const gen = await client.generateDailyConnections(termPool, today);
+          if (!gen?.groups?.length) throw new Error('Generation returned no groups.');
+          // Validation — must be exactly 4 groups × 4 terms, all from the pool, unique.
+          if (gen.groups.length !== 4) throw new Error('Generation did not return 4 groups.');
+          const poolSet = new Set(termPool.map((t) => t.term));
+          const usedTerms = new Set();
+          for (const g of gen.groups) {
+            if (!Array.isArray(g.terms) || g.terms.length !== 4) throw new Error('Each group must have 4 terms.');
+            for (const t of g.terms) {
+              if (!poolSet.has(t)) throw new Error(`Generated term not in pool: ${t}`);
+              if (usedTerms.has(t)) throw new Error(`Term used in more than one group: ${t}`);
+              usedTerms.add(t);
+            }
+          }
+          await api.postConnections({ date: today, title: gen.title || '', payload: gen });
+          if (!cancelled) { setConnectionsCachePayload(today, gen); setPayload(gen); setState('ready'); }
+        } catch (ge) {
+          // Someone else may have generated it in the meantime — try one more fetch.
+          try {
+            const d2 = await api.getConnections(today);
+            if (!cancelled) { setConnectionsCachePayload(today, d2.payload); setPayload(d2.payload); setState('ready'); return; }
+          } catch {}
+          if (!cancelled) { setErr(ge.message); setState('error'); }
+        }
+      });
+    return () => { cancelled = true; };
+  }, [api, today, tick, apiKey, session, termPool, client]);
+
+  const card = (inner) => (
+    <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-5">{inner}</div>
+  );
+
+  if (state === 'loading') return card(<div className="text-sm text-[var(--text-muted)]">Checking today's Connections…</div>);
+  if (state === 'generating') return card(
+    <div>
+      <h2 className="font-semibold text-[var(--text-strong)]">Daily Connections</h2>
+      <p className="text-sm text-[var(--text-muted)] mt-1">Generating today's puzzle with Gemini — about 15 seconds…</p>
+    </div>
+  );
+  if (state === 'unavailable') return card(
+    <div>
+      <h2 className="font-semibold text-[var(--text-strong)]">Daily Connections</h2>
+      <p className="text-sm text-[var(--text-muted)] mt-1">
+        Today's puzzle hasn't been generated yet. It appears once someone signed in with a Gemini API key opens the app.
+      </p>
+    </div>
+  );
+  if (state === 'needs-terms') return card(
+    <div>
+      <h2 className="font-semibold text-[var(--text-strong)]">Daily Connections</h2>
+      <p className="text-sm text-[var(--text-muted)] mt-1">
+        Not enough terms yet to build a puzzle — process a few more chapters in the Library tab and check back.
+      </p>
+    </div>
+  );
+  if (state === 'error') return card(
+    <div>
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="font-semibold text-[var(--text-strong)]">Daily Connections</h2>
+        <button onClick={() => setTick((t) => t + 1)} className="shrink-0 text-xs px-3 py-1.5 border border-[var(--border)] rounded hover:bg-[var(--bg-hover)]">Retry</button>
+      </div>
+      <p className="text-sm text-[var(--danger-text)] mt-1 break-words whitespace-pre-wrap">{err}</p>
+    </div>
+  );
+
+  return (
+    <>
+      <div className={`bg-[var(--bg-card)] border rounded-2xl p-4 sm:p-5 ${result ? 'border-[var(--border-soft)]' : 'border-[var(--accent-border)]'}`}>
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <h2 className="font-semibold text-[var(--text-strong)]">Today's Connections</h2>
+              {!result && <span className="w-2 h-2 rounded-full bg-[var(--danger-border)]" />}
+            </div>
+            {payload?.title && <div className="text-sm text-[var(--text)] mt-0.5">{payload.title}</div>}
+            <div className="text-xs text-[var(--text-muted)] mt-0.5">
+              4×4 grid · 4 hidden categories · green → purple difficulty
+              {result?.won && <span className="text-[var(--success-text)]"> · solved with {result.mistakes} mistake{result.mistakes === 1 ? '' : 's'}</span>}
+              {result && !result.won && <span className="text-[var(--danger-text)]"> · gave up at {result.solvedCategories?.length || 0}/4</span>}
+            </div>
+          </div>
+          <button
+            onClick={() => setRunning(true)}
+            className="shrink-0 text-sm px-4 py-2 bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] rounded-lg font-medium"
+          >
+            {result ? 'Review' : 'Play'}
+          </button>
+        </div>
+      </div>
+      {running && payload && (
+        <ConnectionsRunner
+          date={today}
+          payload={payload}
+          alreadyDone={!!result}
+          onClose={() => { setRunning(false); setTick((t) => t + 1); }}
+        />
+      )}
+    </>
+  );
+}
+
+// Connections archive — every past day, openable from the Bank tab (bottom).
+function ConnectionsArchive() {
+  const { api } = useApp();
+  const [days, setDays] = useState(null);
+  const [err, setErr] = useState('');
+  const [open, setOpen] = useState(null); // { date, payload }
+  const [loadingDate, setLoadingDate] = useState(null);
+  const today = todayStr();
+  const results = getConnectionsResults();
+
+  useEffect(() => {
+    let cancelled = false;
+    api.listConnections()
+      .then((d) => { if (!cancelled) setDays(d.days || []); })
+      .catch((e) => { if (!cancelled) setErr(e.message); });
+    return () => { cancelled = true; };
+  }, [api]);
+
+  const openDay = async (date) => {
+    const cachedPayload = getConnectionsCachePayload(date);
+    if (cachedPayload) { setOpen({ date, payload: cachedPayload }); return; }
+    setLoadingDate(date);
+    try {
+      const d = await api.getConnections(date);
+      setConnectionsCachePayload(date, d.payload);
+      setOpen({ date, payload: d.payload });
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setLoadingDate(null);
+    }
+  };
+
+  return (
+    <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-5">
+      <h3 className="font-semibold text-[var(--text-strong)]">Daily Connections archive</h3>
+      <p className="text-sm text-[var(--text-muted)] mb-3">Every day's Connections puzzle. Replay any one.</p>
+      {err && <div className="text-sm text-[var(--danger-text)] mb-2">{err}</div>}
+      {!days && <div className="text-sm text-[var(--text-muted)]">Loading…</div>}
+      {days && days.length === 0 && (
+        <div className="text-sm text-[var(--text-muted)]">No Connections days yet — the first appears once today's is generated.</div>
+      )}
+      {days && days.length > 0 && (
+        <ul className="divide-y divide-[var(--border-soft)]">
+          {days.map((d) => {
+            const r = results[d.date];
+            return (
+              <li key={d.date} className="py-2.5 flex items-center gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm text-[var(--text)]">
+                    <span className="font-medium">{d.date}{d.date === today ? ' · today' : ''}</span>
+                    {d.title && <span className="text-[var(--text-muted)]"> — {d.title}</span>}
+                  </div>
+                  <div className="text-xs text-[var(--text-faint)]">
+                    by @{d.created_by || 'unknown'}
+                    {r?.won && <span className="text-[var(--success-text)]"> · solved ({r.mistakes} mistake{r.mistakes === 1 ? '' : 's'})</span>}
+                    {r && !r.won && <span className="text-[var(--danger-text)]"> · {r.solvedCategories?.length || 0}/4 before fail</span>}
+                  </div>
+                </div>
+                <button
+                  onClick={() => openDay(d.date)}
+                  disabled={loadingDate === d.date}
+                  className="shrink-0 text-xs px-3 py-1.5 bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] disabled:opacity-40 rounded font-medium"
+                >
+                  {loadingDate === d.date ? 'Loading…' : (r ? 'Review' : 'Open')}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {open && open.payload && (
+        <ConnectionsRunner
+          date={open.date}
+          payload={open.payload}
+          alreadyDone={!!results[open.date]}
+          onClose={() => setOpen(null)}
+        />
+      )}
+    </div>
+  );
+}
+
 // CARS calendar — GitHub-style grid of daily CARS activity + accuracy.
 function CarsCalendar() {
   const results = getCarsResults();
@@ -3859,6 +4515,8 @@ function HomeView({ onGoToStudy }) {
 
 
       <DailyCarsCard />
+
+      <DailyConnectionsCard />
 
       <HomeActivity />
 
@@ -5713,6 +6371,8 @@ function BankTab() {
       {auditChapter && (
         <AuditModal chapter={auditChapter} onClose={() => { setAuditChapter(null); setTick((t) => t + 1); }} />
       )}
+
+      <ConnectionsArchive />
     </div>
   );
 }
@@ -5962,6 +6622,23 @@ function Shell() {
     window.addEventListener('mcat:carsDone', onDone);
     return () => window.removeEventListener('mcat:carsDone', onDone);
   }, []);
+
+  // Online-status heartbeat: ping on mount, when the tab becomes visible, and on a
+  // slow interval while open. Each authenticated hit bumps users.last_seen on the
+  // server, which drives the "who's online" indicator. Skipped when no session.
+  useEffect(() => {
+    if (!session) return;
+    let cancelled = false;
+    const beat = () => {
+      if (cancelled || document.visibilityState !== 'visible') return;
+      api.ping().catch(() => {});
+    };
+    beat();
+    const onVis = () => { if (document.visibilityState === 'visible') beat(); };
+    document.addEventListener('visibilitychange', onVis);
+    const interval = setInterval(beat, 60 * 1000);
+    return () => { cancelled = true; clearInterval(interval); document.removeEventListener('visibilitychange', onVis); };
+  }, [api, session]);
 
   // Global HUD click feedback: tap sound + short vibration on any non-content button.
   // Quiz answer buttons (MC/SinglePart) carry data-no-haptic so they don't double up
