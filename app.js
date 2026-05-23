@@ -4824,13 +4824,33 @@ function predictMcatScores(attempts) {
     };
   });
 
-  // Total: only sections the user has any data for. Variance of a sum of
-  // independents = sum of variances; sqrt that for the stdev on the total.
+  // Impute any section the user hasn't touched as the mean of completed sections,
+  // with a wider stdev to reflect that it's a cross-section guess (floor at ±2.5
+  // score-points, roughly one real-MCAT inter-section spread). This way the total
+  // always reads as a valid MCAT score (472–528), not a partial sum that looks
+  // nonsensical (e.g. 259 when only two sections have data).
   const done = sections.filter((s) => s.completed);
+  if (done.length > 0 && done.length < sections.length) {
+    const meanScore = done.reduce((s, x) => s + x.score, 0) / done.length;
+    const meanVariance = done.reduce((s, x) => s + x.stdev ** 2, 0) / done.length;
+    const IMPUTED_FLOOR_STDEV = 2.5;
+    const imputedStdev = Math.max(Math.sqrt(meanVariance) * 2, IMPUTED_FLOOR_STDEV);
+    for (const s of sections) {
+      if (s.completed) continue;
+      s.imputed = true;
+      s.score = meanScore;
+      s.stdev = imputedStdev;
+    }
+  }
+
+  // Total covers all 4 sections (real + imputed). Variance of a sum of independents
+  // is the sum of variances; sqrt for the stdev. Null only if nothing has been
+  // studied at all.
+  const contributing = sections.filter((s) => s.completed || s.imputed);
   const total = done.length
     ? {
-        score: done.reduce((s, x) => s + x.score, 0),
-        stdev: Math.sqrt(done.reduce((s, x) => s + x.stdev ** 2, 0)),
+        score: contributing.reduce((acc, x) => acc + x.score, 0),
+        stdev: Math.sqrt(contributing.reduce((acc, x) => acc + x.stdev ** 2, 0)),
         sectionsCompleted: done.length,
         allFour: done.length === MCAT_SECTIONS.length,
       }
@@ -4860,7 +4880,7 @@ function McatPredictionCard({ attempts }) {
           </div>
           {total && !total.allFour && (
             <div className="text-xs text-[var(--text-faint)] mt-1">
-              partial — {total.sectionsCompleted}/4 sections studied
+              {total.sectionsCompleted}/4 sections studied · others estimated from your average
             </div>
           )}
         </div>
@@ -4869,7 +4889,12 @@ function McatPredictionCard({ attempts }) {
         {sections.map((s) => (
           <div
             key={s.key}
-            className="bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-xl px-3 py-2.5"
+            className={
+              `border rounded-xl px-3 py-2.5 ` +
+              (s.imputed
+                ? 'bg-[var(--bg-card-soft)] border-dashed border-[var(--border)]'
+                : 'bg-[var(--bg-elev-soft)] border-[var(--border-soft)]')
+            }
           >
             <div className="text-[10px] uppercase tracking-wide text-[var(--text-muted)]">{s.label}</div>
             {s.completed ? (
@@ -4881,6 +4906,14 @@ function McatPredictionCard({ attempts }) {
                 <div className="text-[10px] text-[var(--text-faint)] mt-0.5">
                   n={s.n}
                 </div>
+              </>
+            ) : s.imputed ? (
+              <>
+                <div className="text-xl font-bold text-[var(--text-muted)] mt-0.5 italic">
+                  {Math.round(s.score)}
+                  <span className="text-xs font-medium text-[var(--text-fainter)] ml-1">± {fmt(s.stdev)}</span>
+                </div>
+                <div className="text-[10px] text-[var(--text-faint)] mt-0.5">est. (no data)</div>
               </>
             ) : (
               <>
