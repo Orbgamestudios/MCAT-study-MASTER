@@ -49,152 +49,460 @@ function dataThemeFor(palette, mode) {
   if (palette === 'tropical') return dark ? 'darktropical' : 'tropical';
   return dark ? 'dark' : 'light'; // cold
 }
-// ---------- dynamic background (animated, parallax) ----------
-// Each palette/mode has three CSS gradient layers that animate independently.
-// Applied as a fixed DOM layer behind #root. Scroll parallax added via JS.
-
-const DYN_BG = {
-  cold: {
-    day: {
-      edge: '#4a9fd4',
-      base: 'linear-gradient(to bottom,#4a9fd4 0%,#80c6ee 11%,#b2ddf8 24%,#ddf2fd 38%,#f8feff 52%,#ffffff 65%,#e6f3fd 80%,#cce2f5 100%)',
-      b1:   'radial-gradient(ellipse 100% 26% at 50% 18%,rgba(255,255,255,0.62) 0%,transparent 68%),' +
-            'radial-gradient(ellipse 58% 22% at 14% 12%,rgba(255,255,255,0.52) 0%,transparent 60%),' +
-            'radial-gradient(ellipse 44% 18% at 80% 14%,rgba(215,240,255,0.44) 0%,transparent 56%)',
-      b2:   'radial-gradient(ellipse 88% 24% at 50% 93%,rgba(228,248,255,0.58) 0%,transparent 65%),' +
-            'radial-gradient(ellipse 120% 16% at 50% 44%,rgba(255,255,255,0.3) 0%,transparent 58%)',
-      t:    [34, 26, 20],
-    },
-    night: {
-      edge: '#010818',
-      base: 'linear-gradient(to bottom,#010818 0%,#020d1e 17%,#031430 36%,#04182e 54%,#030c1e 74%,#010610 100%)',
-      b1:   'radial-gradient(ellipse 240% 17% at 22% 24%,rgba(0,255,108,0.54) 0%,rgba(0,198,138,0.08) 50%,transparent 72%),' +
-            'radial-gradient(ellipse 88% 9% at 56% 42%,rgba(0,232,198,0.26) 0%,transparent 54%)',
-      b2:   'radial-gradient(ellipse 190% 14% at 70% 34%,rgba(86,40,255,0.4) 0%,rgba(138,0,218,0.08) 44%,transparent 65%),' +
-            'radial-gradient(ellipse 72% 8% at 38% 53%,rgba(36,172,158,0.22) 0%,transparent 46%)',
-      t:    [30, 20, 15],
-    },
-  },
-  warm: {
-    day: {
-      edge: '#e07830',
-      base: 'linear-gradient(to bottom,#f0be55 0%,#e88934 11%,#d04c14 27%,#a02808 46%,#681602 66%,#360a02 83%,#1c0600 100%)',
-      b1:   'radial-gradient(ellipse 108% 34% at 50% 5%,rgba(255,215,90,0.6) 0%,transparent 62%),' +
-            'radial-gradient(ellipse 38% 18% at 17% 44%,rgba(192,72,10,0.22) 0%,transparent 48%)',
-      b2:   'radial-gradient(ellipse 54% 24% at 82% 40%,rgba(218,96,16,0.24) 0%,transparent 50%),' +
-            'radial-gradient(ellipse 88% 28% at 50% 97%,rgba(18,5,0,0.58) 0%,transparent 62%)',
-      t:    [30, 22, 17],
-    },
-    night: {
-      edge: '#120800',
-      base: 'linear-gradient(to bottom,#1c0e04 0%,#260f04 17%,#1e0a02 36%,#140800 54%,#0a0500 74%,#060300 100%)',
-      b1:   'radial-gradient(ellipse 88% 28% at 30% 12%,rgba(212,82,14,0.4) 0%,transparent 56%),' +
-            'radial-gradient(ellipse 56% 20% at 68% 20%,rgba(162,52,4,0.26) 0%,transparent 46%)',
-      b2:   'radial-gradient(ellipse 64% 22% at 50% 84%,rgba(88,32,4,0.2) 0%,transparent 50%)',
-      t:    [28, 20, 15],
-    },
-  },
-  duo: {
-    day: {
-      edge: '#3ea022',
-      base: 'linear-gradient(to bottom,#90de65 0%,#55c62e 11%,#2c9610 27%,#166d0c 46%,#0a4e0e 66%,#052c0c 83%,#031608 100%)',
-      b1:   'radial-gradient(ellipse 122% 30% at 50% 3%,rgba(182,255,132,0.57) 0%,transparent 61%),' +
-            'radial-gradient(ellipse 46% 22% at 88% 56%,rgba(20,152,42,0.24) 0%,transparent 48%)',
-      b2:   'radial-gradient(ellipse 38% 18% at 12% 70%,rgba(14,122,26,0.22) 0%,transparent 44%),' +
-            'radial-gradient(ellipse 88% 26% at 50% 98%,rgba(2,10,4,0.68) 0%,transparent 62%)',
-      t:    [28, 20, 16],
-    },
-    night: {
-      edge: '#010d01',
-      base: 'linear-gradient(to bottom,#020f02 0%,#031902 17%,#042204 36%,#031802 54%,#020e02 74%,#010901 100%)',
-      b1:   'radial-gradient(ellipse 90% 24% at 50% 4%,rgba(15,94,17,0.4) 0%,transparent 56%),' +
-            'radial-gradient(ellipse 54% 18% at 74% 58%,rgba(10,74,13,0.24) 0%,transparent 46%)',
-      b2:   'radial-gradient(ellipse 36% 15% at 24% 74%,rgba(7,54,10,0.2) 0%,transparent 42%)',
-      t:    [25, 18, 14],
-    },
-  },
-  tropical: {
-    day: {
-      edge: '#38a8d2',
-      base: 'linear-gradient(to bottom,#36a5cf 0%,#55cae0 12%,#44bdb5 26%,#28a595 43%,#1c9687 59%,#c2b354 75%,#ae9a34 89%,#9e8624 100%)',
-      b1:   'radial-gradient(ellipse 410px 230px at 82% 8%,rgba(255,236,100,0.54) 0%,transparent 60%),' +
-            'radial-gradient(ellipse 124% 27% at 50% 98%,rgba(202,172,84,0.38) 0%,transparent 63%)',
-      b2:   'radial-gradient(ellipse 72% 23% at 15% 42%,rgba(65,212,196,0.22) 0%,transparent 48%),' +
-            'radial-gradient(ellipse 40% 17% at 90% 55%,rgba(40,176,166,0.18) 0%,transparent 42%)',
-      t:    [36, 28, 22],
-    },
-    night: {
-      edge: '#020810',
-      base: 'linear-gradient(to bottom,#01060e 0%,#020c18 12%,#030e1c 26%,#041528 43%,#050f24 59%,#040b1c 75%,#030814 89%,#020710 100%)',
-      b1:   'radial-gradient(ellipse 250px 165px at 72% 7%,rgba(168,212,255,0.26) 0%,transparent 60%),' +
-            'radial-gradient(ellipse 80% 21% at 50% 95%,rgba(3,24,52,0.72) 0%,transparent 70%)',
-      b2:   'radial-gradient(ellipse 60% 19% at 15% 56%,rgba(0,70,112,0.18) 0%,transparent 48%)',
-      t:    [38, 30, 24],
-    },
-  },
-};
+// ---------- dynamic background — Canvas 2D renderer ----------
+// CSS gradients are inherently blurry. This renderer uses Canvas 2D to draw
+// crisp sky gradients, sharp particles (snowflakes, leaves, motes, sparkles),
+// and multi-layer animated effects (aurora bands, god rays, ocean waves).
+// A fixed <canvas> sits behind #root (z-index:0); #root has z-index:1.
+// html.background = edge colour covers iOS overscroll / pinch-zoom-out white.
 
 let _dynBgCleanup = null;
 
-function applyDynamicBg(palette, isDark) {
-  stopDynamicBg();
-  const cfg = (DYN_BG[palette] || DYN_BG.tropical)[isDark ? 'night' : 'day'];
+function stopDynamicBg() {
+  if (_dynBgCleanup) { _dynBgCleanup(); _dynBgCleanup = null; }
+}
 
-  // Fix overscroll colour so rubber-band doesn't reveal white canvas
-  document.documentElement.style.backgroundColor = cfg.edge;
-  document.body.style.background = 'transparent';
+// ── helpers ──────────────────────────────────────────────────────────────────
+function _rnd(a, b) { return a + Math.random() * (b - a); }
+function _pi2() { return Math.random() * Math.PI * 2; }
 
-  // Inject keyframes (single style tag, idempotent)
-  const styleEl = document.createElement('style');
-  styleEl.id = 'mc-dyn-style';
-  styleEl.textContent =
-    '@keyframes mc-bd{0%{transform:translate(0,0) scale(1)}33%{transform:translate(2%,-2%) scale(1.04)}66%{transform:translate(-1.5%,1.5%) scale(1.02)}100%{transform:translate(0,0) scale(1)}}' +
-    '@keyframes mc-b1{0%{transform:translate(0,0)}33%{transform:translate(-6%,4%)}66%{transform:translate(5%,-3%)}100%{transform:translate(0,0)}}' +
-    '@keyframes mc-b2{0%{transform:translate(0,0)}33%{transform:translate(4%,-5%)}66%{transform:translate(-4%,3%)}100%{transform:translate(0,0)}}';
-  document.head.appendChild(styleEl);
-
-  // Background container — fixed, sits BELOW #root (which has z-index:1 in CSS)
-  const wrap = document.createElement('div');
-  wrap.id = 'mc-dyn-bg';
-  wrap.style.cssText = 'position:fixed;inset:0;z-index:0;overflow:hidden;pointer-events:none';
-
-  // Base gradient (oversized to hide drift edges)
-  const base = document.createElement('div');
-  base.style.cssText = `position:absolute;inset:-18%;background:${cfg.base};` +
-    `animation:mc-bd ${cfg.t[0]}s ease-in-out infinite`;
-  wrap.appendChild(base);
-
-  // Highlight / effect blobs
-  const b1 = document.createElement('div');
-  b1.style.cssText = `position:absolute;inset:-12%;background:${cfg.b1};` +
-    `animation:mc-b1 ${cfg.t[1]}s ease-in-out infinite`;
-  wrap.appendChild(b1);
-
-  // Depth / shadow blobs
-  const b2 = document.createElement('div');
-  b2.style.cssText = `position:absolute;inset:-12%;background:${cfg.b2};` +
-    `animation:mc-b2 ${cfg.t[2]}s ease-in-out infinite`;
-  wrap.appendChild(b2);
-
-  document.body.insertBefore(wrap, document.body.firstChild);
-
-  // Scroll parallax — background drifts at ~8% of scroll speed
-  const onScroll = () => {
-    wrap.style.transform = `translateY(${-window.scrollY * 0.08}px)`;
-  };
-  window.addEventListener('scroll', onScroll, { passive: true });
-
-  _dynBgCleanup = () => {
-    wrap.remove();
-    styleEl.remove();
-    window.removeEventListener('scroll', onScroll);
-    document.documentElement.style.backgroundColor = '';
-    document.body.style.background = '';
+// ── particle / state factories ────────────────────────────────────────────────
+function _initCold(w, h, isDark) {
+  const count = isDark ? 180 : 130;
+  return {
+    flakes: Array.from({ length: count }, () => ({
+      x: _rnd(0, w), y: _rnd(0, h),
+      r: _rnd(0.7, isDark ? 2.4 : 3.2),
+      vy: _rnd(0.35, 1.5),
+      drift: _rnd(0.2, 0.55),
+      dp: _pi2(),
+      op: _rnd(0.35, 0.88),
+    })),
+    // fixed star positions for night sky (seeded once)
+    stars: isDark ? Array.from({ length: 80 }, () => ({
+      x: _rnd(0, w), y: _rnd(0, h * 0.55),
+      r: _rnd(0.4, 1.3),
+      op: _rnd(0.3, 0.9),
+      tp: _pi2(), // twinkle phase
+    })) : [],
   };
 }
 
-function stopDynamicBg() {
-  if (_dynBgCleanup) { _dynBgCleanup(); _dynBgCleanup = null; }
+function _initWarm(w, h) {
+  const palette = ['#d4380a','#e8720c','#f0a818','#c83608','#8b2802','#f06010','#e04808','#b83206'];
+  return {
+    leaves: Array.from({ length: 58 }, () => ({
+      x: _rnd(-30, w + 30), y: _rnd(-h * 0.3, h),
+      sz: _rnd(5, 13),
+      rot: _pi2(),
+      rs: _rnd(-0.045, 0.045),
+      vy: _rnd(0.45, 1.8),
+      drift: _rnd(0.5, 1.3),
+      dp: _pi2(),
+      col: palette[Math.floor(Math.random() * palette.length)],
+      type: Math.random() < 0.5 ? 0 : 1, // 0=oval 1=maple
+    })),
+  };
+}
+
+function _initDuo(w, h) {
+  return {
+    rays: Array.from({ length: 7 }, (_, i) => ({
+      x: _rnd(w * 0.08, w * 0.92),
+      wid: _rnd(18, 60),
+      alp: _rnd(0.04, 0.11),
+      sp: _rnd(0.003, 0.008),
+      ph: _pi2(),
+    })),
+    motes: Array.from({ length: 40 }, () => ({
+      x: _rnd(0, w), y: _rnd(0, h),
+      r: _rnd(0.5, 1.8),
+      vy: _rnd(0.08, 0.28),
+      drift: _rnd(0.08, 0.35),
+      dp: _pi2(),
+      alp: _rnd(0.3, 0.75),
+    })),
+  };
+}
+
+function _initTropical(w, h, isDark) {
+  const horizon = h * (isDark ? 0.60 : 0.63);
+  return {
+    waves: Array.from({ length: 6 }, (_, i) => ({
+      ph: _pi2(),
+      amp: 4 + i * 3.5,
+      freq: 0.0095 - i * 0.0009,
+      sp: 0.016 + i * 0.005,
+      y0: horizon + i * 10,
+      col: isDark
+        ? [`rgba(10,52,92,0.52)`,`rgba(7,40,76,0.53)`,`rgba(5,28,58,0.56)`,`rgba(3,20,46,0.57)`,`rgba(2,14,36,0.60)`,`rgba(2,10,28,0.65)`][i]
+        : [`rgba(30,165,148,0.50)`,`rgba(26,145,130,0.52)`,`rgba(22,125,112,0.54)`,`rgba(18,105,95,0.56)`,`rgba(14,85,78,0.60)`,`rgba(200,175,66,0.55)`][i],
+    })),
+    sparkles: Array.from({ length: isDark ? 30 : 20 }, () => ({
+      x: _rnd(0, w),
+      y: _rnd(horizon, h),
+      ph: _pi2(),
+      sp: _rnd(0.04, 0.12),
+      sz: _rnd(0.9, 2.6),
+    })),
+  };
+}
+
+// ── per-theme draw calls ──────────────────────────────────────────────────────
+function _drawCold(ctx, isDark, state, t, py, w, h) {
+  // ── sky gradient ──
+  const sky = ctx.createLinearGradient(0, 0, 0, h);
+  if (isDark) {
+    sky.addColorStop(0,    '#010818'); sky.addColorStop(0.18, '#020d1e');
+    sky.addColorStop(0.38, '#031430'); sky.addColorStop(0.58, '#04182e');
+    sky.addColorStop(0.78, '#030c1e'); sky.addColorStop(1,    '#010610');
+  } else {
+    sky.addColorStop(0,    '#4890c8'); sky.addColorStop(0.11, '#72b8e8');
+    sky.addColorStop(0.25, '#a4d4f5'); sky.addColorStop(0.42, '#ceeafc');
+    sky.addColorStop(0.58, '#eaf5fe'); sky.addColorStop(0.70, '#f8fcff');
+    sky.addColorStop(0.82, '#ffffff'); sky.addColorStop(1,    '#edf4fc');
+  }
+  ctx.fillStyle = sky; ctx.fillRect(0, 0, w, h);
+
+  if (isDark) {
+    // ── stars ──
+    for (const s of state.stars) {
+      const tw = 0.55 + 0.45 * Math.sin(t * 0.04 + s.tp);
+      ctx.beginPath();
+      ctx.arc(s.x, s.y + py * 0.3, s.r, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(255,255,255,${s.op * tw})`;
+      ctx.fill();
+    }
+    // ── aurora bands ──
+    const bands = [
+      { r:0, g:255, b:110, yf:0.20, ht:52, sp:0.009 },
+      { r:88, g:42, b:255, yf:0.30, ht:38, sp:0.007 },
+      { r:0, g:228, b:198, yf:0.42, ht:30, sp:0.006 },
+    ];
+    for (const a of bands) {
+      const phase = t * a.sp + a.yf * 8;
+      const yBase = h * a.yf + py * 0.5;
+      for (let pass = 0; pass < 2; pass++) {
+        const ht = a.ht * (pass === 0 ? 1 : 1.7);
+        const ag = ctx.createLinearGradient(0, yBase - ht, 0, yBase + ht);
+        const alpTop = pass === 0 ? 0.58 : 0.18;
+        ag.addColorStop(0,    `rgba(${a.r},${a.g},${a.b},0)`);
+        ag.addColorStop(0.38, `rgba(${a.r},${a.g},${a.b},${alpTop})`);
+        ag.addColorStop(0.62, `rgba(${a.r},${a.g},${a.b},${alpTop})`);
+        ag.addColorStop(1,    `rgba(${a.r},${a.g},${a.b},0)`);
+        ctx.fillStyle = ag;
+        ctx.beginPath();
+        ctx.moveTo(-20, yBase + ht + 10);
+        for (let x = -20; x <= w + 20; x += 4) {
+          const y = yBase + Math.sin(x * 0.007 + phase) * a.ht * 0.62
+                         + Math.sin(x * 0.019 + phase * 1.4) * a.ht * 0.22
+                         + Math.sin(x * 0.003 + phase * 0.6) * a.ht * 0.35;
+          ctx.lineTo(x, y);
+        }
+        ctx.lineTo(w + 20, yBase + ht + 10);
+        ctx.lineTo(-20, yBase + ht + 10);
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
+  } else {
+    // ── clouds ──
+    const clouds = [
+      { cx: w*0.15 + Math.sin(t*0.004)*14, cy: h*0.11 + py*0.4, r:44 },
+      { cx: w*0.53 + Math.sin(t*0.003+1)*18, cy: h*0.07 + py*0.4, r:58 },
+      { cx: w*0.83 + Math.sin(t*0.005+2)*11, cy: h*0.15 + py*0.4, r:36 },
+    ];
+    ctx.save(); ctx.globalAlpha = 0.48;
+    for (const c of clouds) {
+      for (const [ox, oy, rf] of [[0,0,1.5],[c.r*0.55,c.r*0.08,0.92],[-(c.r*0.48),c.r*0.12,0.82]]) {
+        const cg = ctx.createRadialGradient(c.cx+ox,c.cy+oy,0,c.cx+ox,c.cy+oy,c.r*rf);
+        cg.addColorStop(0,'rgba(255,255,255,0.95)');
+        cg.addColorStop(0.45,'rgba(248,252,255,0.6)');
+        cg.addColorStop(1,'rgba(255,255,255,0)');
+        ctx.fillStyle = cg;
+        ctx.beginPath(); ctx.arc(c.cx+ox,c.cy+oy,c.r*rf,0,Math.PI*2); ctx.fill();
+      }
+    }
+    ctx.restore();
+    // ── snow ground blend ──
+    const gnd = ctx.createLinearGradient(0, h*0.76, 0, h);
+    gnd.addColorStop(0,'rgba(255,255,255,0)');
+    gnd.addColorStop(0.22,'rgba(248,252,255,0.82)');
+    gnd.addColorStop(1,'#ffffff');
+    ctx.fillStyle = gnd; ctx.fillRect(0, 0, w, h);
+  }
+
+  // ── snowflakes ──
+  for (const f of state.flakes) {
+    f.y += f.vy;
+    f.x += Math.sin(t * 0.013 + f.dp) * f.drift * 0.55;
+    if (f.y > h + 8) { f.y = -8; f.x = Math.random() * w; }
+    if (f.x < -8) f.x = w + 4; if (f.x > w + 8) f.x = -4;
+    ctx.beginPath();
+    ctx.arc(f.x, f.y, f.r, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(255,255,255,${f.op})`;
+    ctx.fill();
+  }
+}
+
+function _drawWarm(ctx, isDark, state, t, py, w, h) {
+  // ── sky ──
+  const sky = ctx.createLinearGradient(0, 0, 0, h);
+  if (isDark) {
+    sky.addColorStop(0,'#1e0e04'); sky.addColorStop(0.18,'#280f04');
+    sky.addColorStop(0.40,'#1e0a02'); sky.addColorStop(0.58,'#140800');
+    sky.addColorStop(0.78,'#0a0500'); sky.addColorStop(1,'#060300');
+  } else {
+    sky.addColorStop(0,'#f0bc52'); sky.addColorStop(0.11,'#e88832');
+    sky.addColorStop(0.28,'#d04a12'); sky.addColorStop(0.46,'#a02606');
+    sky.addColorStop(0.64,'#681400'); sky.addColorStop(0.82,'#340900');
+    sky.addColorStop(1,'#1a0500');
+  }
+  ctx.fillStyle = sky; ctx.fillRect(0, 0, w, h);
+
+  // ── glow ──
+  const glowX = isDark ? w*0.38 : w*0.67;
+  const glowY = (isDark ? h*0.18 : h*0.05) + py*0.3;
+  const glowR = isDark ? w*0.48 : w*0.46;
+  const gcol  = isDark ? [208,78,12,0.32] : [255,218,85,0.58];
+  const glow = ctx.createRadialGradient(glowX, glowY, 0, glowX, glowY, glowR);
+  glow.addColorStop(0, `rgba(${gcol[0]},${gcol[1]},${gcol[2]},${gcol[3]})`);
+  glow.addColorStop(0.42, `rgba(${gcol[0]},${gcol[1]},${gcol[2]},${gcol[3]*0.3})`);
+  glow.addColorStop(1,   `rgba(${gcol[0]},${gcol[1]},${gcol[2]},0)`);
+  ctx.fillStyle = glow; ctx.fillRect(0, 0, w, h);
+
+  // ── falling leaves ──
+  for (const lf of state.leaves) {
+    lf.y += lf.vy;
+    lf.x += Math.sin(t * 0.011 + lf.dp) * lf.drift * 0.5;
+    lf.rot += lf.rs;
+    if (lf.y > h + 20) { lf.y = -20; lf.x = Math.random() * w; }
+    if (lf.x < -20) lf.x = w + 10; if (lf.x > w + 20) lf.x = -10;
+    ctx.save();
+    ctx.translate(lf.x, lf.y);
+    ctx.rotate(lf.rot);
+    ctx.globalAlpha = 0.72 + Math.sin(t*0.02 + lf.dp) * 0.16;
+    ctx.fillStyle = lf.col;
+    if (lf.type === 0) {
+      // oval leaf
+      ctx.beginPath();
+      ctx.ellipse(0, 0, lf.sz * 0.48, lf.sz, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = lf.col; ctx.lineWidth = 0.7;
+      ctx.beginPath(); ctx.moveTo(0, -lf.sz*0.85); ctx.lineTo(0, lf.sz*0.85); ctx.stroke();
+    } else {
+      // maple-ish star leaf
+      ctx.beginPath();
+      for (let i = 0; i < 5; i++) {
+        const a1 = (i / 5) * Math.PI * 2 - Math.PI / 2;
+        const a2 = a1 + Math.PI / 5;
+        ctx.lineTo(Math.cos(a1)*lf.sz, Math.sin(a1)*lf.sz);
+        ctx.lineTo(Math.cos(a2)*lf.sz*0.42, Math.sin(a2)*lf.sz*0.42);
+      }
+      ctx.closePath(); ctx.fill();
+    }
+    ctx.restore();
+  }
+}
+
+function _drawDuo(ctx, isDark, state, t, py, w, h) {
+  // ── jungle gradient ──
+  const sky = ctx.createLinearGradient(0, 0, 0, h);
+  if (isDark) {
+    sky.addColorStop(0,'#020f02'); sky.addColorStop(0.18,'#031902');
+    sky.addColorStop(0.40,'#042204'); sky.addColorStop(0.58,'#031802');
+    sky.addColorStop(0.78,'#020e02'); sky.addColorStop(1,'#010901');
+  } else {
+    sky.addColorStop(0,'#8edc62'); sky.addColorStop(0.11,'#52c42a');
+    sky.addColorStop(0.28,'#2a940e'); sky.addColorStop(0.46,'#146b0a');
+    sky.addColorStop(0.64,'#094c0c'); sky.addColorStop(0.82,'#042a0a');
+    sky.addColorStop(1,'#031508');
+  }
+  ctx.fillStyle = sky; ctx.fillRect(0, 0, w, h);
+
+  if (!isDark) {
+    // ── god rays ──
+    ctx.save(); ctx.globalCompositeOperation = 'lighter';
+    for (const ray of state.rays) {
+      const alp = ray.alp * (0.75 + 0.25 * Math.sin(t * ray.sp + ray.ph));
+      const rg = ctx.createLinearGradient(ray.x, 0, ray.x + ray.wid * 0.28, h * 0.72);
+      rg.addColorStop(0, `rgba(195,255,145,${alp})`);
+      rg.addColorStop(0.55, `rgba(145,255,95,${alp*0.45})`);
+      rg.addColorStop(1, 'rgba(80,200,40,0)');
+      ctx.fillStyle = rg;
+      ctx.beginPath();
+      ctx.moveTo(ray.x - ray.wid*0.28, 0);
+      ctx.lineTo(ray.x + ray.wid*0.28, 0);
+      ctx.lineTo(ray.x + ray.wid*1.55, h*0.72);
+      ctx.lineTo(ray.x - ray.wid*0.75, h*0.72);
+      ctx.closePath(); ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  // ── floating motes ──
+  for (const m of state.motes) {
+    m.y -= m.vy;
+    m.x += Math.sin(t * 0.016 + m.dp) * m.drift;
+    if (m.y < -5) { m.y = h + 5; m.x = Math.random() * w; }
+    const alp = m.alp * (0.45 + 0.55 * Math.abs(Math.sin(t * 0.025 + m.dp)));
+    ctx.beginPath(); ctx.arc(m.x, m.y, m.r, 0, Math.PI * 2);
+    ctx.fillStyle = isDark
+      ? `rgba(90,215,75,${alp * 0.58})`
+      : `rgba(215,255,175,${alp})`;
+    ctx.fill();
+  }
+}
+
+function _drawTropical(ctx, isDark, state, t, py, w, h) {
+  // ── sky ──
+  const sky = ctx.createLinearGradient(0, 0, 0, h);
+  if (isDark) {
+    sky.addColorStop(0,'#01060e'); sky.addColorStop(0.14,'#020c18');
+    sky.addColorStop(0.28,'#030e1c'); sky.addColorStop(0.46,'#04152a');
+    sky.addColorStop(0.62,'#050e24'); sky.addColorStop(0.80,'#030a1a');
+    sky.addColorStop(1,'#020810');
+  } else {
+    sky.addColorStop(0,'#34a2cc'); sky.addColorStop(0.13,'#52c8de');
+    sky.addColorStop(0.27,'#42bbb4'); sky.addColorStop(0.44,'#26a292');
+    sky.addColorStop(0.62,'#1a9485'); sky.addColorStop(0.75,'#c0b050');
+    sky.addColorStop(0.88,'#ac9830'); sky.addColorStop(1,'#9c8420');
+  }
+  ctx.fillStyle = sky; ctx.fillRect(0, 0, w, h);
+
+  if (!isDark) {
+    // sun
+    const sx = w*0.82, sy = h*0.09 + py*0.28;
+    const sg = ctx.createRadialGradient(sx,sy,0,sx,sy,w*0.38);
+    sg.addColorStop(0,'rgba(255,242,100,0.92)');
+    sg.addColorStop(0.12,'rgba(255,230,75,0.72)');
+    sg.addColorStop(0.4,'rgba(255,195,45,0.28)');
+    sg.addColorStop(0.7,'rgba(255,170,20,0.08)');
+    sg.addColorStop(1,'rgba(255,150,0,0)');
+    ctx.fillStyle = sg; ctx.fillRect(0, 0, w, h);
+  } else {
+    // moon + reflection streak
+    const mx = w*0.74, my = h*0.09 + py*0.28;
+    const mg = ctx.createRadialGradient(mx,my,0,mx,my,55);
+    mg.addColorStop(0,'rgba(198,222,255,0.88)');
+    mg.addColorStop(0.18,'rgba(175,208,255,0.38)');
+    mg.addColorStop(0.55,'rgba(148,188,240,0.1)');
+    mg.addColorStop(1,'rgba(100,148,220,0)');
+    ctx.fillStyle = mg; ctx.fillRect(0, 0, w, h);
+    // moon reflection on water
+    const refG = ctx.createLinearGradient(0, h*0.56, 0, h);
+    refG.addColorStop(0,'rgba(168,210,255,0)');
+    refG.addColorStop(0.35,'rgba(168,210,255,0.12)');
+    refG.addColorStop(1,'rgba(168,210,255,0)');
+    const refX = mx;
+    ctx.save();
+    ctx.fillStyle = refG;
+    ctx.fillRect(refX - 18, 0, 36, h);
+    ctx.restore();
+  }
+
+  // ── ocean waves ──
+  for (const wv of state.waves) {
+    wv.ph += wv.sp;
+    const baseY = wv.y0 + py * 0.28;
+    ctx.beginPath();
+    ctx.moveTo(-10, h + 10);
+    ctx.lineTo(-10, baseY);
+    for (let x = -10; x <= w + 10; x += 5) {
+      const y = baseY
+        + Math.sin(x * wv.freq + wv.ph) * wv.amp
+        + Math.sin(x * wv.freq * 2.3 + wv.ph * 0.85) * wv.amp * 0.38;
+      ctx.lineTo(x, y);
+    }
+    ctx.lineTo(w + 10, h + 10);
+    ctx.closePath();
+    ctx.fillStyle = wv.col;
+    ctx.fill();
+  }
+
+  // ── water sparkles ──
+  for (const sp of state.sparkles) {
+    sp.ph += sp.sp;
+    const alp = Math.max(0, Math.sin(sp.ph)) ** 2 * 0.88;
+    if (alp < 0.02) continue;
+    ctx.beginPath();
+    ctx.arc(sp.x, sp.y + py * 0.18, sp.sz * alp, 0, Math.PI * 2);
+    ctx.fillStyle = isDark
+      ? `rgba(175,215,255,${alp * 0.72})`
+      : `rgba(255,246,175,${alp * 0.88})`;
+    ctx.fill();
+  }
+}
+
+// ── main entry points ─────────────────────────────────────────────────────────
+function applyDynamicBg(palette, isDark) {
+  stopDynamicBg();
+
+  // html background-color = edge colour. This covers:
+  //   - iOS rubber-band overscroll above/below page
+  //   - Pinch-zoom-out revealing area outside the page
+  //   - Any gap between canvas and viewport edge
+  const edgeColors = {
+    cold:  { day:'#4890c8', night:'#010818' },
+    warm:  { day:'#e07830', night:'#120800' },
+    duo:   { day:'#3e9e20', night:'#010d01' },
+    tropical: { day:'#34a2cc', night:'#020810' },
+  };
+  const edge = (edgeColors[palette] || edgeColors.tropical)[isDark ? 'night' : 'day'];
+  document.documentElement.style.background = edge;
+  document.body.style.background = 'transparent';
+
+  // Canvas: position fixed, always covers the viewport exactly
+  const canvas = document.createElement('canvas');
+  canvas.id = 'mc-dyn-bg';
+  canvas.style.cssText = 'position:fixed;inset:0;width:100%;height:100%;z-index:0;pointer-events:none;display:block';
+
+  const resize = () => { canvas.width = window.innerWidth; canvas.height = window.innerHeight; };
+  resize();
+  document.body.insertBefore(canvas, document.body.firstChild);
+
+  const ctx = canvas.getContext('2d');
+  let t = 0, animId = null, lastTs = 0, scrollY = 0;
+  const w = () => canvas.width, h = () => canvas.height;
+
+  // Init particle state using current canvas size
+  let state;
+  const buildState = () => {
+    if (palette === 'cold')     return _initCold(w(), h(), isDark);
+    if (palette === 'warm')     return _initWarm(w(), h());
+    if (palette === 'duo')      return _initDuo(w(), h());
+    return _initTropical(w(), h(), isDark);
+  };
+  state = buildState();
+
+  const draw = (now) => {
+    animId = requestAnimationFrame(draw);
+    if (now - lastTs < 33) return; // ~30 fps cap
+    lastTs = now;
+    t++;
+    const cw = w(), ch = h();
+    ctx.clearRect(0, 0, cw, ch);
+    const py = -scrollY * 0.07; // parallax offset
+    if (palette === 'cold')     _drawCold(ctx, isDark, state, t, py, cw, ch);
+    else if (palette === 'warm') _drawWarm(ctx, isDark, state, t, py, cw, ch);
+    else if (palette === 'duo')  _drawDuo(ctx, isDark, state, t, py, cw, ch);
+    else                         _drawTropical(ctx, isDark, state, t, py, cw, ch);
+  };
+  animId = requestAnimationFrame(draw);
+
+  const onScroll = () => { scrollY = window.scrollY; };
+  const onResize = () => { resize(); state = buildState(); };
+  window.addEventListener('scroll', onScroll, { passive: true });
+  window.addEventListener('resize', onResize);
+
+  _dynBgCleanup = () => {
+    if (animId) cancelAnimationFrame(animId);
+    canvas.remove();
+    window.removeEventListener('scroll', onScroll);
+    window.removeEventListener('resize', onResize);
+    document.documentElement.style.background = '';
+    document.body.style.background = '';
+  };
 }
 
 // Parse the stored theme, migrating the older single-string format.
