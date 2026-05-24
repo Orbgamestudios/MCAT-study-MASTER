@@ -364,19 +364,10 @@
     --warning-text-strong: #f2d68e;
   }
 
-  /* ── Tropical animated gradient borders ─────────────────────────────── */
-  @keyframes tropicalBorder {
-    0%   { box-shadow: 0 0 0 1.5px #06b6d4; }
-    20%  { box-shadow: 0 0 0 1.5px #22d3ee; }
-    40%  { box-shadow: 0 0 0 1.5px #fb7185; }
-    60%  { box-shadow: 0 0 0 1.5px #f97316; }
-    80%  { box-shadow: 0 0 0 1.5px #a78bfa; }
-    100% { box-shadow: 0 0 0 1.5px #06b6d4; }
-  }
+  /* ── Tropical solid teal borders ──────────────────────────────────── */
   :root[data-theme="tropical"]    .rounded-2xl,
   :root[data-theme="darktropical"] .rounded-2xl {
-    animation: tropicalBorder 4s linear infinite;
-    border-color: transparent !important;
+    border-color: var(--accent-border) !important;
   }
 
   /* ── Tropical island background ────────────────────────────────────── */
@@ -417,6 +408,6 @@
 </head>
 <body>
 <div id="root"></div>
-<script type="text/babel" data-presets="react" src="app.js?v=55"></script>
+<script type="text/babel" data-presets="react" src="app.js?v=56"></script>
 </body>
 </html>

@@ -1492,9 +1492,15 @@ function AppProvider({ children }) {
     }
   }, [palette, mode]);
 
-  // Tropical island background: toggle a body class; CSS handles day/night via data-theme.
+  // Tropical island background: toggle body class + make --bg transparent so the
+  // gradient shows through regardless of which colour palette is active.
   useEffect(() => {
     document.body.classList.toggle('tropical-bg', tropicalBg);
+    if (tropicalBg) {
+      document.documentElement.style.setProperty('--bg', 'transparent');
+    } else {
+      document.documentElement.style.removeProperty('--bg');
+    }
   }, [tropicalBg]);
 
   // One-time cleanup: drop the temporary drag-position key now that the bird
@@ -4945,93 +4951,157 @@ function StatBar({ correct, total, label }) {
   );
 }
 
-// ---------- predictive MCAT score (chapter-coverage model) ----------
-// Score scale: MCAT section is 118–132 (centre 125), linear map score = 118 + 14·p.
-const SECTION_MIN = 118, SECTION_MAX = 132, SECTION_RANGE = SECTION_MAX - SECTION_MIN;
-const EXPECTED_CHAPTERS = 12; // assumed chapters per subject
+// ---------- predictive MCAT score (accuracy-based, Bayesian) ----------
+// Uses the last ≤200 quiz attempts per subject, shrunk toward a 55% prior.
+// Subject names match exactly what the app stores in attempt.subject.
+// Weights are renormalised within each section to only use subjects the user
+// has attempted — so Organic Chemistry alone fully drives C/P rather than
+// looking like 15% of a section that's otherwise empty.
+const SECTION_MIN = 118, SECTION_MAX = 132, SECTION_RANGE = 14;
+const MCAT_PRIOR_MEAN = 0.55;
+const MCAT_PRIOR_STRENGTH = 8;
 
-// AAMC weights per section for subjects present in the app.
-// Each set is normalised on-the-fly against only the subjects the user has chapters of.
-const COVERAGE_WEIGHTS = {
-  cp:   { 'Organic Chemistry': 0.15, 'General Chemistry': 0.30, 'Physics and Math': 0.25, 'Physics & Math': 0.25, Biology: 0.05, Biochemistry: 0.25 },
-  cars: { CARS: 1.0 },
-  bb:   { Biology: 0.65, Biochemistry: 0.25, 'Organic Chemistry': 0.05, 'General Chemistry': 0.05 },
-  ps:   { 'Behavioral Science': 0.95, Biology: 0.05, Psychology: 0.65, Sociology: 0.30 },
-};
-const SECTION_DEFS = [
-  { key: 'cp', label: 'Chem/Phys' },
-  { key: 'cars', label: 'CARS' },
-  { key: 'bb', label: 'Bio/Biochem' },
-  { key: 'ps', label: 'Psych/Soc' },
+const MCAT_SECTIONS = [
+  {
+    key: 'cp', label: 'Chem/Phys',
+    weights: {
+      'Organic Chemistry': 0.15,
+      'General Chemistry': 0.30,
+      'Physics and Math': 0.25,
+      Biology: 0.05,
+      Biochemistry: 0.25,
+    },
+  },
+  { key: 'cars', label: 'CARS', weights: { CARS: 1.0 } },
+  {
+    key: 'bb', label: 'Bio/Biochem',
+    weights: {
+      Biology: 0.65,
+      Biochemistry: 0.25,
+      'Organic Chemistry': 0.05,
+      'General Chemistry': 0.05,
+    },
+  },
+  {
+    key: 'ps', label: 'Psych/Soc',
+    weights: {
+      'Behavioral Science': 0.95,
+      Biology: 0.05,
+      Psychology: 0.65,
+      Sociology: 0.30,
+    },
+  },
 ];
 
-function predictMcatFromCoverage(files) {
-  // Count chapters per subject across all local files.
-  const bySubject = {};
-  for (const f of files) {
-    if (!f.subject) continue;
-    bySubject[f.subject] = (bySubject[f.subject] || 0) + 1;
+// Normalise subject name variants (e.g. "Physics & Math" → "Physics and Math").
+function normalizeSubject(s) {
+  if (s === 'Physics & Math') return 'Physics and Math';
+  return s;
+}
+
+function subjectPosterior(list) {
+  if (!list.length) return null;
+  const last = list.slice(0, 200);
+  const correct = last.reduce((s, a) => s + (a.correct ? 1 : 0), 0);
+  const n = last.length;
+  const a = correct + MCAT_PRIOR_MEAN * MCAT_PRIOR_STRENGTH;
+  const b = (n - correct) + (1 - MCAT_PRIOR_MEAN) * MCAT_PRIOR_STRENGTH;
+  const mean = a / (a + b);
+  const variance = (a * b) / (((a + b) ** 2) * (a + b + 1));
+  return { n, accuracy: correct / n, mean, variance };
+}
+
+function predictMcatScores(attempts) {
+  const sorted = attempts.slice().sort((a, b) => (b.ts || 0) - (a.ts || 0));
+  const bySubject = new Map();
+  for (const a of sorted) {
+    if (!a.subject) continue;
+    const subj = normalizeSubject(a.subject);
+    if (!bySubject.has(subj)) bySubject.set(subj, []);
+    bySubject.get(subj).push(a);
+  }
+  const posteriors = new Map();
+  for (const [subj, list] of bySubject) {
+    const p = subjectPosterior(list);
+    if (p) posteriors.set(subj, p);
   }
 
-  const sections = SECTION_DEFS.map(({ key, label }) => {
-    const weights = COVERAGE_WEIGHTS[key];
-    let numCoverage = 0;
-    let denCoverage = 0;
-    let totalChaps = 0;
-    for (const [subject, weight] of Object.entries(weights)) {
-      const count = bySubject[subject] || 0;
-      totalChaps += count;
-      if (count > 0) {
-        // Normalise only against subjects the user actually has — so a
-        // complete Behavioral Science set gives 132 in P/S even without Biology.
-        numCoverage += weight * Math.min(1, count / EXPECTED_CHAPTERS);
-        denCoverage += weight;
-      }
+  const sections = MCAT_SECTIONS.map((sec) => {
+    const present = Object.entries(sec.weights)
+      .map(([subj, weight]) => {
+        const post = posteriors.get(subj);
+        return post ? { subj, weight, post } : null;
+      })
+      .filter(Boolean);
+    if (!present.length) return { ...sec, completed: false };
+
+    // Renormalise weights to only the subjects with data.
+    const wSum = present.reduce((s, x) => s + x.weight, 0);
+    let mean = 0, variance = 0;
+    for (const { weight, post } of present) {
+      const w = weight / wSum;
+      mean += w * post.mean;
+      variance += w * w * post.variance;
     }
-    if (totalChaps === 0) return { key, label, score: null, coverage: 0, chapters: 0 };
-    const coverage = denCoverage > 0 ? numCoverage / denCoverage : 0;
+    const score = SECTION_MIN + SECTION_RANGE * mean;
+    const stdev = SECTION_RANGE * Math.sqrt(variance);
     return {
-      key, label,
-      score: Math.max(SECTION_MIN, Math.min(SECTION_MAX, SECTION_MIN + SECTION_RANGE * coverage)),
-      coverage,
-      chapters: totalChaps,
+      ...sec,
+      completed: true,
+      n: present.reduce((s, x) => s + x.post.n, 0),
+      subjects: present.map(({ subj, weight, post }) => ({
+        subject: subj,
+        weight: weight / wSum,
+        rawWeight: weight,
+        n: post.n,
+        accuracy: post.accuracy,
+      })),
+      score: Math.max(SECTION_MIN, Math.min(SECTION_MAX, score)),
+      stdev,
     };
   });
 
-  const done = sections.filter((s) => s.score !== null);
-  if (!done.length) return null;
+  const done = sections.filter((s) => s.completed);
+  if (done.length > 0 && done.length < sections.length) {
+    const meanScore = done.reduce((s, x) => s + x.score, 0) / done.length;
+    const meanVar = done.reduce((s, x) => s + x.stdev ** 2, 0) / done.length;
+    const imputedStdev = Math.max(Math.sqrt(meanVar) * 2, 2.5);
+    for (const s of sections) {
+      if (s.completed) continue;
+      s.imputed = true; s.score = meanScore; s.stdev = imputedStdev;
+    }
+  }
 
-  // Impute missing sections as the mean of completed ones so the total is always valid.
-  const meanScore = done.reduce((s, x) => s + x.score, 0) / done.length;
-  const allSections = sections.map((s) => s.score !== null ? s : { ...s, score: meanScore, imputed: true });
-  return {
-    sections: allSections,
-    total: {
-      score: allSections.reduce((acc, s) => acc + s.score, 0),
-      sectionsCompleted: done.length,
-      allFour: done.length === 4,
-    },
-  };
+  const contributing = sections.filter((s) => s.completed || s.imputed);
+  const total = done.length ? {
+    score: contributing.reduce((acc, x) => acc + x.score, 0),
+    stdev: Math.sqrt(contributing.reduce((acc, x) => acc + x.stdev ** 2, 0)),
+    sectionsCompleted: done.length,
+    allFour: done.length === MCAT_SECTIONS.length,
+  } : null;
+  return { sections, total };
 }
 
 function McatPredictionCard() {
-  const { files } = useApp();
-  const pred = useMemo(() => predictMcatFromCoverage(files), [files]);
-  if (!pred) return null;
-  const { sections, total } = pred;
+  const { attempts } = useApp();
+  const { sections, total } = useMemo(() => predictMcatScores(attempts), [attempts]);
   const [expanded, setExpanded] = useState(false);
-  const pct = (v) => Math.round(v * 100);
+  const fmt = (n) => n.toFixed(1).replace(/\.0$/, '');
+  if (!sections.some((s) => s.completed)) return null;
   return (
     <div className="bg-[var(--bg-card)] border border-[var(--accent-border)] rounded-2xl p-5 sm:p-6">
       <div className="flex items-baseline justify-between gap-3 mb-3">
         <div>
           <div className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Predicted MCAT</div>
           <div className="text-4xl sm:text-5xl font-bold text-[var(--text-strong)] mt-1">
-            {Math.round(total.score)}
+            {total ? Math.round(total.score) : '—'}
+            {total && (
+              <span className="text-base sm:text-lg font-medium text-[var(--text-muted)] ml-2">± {fmt(total.stdev)}</span>
+            )}
           </div>
-          {!total.allFour && (
+          {total && !total.allFour && (
             <div className="text-xs text-[var(--text-faint)] mt-1">
-              {total.sectionsCompleted}/4 sections covered · others estimated from your average
+              {total.sectionsCompleted}/4 sections attempted · others estimated from your average
             </div>
           )}
         </div>
@@ -5048,20 +5118,26 @@ function McatPredictionCard() {
             }
           >
             <div className="text-[10px] uppercase tracking-wide text-[var(--text-muted)]">{s.label}</div>
-            {s.score !== null && !s.imputed ? (
+            {s.completed ? (
               <>
-                <div className="text-xl font-bold text-[var(--text-strong)] mt-0.5">{Math.round(s.score)}</div>
-                <div className="text-[10px] text-[var(--text-faint)] mt-0.5">{pct(s.coverage)}% · {s.chapters} ch</div>
+                <div className="text-xl font-bold text-[var(--text-strong)] mt-0.5">
+                  {Math.round(s.score)}
+                  <span className="text-xs font-medium text-[var(--text-muted)] ml-1">± {fmt(s.stdev)}</span>
+                </div>
+                <div className="text-[10px] text-[var(--text-faint)] mt-0.5">n={s.n}</div>
               </>
             ) : s.imputed ? (
               <>
-                <div className="text-xl font-bold text-[var(--text-muted)] mt-0.5 italic">{Math.round(s.score)}</div>
-                <div className="text-[10px] text-[var(--text-faint)] mt-0.5">est. (no chapters)</div>
+                <div className="text-xl font-bold text-[var(--text-muted)] mt-0.5 italic">
+                  {Math.round(s.score)}
+                  <span className="text-xs font-medium text-[var(--text-fainter)] ml-1">± {fmt(s.stdev)}</span>
+                </div>
+                <div className="text-[10px] text-[var(--text-faint)] mt-0.5">est.</div>
               </>
             ) : (
               <>
                 <div className="text-xl font-bold text-[var(--text-fainter)] mt-0.5">—</div>
-                <div className="text-[10px] text-[var(--text-faint)] mt-0.5">no chapters yet</div>
+                <div className="text-[10px] text-[var(--text-faint)] mt-0.5">no attempts</div>
               </>
             )}
           </div>
@@ -5069,22 +5145,30 @@ function McatPredictionCard() {
       </div>
       {expanded && (
         <div className="mt-3 space-y-2 text-[11px]">
-          {sections.filter((s) => s.score !== null && !s.imputed).map((s) => (
+          {sections.filter((s) => s.completed).map((s) => (
             <div key={s.key} className="bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg p-2.5">
-              <div className="font-semibold text-[var(--text)] mb-1">{s.label} — {Math.round(s.score)} ({pct(s.coverage)}% coverage, {s.chapters} chapters)</div>
+              <div className="font-semibold text-[var(--text)] mb-1">{s.label} — {Math.round(s.score)} ± {fmt(s.stdev)}</div>
+              <div className="space-y-0.5">
+                {s.subjects.map((sub) => (
+                  <div key={sub.subject} className="flex items-center justify-between gap-2 text-[var(--text-muted)]">
+                    <span>{sub.subject} <span className="text-[var(--text-fainter)]">({Math.round(sub.weight * 100)}% of section)</span></span>
+                    <span className="font-mono text-[var(--text-faint)]">n={sub.n} · {Math.round(sub.accuracy * 100)}%</span>
+                  </div>
+                ))}
+              </div>
             </div>
           ))}
         </div>
       )}
       <div className="flex items-center justify-between gap-3 mt-3">
         <div className="text-[11px] text-[var(--text-faint)] leading-snug flex-1">
-          Based on chapters downloaded. Coverage is normalised to available subjects — 12 chapters per subject = 132 in that section. Download more chapters from the Bank tab to raise your score.
+          Per-subject accuracy from your last 200 attempts, weighted into MCAT sections by AAMC content (renormalised to subjects you've attempted). Shrunk toward a 55% prior — treat as a floor, not a ceiling.
         </div>
         <button
           onClick={() => setExpanded((x) => !x)}
           className="shrink-0 text-xs px-2.5 py-1 border border-[var(--border)] rounded hover:bg-[var(--bg-hover)]"
         >
-          {expanded ? 'Hide' : 'Details'}
+          {expanded ? 'Hide breakdown' : 'Breakdown'}
         </button>
       </div>
     </div>
