@@ -1,4 +1,4 @@
-const { useState, useEffect, useCallback, useMemo, useRef, createContext, useContext } = React;
+const { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef, createContext, useContext } = React;
 
 // ---------- config ----------
 const MODEL = 'gemini-2.5-flash';
@@ -7601,9 +7601,18 @@ function Shell() {
 
   const fullyProcessed = files.filter((f) => extractions[f.file_id] && questions[f.file_id]?.mc && questions[f.file_id]?.short).length;
 
+  const headerRef = useRef(null);
+  const [headerH, setHeaderH] = useState(56);
+  useLayoutEffect(() => {
+    const measure = () => { if (headerRef.current) setHeaderH(headerRef.current.offsetHeight); };
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, []);
+
   return (
     <div className="min-h-full flex flex-col">
-      <header className="sticky top-0 z-40 border-b border-[var(--border-soft)] bg-[var(--bg)] px-3 sm:px-5 py-2.5 sm:py-3 flex flex-wrap items-center justify-between gap-y-2 gap-x-3">
+      <header ref={headerRef} className="fixed top-0 inset-x-0 z-40 border-b border-[var(--border-soft)] bg-[var(--bg)] px-3 sm:px-5 py-2.5 sm:py-3 flex flex-wrap items-center justify-between gap-y-2 gap-x-3">
         <div className="flex items-center gap-2 sm:gap-3 order-1">
           <div className="w-7 h-7 rounded bg-gradient-to-br from-[var(--accent)] to-[var(--accent-2)]" />
           <div className="font-semibold text-sm sm:text-base">MCAT Study</div>
@@ -7660,6 +7669,8 @@ function Shell() {
           </button>
         </div>
       </header>
+      {/* Spacer pushes content below the fixed header */}
+      <div style={{ height: headerH, flexShrink: 0 }} />
 
       <main className="flex-1 p-3 sm:p-6">
         <div className="max-w-3xl mx-auto space-y-4 sm:space-y-5">
