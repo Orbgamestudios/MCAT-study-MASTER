@@ -49,6 +49,55 @@ function dataThemeFor(palette, mode) {
   if (palette === 'tropical') return dark ? 'darktropical' : 'tropical';
   return dark ? 'dark' : 'light'; // cold
 }
+// ---------- dynamic background gradients ----------
+// Each palette has a day and night CSS gradient string.
+// Applied to document.documentElement when the "Dynamic background" toggle is on.
+const BG_COLD_DAY = [
+  'radial-gradient(ellipse 180% 55% at 50% 0%, rgba(210,235,255,0.7) 0%, transparent 55%)',
+  'linear-gradient(to bottom,#ddeeff 0%,#c8e4f8 18%,#e4f4ff 45%,#f5fbff 68%,#ffffff 85%,#eaf4ff 100%)',
+].join(',');
+const BG_COLD_NIGHT = [
+  'radial-gradient(ellipse 140% 40% at 15% 28%, rgba(40,255,140,0.22) 0%, transparent 58%)',
+  'radial-gradient(ellipse 90% 32% at 75% 18%, rgba(110,55,255,0.18) 0%, transparent 52%)',
+  'radial-gradient(ellipse 70% 28% at 45% 48%, rgba(0,210,210,0.14) 0%, transparent 48%)',
+  'linear-gradient(to bottom,#010818 0%,#020e22 20%,#041530 45%,#030d20 70%,#020810 100%)',
+].join(',');
+const BG_WARM_DAY = [
+  'radial-gradient(ellipse 110% 52% at 50% 0%, rgba(255,185,80,0.45) 0%, transparent 58%)',
+  'radial-gradient(ellipse 85% 42% at 18% 62%, rgba(190,70,20,0.13) 0%, transparent 52%)',
+  'linear-gradient(to bottom,#ffe8b0 0%,#ffd070 15%,#f09a38 35%,#c0601a 55%,#7a3008 78%,#4a1a04 100%)',
+].join(',');
+const BG_WARM_NIGHT = [
+  'radial-gradient(ellipse 80% 32% at 28% 18%, rgba(170,70,15,0.22) 0%, transparent 52%)',
+  'linear-gradient(to bottom,#0d0800 0%,#1a0e04 20%,#250f04 40%,#1a0a02 65%,#100600 100%)',
+].join(',');
+const BG_DUO_DAY = [
+  'radial-gradient(ellipse 130% 52% at 50% 0%, rgba(160,255,160,0.48) 0%, transparent 52%)',
+  'radial-gradient(ellipse 75% 42% at 85% 72%, rgba(30,150,50,0.18) 0%, transparent 48%)',
+  'linear-gradient(to bottom,#c0f0a0 0%,#88d860 18%,#48b038 40%,#187828 60%,#0a5518 80%,#063510 100%)',
+].join(',');
+const BG_DUO_NIGHT = [
+  'radial-gradient(ellipse 80% 40% at 50% 0%, rgba(18,90,18,0.28) 0%, transparent 58%)',
+  'linear-gradient(to bottom,#010d01 0%,#021602 20%,#031e03 40%,#021403 65%,#010c01 100%)',
+].join(',');
+const BG_TROPICAL_DAY = [
+  'radial-gradient(ellipse 320px 180px at 82% 12%, rgba(255,230,100,.35) 0%, transparent 65%)',
+  'radial-gradient(ellipse 100% 40% at 50% 100%, rgba(194,154,80,.25) 0%, transparent 70%)',
+  'linear-gradient(to bottom,#7ec8e3 0%,#aadff0 18%,#5ecfbe 42%,#38b2a0 58%,#e8d08a 76%,#d4b86a 100%)',
+].join(',');
+const BG_TROPICAL_NIGHT = [
+  'radial-gradient(ellipse 180px 120px at 78% 10%, rgba(200,230,255,.18) 0%, transparent 60%)',
+  'radial-gradient(ellipse 60% 30% at 50% 100%, rgba(5,25,50,.6) 0%, transparent 80%)',
+  'linear-gradient(to bottom,#030b1a 0%,#051628 18%,#062840 42%,#093750 58%,#0b2338 76%,#060e1c 100%)',
+].join(',');
+
+function getDynamicBg(palette, isDark) {
+  if (palette === 'cold')     return isDark ? BG_COLD_NIGHT    : BG_COLD_DAY;
+  if (palette === 'warm')     return isDark ? BG_WARM_NIGHT    : BG_WARM_DAY;
+  if (palette === 'duo')      return isDark ? BG_DUO_NIGHT     : BG_DUO_DAY;
+  return isDark ? BG_TROPICAL_NIGHT : BG_TROPICAL_DAY; // tropical
+}
+
 // Parse the stored theme, migrating the older single-string format.
 function parseStoredTheme() {
   const raw = storage.get(KEYS.theme, null);
@@ -1492,16 +1541,22 @@ function AppProvider({ children }) {
     }
   }, [palette, mode]);
 
-  // Tropical background: Shell's outermost div owns the gradient (see Shell).
-  // We only need to make --bg transparent so the header / cards don't paint
-  // an opaque slab over it.
+  // Dynamic background: paint the gradient on the <html> element and make
+  // <body> transparent so the gradient is always the bottom-most layer.
+  // Cards are semi-transparent (--bg-card) so the gradient shows through them.
+  // The header keeps its solid --bg colour so it stays readable.
   useEffect(() => {
     if (tropicalBg) {
-      document.documentElement.style.setProperty('--bg', 'transparent');
+      const isDark = dataThemeFor(palette, mode).startsWith('dark');
+      document.documentElement.style.background = getDynamicBg(palette, isDark);
+      document.documentElement.style.backgroundAttachment = 'fixed';
+      document.body.style.background = 'transparent';
     } else {
-      document.documentElement.style.removeProperty('--bg');
+      document.documentElement.style.background = '';
+      document.documentElement.style.backgroundAttachment = '';
+      document.body.style.background = '';
     }
-  }, [tropicalBg]);
+  }, [tropicalBg, palette, mode]);
 
   // One-time cleanup: drop the temporary drag-position key now that the bird
   // is anchored to the speech bubble's bottom.
@@ -5379,6 +5434,20 @@ function SettingsPanel({ onClose }) {
             </button>
           ))}
         </div>
+        <div className="mt-3">
+          <label className="flex items-center justify-between gap-3 bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg px-3 py-2.5 cursor-pointer">
+            <div className="text-sm min-w-0">
+              <div className="text-[var(--text)]">
+                {palette === 'cold' ? '❄️' : palette === 'warm' ? '🍂' : palette === 'duo' ? '🌿' : '🌴'} Dynamic background
+              </div>
+              <div className="text-[11px] text-[var(--text-faint)] mt-0.5">
+                {palette === 'cold' ? 'Winter snow & aurora background.' : palette === 'warm' ? 'Fall trees background.' : palette === 'duo' ? 'Jungle background.' : 'Tropical beach background.'}{' '}
+                Follows your light/dark mode.
+              </div>
+            </div>
+            <input type="checkbox" checked={tropicalBg} onChange={(e) => setTropicalBg(e.target.checked)} className="w-4 h-4 shrink-0" />
+          </label>
+        </div>
       </div>
 
       {session && (
@@ -5511,21 +5580,6 @@ function SettingsPanel({ onClose }) {
         </div>
       )}
 
-      <div>
-        <div className="text-xs uppercase tracking-wide text-[var(--text-muted)] mb-2">Background</div>
-        <label className="flex items-center justify-between gap-3 bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg px-3 py-2.5 cursor-pointer">
-          <div className="text-sm min-w-0">
-            <div className="text-[var(--text)]">🌴 Tropical island background</div>
-            <div className="text-[11px] text-[var(--text-faint)] mt-0.5">Sky-to-ocean gradient background. Switches between day and night with your light/dark mode.</div>
-          </div>
-          <input
-            type="checkbox"
-            checked={tropicalBg}
-            onChange={(e) => setTropicalBg(e.target.checked)}
-            className="w-4 h-4 shrink-0"
-          />
-        </label>
-      </div>
     </div>
   );
 }
@@ -7056,19 +7110,8 @@ function ServerStatsView() {
   );
 }
 
-const TROPICAL_DAY = [
-  'radial-gradient(ellipse 320px 180px at 82% 12%, rgba(255,230,100,.35) 0%, transparent 65%)',
-  'radial-gradient(ellipse 100% 40% at 50% 100%, rgba(194,154,80,.25) 0%, transparent 70%)',
-  'linear-gradient(to bottom,#7ec8e3 0%,#aadff0 18%,#5ecfbe 42%,#38b2a0 58%,#e8d08a 76%,#d4b86a 100%)',
-].join(',');
-const TROPICAL_NIGHT = [
-  'radial-gradient(ellipse 180px 120px at 78% 10%, rgba(200,230,255,.18) 0%, transparent 60%)',
-  'radial-gradient(ellipse 60% 30% at 50% 100%, rgba(5,25,50,.6) 0%, transparent 80%)',
-  'linear-gradient(to bottom,#030b1a 0%,#051628 18%,#062840 42%,#093750 58%,#0b2338 76%,#060e1c 100%)',
-].join(',');
-
 function Shell() {
-  const { apiKey, setApiKey, attempts, readOnly, files, extractions, questions, session, setSession, pendingSync, syncBusy, api, tropicalBg, palette, mode } = useApp();
+  const { apiKey, setApiKey, attempts, readOnly, files, extractions, questions, session, setSession, pendingSync, syncBusy, api, palette, mode } = useApp();
   const [tab, setTab] = useState('home');
   const [showAccount, setShowAccount] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -7155,13 +7198,8 @@ function Shell() {
 
   const fullyProcessed = files.filter((f) => extractions[f.file_id] && questions[f.file_id]?.mc && questions[f.file_id]?.short).length;
 
-  const isDark = dataThemeFor(palette, mode).startsWith('dark');
-  const shellBg = tropicalBg
-    ? { background: isDark ? TROPICAL_NIGHT : TROPICAL_DAY, backgroundAttachment: 'fixed', minHeight: '100vh' }
-    : {};
-
   return (
-    <div className="min-h-full flex flex-col" style={shellBg}>
+    <div className="min-h-full flex flex-col">
       <header className="sticky top-0 z-40 border-b border-[var(--border-soft)] bg-[var(--bg)] px-3 sm:px-5 py-2.5 sm:py-3 flex flex-wrap items-center justify-between gap-y-2 gap-x-3">
         <div className="flex items-center gap-2 sm:gap-3 order-1">
           <div className="w-7 h-7 rounded bg-gradient-to-br from-[var(--accent)] to-[var(--accent-2)]" />
