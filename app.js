@@ -1492,41 +1492,14 @@ function AppProvider({ children }) {
     }
   }, [palette, mode]);
 
-  // Tropical island background — managed entirely in JS so it works for every
-  // colour palette in both light and dark mode. setProperty(...,'important')
-  // beats any CSS rule; MutationObserver re-applies when the theme switches.
+  // Tropical background: Shell's outermost div owns the gradient (see Shell).
+  // We only need to make --bg transparent so the header / cards don't paint
+  // an opaque slab over it.
   useEffect(() => {
-    const html = document.documentElement;
-    const body = document.body;
-    const DARK = new Set(['dark','darkwarm','darkgreen','darktropical']);
-    const DAY = [
-      'radial-gradient(ellipse 320px 180px at 82% 12%, rgba(255,230,100,.35) 0%, transparent 65%)',
-      'radial-gradient(ellipse 100% 40% at 50% 100%, rgba(194,154,80,.25) 0%, transparent 70%)',
-      'linear-gradient(to bottom,#7ec8e3 0%,#aadff0 18%,#5ecfbe 42%,#38b2a0 58%,#e8d08a 76%,#d4b86a 100%)',
-    ].join(',');
-    const NIGHT = [
-      'radial-gradient(ellipse 180px 120px at 78% 10%, rgba(200,230,255,.18) 0%, transparent 60%)',
-      'radial-gradient(ellipse 60% 30% at 50% 100%, rgba(5,25,50,.6) 0%, transparent 80%)',
-      'linear-gradient(to bottom,#030b1a 0%,#051628 18%,#062840 42%,#093750 58%,#0b2338 76%,#060e1c 100%)',
-    ].join(',');
-    function apply() {
-      const isDark = DARK.has(html.getAttribute('data-theme') || '');
-      body.style.setProperty('background', isDark ? NIGHT : DAY, 'important');
-      body.style.setProperty('background-attachment', 'fixed', 'important');
-      html.style.setProperty('--bg', 'transparent');
-    }
-    function clear() {
-      body.style.removeProperty('background');
-      body.style.removeProperty('background-attachment');
-      html.style.removeProperty('--bg');
-    }
     if (tropicalBg) {
-      apply();
-      const obs = new MutationObserver(apply);
-      obs.observe(html, { attributes: true, attributeFilter: ['data-theme'] });
-      return () => { obs.disconnect(); clear(); };
+      document.documentElement.style.setProperty('--bg', 'transparent');
     } else {
-      clear();
+      document.documentElement.style.removeProperty('--bg');
     }
   }, [tropicalBg]);
 
@@ -7083,8 +7056,19 @@ function ServerStatsView() {
   );
 }
 
+const TROPICAL_DAY = [
+  'radial-gradient(ellipse 320px 180px at 82% 12%, rgba(255,230,100,.35) 0%, transparent 65%)',
+  'radial-gradient(ellipse 100% 40% at 50% 100%, rgba(194,154,80,.25) 0%, transparent 70%)',
+  'linear-gradient(to bottom,#7ec8e3 0%,#aadff0 18%,#5ecfbe 42%,#38b2a0 58%,#e8d08a 76%,#d4b86a 100%)',
+].join(',');
+const TROPICAL_NIGHT = [
+  'radial-gradient(ellipse 180px 120px at 78% 10%, rgba(200,230,255,.18) 0%, transparent 60%)',
+  'radial-gradient(ellipse 60% 30% at 50% 100%, rgba(5,25,50,.6) 0%, transparent 80%)',
+  'linear-gradient(to bottom,#030b1a 0%,#051628 18%,#062840 42%,#093750 58%,#0b2338 76%,#060e1c 100%)',
+].join(',');
+
 function Shell() {
-  const { apiKey, setApiKey, attempts, readOnly, files, extractions, questions, session, setSession, pendingSync, syncBusy, api } = useApp();
+  const { apiKey, setApiKey, attempts, readOnly, files, extractions, questions, session, setSession, pendingSync, syncBusy, api, tropicalBg, palette, mode } = useApp();
   const [tab, setTab] = useState('home');
   const [showAccount, setShowAccount] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -7171,8 +7155,13 @@ function Shell() {
 
   const fullyProcessed = files.filter((f) => extractions[f.file_id] && questions[f.file_id]?.mc && questions[f.file_id]?.short).length;
 
+  const isDark = dataThemeFor(palette, mode).startsWith('dark');
+  const shellBg = tropicalBg
+    ? { background: isDark ? TROPICAL_NIGHT : TROPICAL_DAY, backgroundAttachment: 'fixed', minHeight: '100vh' }
+    : {};
+
   return (
-    <div className="min-h-full flex flex-col">
+    <div className="min-h-full flex flex-col" style={shellBg}>
       <header className="sticky top-0 z-40 border-b border-[var(--border-soft)] bg-[var(--bg)] px-3 sm:px-5 py-2.5 sm:py-3 flex flex-wrap items-center justify-between gap-y-2 gap-x-3">
         <div className="flex items-center gap-2 sm:gap-3 order-1">
           <div className="w-7 h-7 rounded bg-gradient-to-br from-[var(--accent)] to-[var(--accent-2)]" />
