@@ -49,9 +49,9 @@
 <script src="https://cdn.tailwindcss.com"></script>
 <style>
   html, body, #root { height: 100%; }
-  /* html background-color covers iOS overscroll / pinch-zoom-out white.
-     The Canvas renderer sets this dynamically; keep a safe fallback. */
-  html { background-color: #0b1020; }
+  /* html background tracks --bg so overflow/overscroll always shows the
+     right theme colour. Canvas renderer overrides this inline when active. */
+  html { background: var(--bg); }
   /* Canvas bg has z-index:0; #root must sit above it */
   #root { position: relative; z-index: 1; }
   body {
@@ -112,13 +112,13 @@
 
   :root[data-theme="light"] {
     --bg: #f8fafc;
-    --bg-card: #ffffff;
-    --bg-card-strong: #ffffff;
-    --bg-card-soft: #f1f5f9;
-    --bg-elev: #f1f5f9;
-    --bg-elev-soft: #f8fafc;
-    --bg-hover: #e2e8f0;
-    --bg-hover-soft: #f1f5f9;
+    --bg-card: rgba(255,255,255,0.80);
+    --bg-card-strong: rgba(255,255,255,0.92);
+    --bg-card-soft: rgba(241,245,249,0.62);
+    --bg-elev: rgba(241,245,249,0.82);
+    --bg-elev-soft: rgba(248,250,252,0.65);
+    --bg-hover: rgba(226,232,240,0.78);
+    --bg-hover-soft: rgba(241,245,249,0.52);
     --border: #cbd5e1;
     --border-soft: #e2e8f0;
     --border-strong: #94a3b8;
@@ -149,13 +149,13 @@
 
   :root[data-theme="green"] {
     --bg: #f7fff0;
-    --bg-card: #ffffff;
-    --bg-card-strong: #ffffff;
-    --bg-card-soft: #e8f7d6;
-    --bg-elev: #e8f7d6;
-    --bg-elev-soft: #f0fbe2;
-    --bg-hover: #d7eebc;
-    --bg-hover-soft: #e8f7d6;
+    --bg-card: rgba(245,255,235,0.80);
+    --bg-card-strong: rgba(255,255,255,0.92);
+    --bg-card-soft: rgba(232,247,214,0.62);
+    --bg-elev: rgba(232,247,214,0.82);
+    --bg-elev-soft: rgba(240,251,226,0.65);
+    --bg-hover: rgba(215,238,188,0.78);
+    --bg-hover-soft: rgba(232,247,214,0.52);
     --border: #b7d98a;
     --border-soft: #d7eebc;
     --border-strong: #7fc41e;
@@ -186,13 +186,13 @@
 
   :root[data-theme="warm"] {
     --bg: #f5efe2;
-    --bg-card: #fbf6ea;
-    --bg-card-strong: #fffaee;
-    --bg-card-soft: #efe7d4;
-    --bg-elev: #efe7d4;
-    --bg-elev-soft: #f5efe2;
-    --bg-hover: #e6dac0;
-    --bg-hover-soft: #efe7d4;
+    --bg-card: rgba(251,246,234,0.80);
+    --bg-card-strong: rgba(255,250,238,0.92);
+    --bg-card-soft: rgba(239,231,212,0.62);
+    --bg-elev: rgba(239,231,212,0.82);
+    --bg-elev-soft: rgba(245,239,226,0.65);
+    --bg-hover: rgba(230,218,192,0.78);
+    --bg-hover-soft: rgba(239,231,212,0.52);
     --border: #d4c3a1;
     --border-soft: #e6dac0;
     --border-strong: #b89968;
@@ -381,6 +381,6 @@
 </head>
 <body>
 <div id="root"></div>
-<script type="text/babel" data-presets="react" src="app.js?v=63"></script>
+<script type="text/babel" data-presets="react" src="app.js?v=64"></script>
 </body>
 </html>
