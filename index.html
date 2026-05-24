@@ -49,6 +49,8 @@
 <script src="https://cdn.tailwindcss.com"></script>
 <style>
   html, body, #root { height: 100%; }
+  /* Dynamic background div has z-index:0; #root must sit above it */
+  #root { position: relative; z-index: 1; }
   body {
     background: var(--bg);
     color: var(--text);
@@ -376,6 +378,6 @@
 </head>
 <body>
 <div id="root"></div>
-<script type="text/babel" data-presets="react" src="app.js?v=59"></script>
+<script type="text/babel" data-presets="react" src="app.js?v=60"></script>
 </body>
 </html>

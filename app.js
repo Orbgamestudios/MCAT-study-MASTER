@@ -49,53 +49,152 @@ function dataThemeFor(palette, mode) {
   if (palette === 'tropical') return dark ? 'darktropical' : 'tropical';
   return dark ? 'dark' : 'light'; // cold
 }
-// ---------- dynamic background gradients ----------
-// Each palette has a day and night CSS gradient string.
-// Applied to document.documentElement when the "Dynamic background" toggle is on.
-const BG_COLD_DAY = [
-  'radial-gradient(ellipse 180% 55% at 50% 0%, rgba(210,235,255,0.7) 0%, transparent 55%)',
-  'linear-gradient(to bottom,#ddeeff 0%,#c8e4f8 18%,#e4f4ff 45%,#f5fbff 68%,#ffffff 85%,#eaf4ff 100%)',
-].join(',');
-const BG_COLD_NIGHT = [
-  'radial-gradient(ellipse 140% 40% at 15% 28%, rgba(40,255,140,0.22) 0%, transparent 58%)',
-  'radial-gradient(ellipse 90% 32% at 75% 18%, rgba(110,55,255,0.18) 0%, transparent 52%)',
-  'radial-gradient(ellipse 70% 28% at 45% 48%, rgba(0,210,210,0.14) 0%, transparent 48%)',
-  'linear-gradient(to bottom,#010818 0%,#020e22 20%,#041530 45%,#030d20 70%,#020810 100%)',
-].join(',');
-const BG_WARM_DAY = [
-  'radial-gradient(ellipse 110% 52% at 50% 0%, rgba(255,185,80,0.45) 0%, transparent 58%)',
-  'radial-gradient(ellipse 85% 42% at 18% 62%, rgba(190,70,20,0.13) 0%, transparent 52%)',
-  'linear-gradient(to bottom,#ffe8b0 0%,#ffd070 15%,#f09a38 35%,#c0601a 55%,#7a3008 78%,#4a1a04 100%)',
-].join(',');
-const BG_WARM_NIGHT = [
-  'radial-gradient(ellipse 80% 32% at 28% 18%, rgba(170,70,15,0.22) 0%, transparent 52%)',
-  'linear-gradient(to bottom,#0d0800 0%,#1a0e04 20%,#250f04 40%,#1a0a02 65%,#100600 100%)',
-].join(',');
-const BG_DUO_DAY = [
-  'radial-gradient(ellipse 130% 52% at 50% 0%, rgba(160,255,160,0.48) 0%, transparent 52%)',
-  'radial-gradient(ellipse 75% 42% at 85% 72%, rgba(30,150,50,0.18) 0%, transparent 48%)',
-  'linear-gradient(to bottom,#c0f0a0 0%,#88d860 18%,#48b038 40%,#187828 60%,#0a5518 80%,#063510 100%)',
-].join(',');
-const BG_DUO_NIGHT = [
-  'radial-gradient(ellipse 80% 40% at 50% 0%, rgba(18,90,18,0.28) 0%, transparent 58%)',
-  'linear-gradient(to bottom,#010d01 0%,#021602 20%,#031e03 40%,#021403 65%,#010c01 100%)',
-].join(',');
-const BG_TROPICAL_DAY = [
-  'radial-gradient(ellipse 320px 180px at 82% 12%, rgba(255,230,100,.35) 0%, transparent 65%)',
-  'radial-gradient(ellipse 100% 40% at 50% 100%, rgba(194,154,80,.25) 0%, transparent 70%)',
-  'linear-gradient(to bottom,#7ec8e3 0%,#aadff0 18%,#5ecfbe 42%,#38b2a0 58%,#e8d08a 76%,#d4b86a 100%)',
-].join(',');
-const BG_TROPICAL_NIGHT = [
-  'radial-gradient(ellipse 180px 120px at 78% 10%, rgba(200,230,255,.18) 0%, transparent 60%)',
-  'radial-gradient(ellipse 60% 30% at 50% 100%, rgba(5,25,50,.6) 0%, transparent 80%)',
-  'linear-gradient(to bottom,#030b1a 0%,#051628 18%,#062840 42%,#093750 58%,#0b2338 76%,#060e1c 100%)',
-].join(',');
+// ---------- dynamic background (animated, parallax) ----------
+// Each palette/mode has three CSS gradient layers that animate independently.
+// Applied as a fixed DOM layer behind #root. Scroll parallax added via JS.
 
-function getDynamicBg(palette, isDark) {
-  if (palette === 'cold')     return isDark ? BG_COLD_NIGHT    : BG_COLD_DAY;
-  if (palette === 'warm')     return isDark ? BG_WARM_NIGHT    : BG_WARM_DAY;
-  if (palette === 'duo')      return isDark ? BG_DUO_NIGHT     : BG_DUO_DAY;
-  return isDark ? BG_TROPICAL_NIGHT : BG_TROPICAL_DAY; // tropical
+const DYN_BG = {
+  cold: {
+    day: {
+      edge: '#4a9fd4',
+      base: 'linear-gradient(to bottom,#4a9fd4 0%,#80c6ee 11%,#b2ddf8 24%,#ddf2fd 38%,#f8feff 52%,#ffffff 65%,#e6f3fd 80%,#cce2f5 100%)',
+      b1:   'radial-gradient(ellipse 100% 26% at 50% 18%,rgba(255,255,255,0.62) 0%,transparent 68%),' +
+            'radial-gradient(ellipse 58% 22% at 14% 12%,rgba(255,255,255,0.52) 0%,transparent 60%),' +
+            'radial-gradient(ellipse 44% 18% at 80% 14%,rgba(215,240,255,0.44) 0%,transparent 56%)',
+      b2:   'radial-gradient(ellipse 88% 24% at 50% 93%,rgba(228,248,255,0.58) 0%,transparent 65%),' +
+            'radial-gradient(ellipse 120% 16% at 50% 44%,rgba(255,255,255,0.3) 0%,transparent 58%)',
+      t:    [34, 26, 20],
+    },
+    night: {
+      edge: '#010818',
+      base: 'linear-gradient(to bottom,#010818 0%,#020d1e 17%,#031430 36%,#04182e 54%,#030c1e 74%,#010610 100%)',
+      b1:   'radial-gradient(ellipse 240% 17% at 22% 24%,rgba(0,255,108,0.54) 0%,rgba(0,198,138,0.08) 50%,transparent 72%),' +
+            'radial-gradient(ellipse 88% 9% at 56% 42%,rgba(0,232,198,0.26) 0%,transparent 54%)',
+      b2:   'radial-gradient(ellipse 190% 14% at 70% 34%,rgba(86,40,255,0.4) 0%,rgba(138,0,218,0.08) 44%,transparent 65%),' +
+            'radial-gradient(ellipse 72% 8% at 38% 53%,rgba(36,172,158,0.22) 0%,transparent 46%)',
+      t:    [30, 20, 15],
+    },
+  },
+  warm: {
+    day: {
+      edge: '#e07830',
+      base: 'linear-gradient(to bottom,#f0be55 0%,#e88934 11%,#d04c14 27%,#a02808 46%,#681602 66%,#360a02 83%,#1c0600 100%)',
+      b1:   'radial-gradient(ellipse 108% 34% at 50% 5%,rgba(255,215,90,0.6) 0%,transparent 62%),' +
+            'radial-gradient(ellipse 38% 18% at 17% 44%,rgba(192,72,10,0.22) 0%,transparent 48%)',
+      b2:   'radial-gradient(ellipse 54% 24% at 82% 40%,rgba(218,96,16,0.24) 0%,transparent 50%),' +
+            'radial-gradient(ellipse 88% 28% at 50% 97%,rgba(18,5,0,0.58) 0%,transparent 62%)',
+      t:    [30, 22, 17],
+    },
+    night: {
+      edge: '#120800',
+      base: 'linear-gradient(to bottom,#1c0e04 0%,#260f04 17%,#1e0a02 36%,#140800 54%,#0a0500 74%,#060300 100%)',
+      b1:   'radial-gradient(ellipse 88% 28% at 30% 12%,rgba(212,82,14,0.4) 0%,transparent 56%),' +
+            'radial-gradient(ellipse 56% 20% at 68% 20%,rgba(162,52,4,0.26) 0%,transparent 46%)',
+      b2:   'radial-gradient(ellipse 64% 22% at 50% 84%,rgba(88,32,4,0.2) 0%,transparent 50%)',
+      t:    [28, 20, 15],
+    },
+  },
+  duo: {
+    day: {
+      edge: '#3ea022',
+      base: 'linear-gradient(to bottom,#90de65 0%,#55c62e 11%,#2c9610 27%,#166d0c 46%,#0a4e0e 66%,#052c0c 83%,#031608 100%)',
+      b1:   'radial-gradient(ellipse 122% 30% at 50% 3%,rgba(182,255,132,0.57) 0%,transparent 61%),' +
+            'radial-gradient(ellipse 46% 22% at 88% 56%,rgba(20,152,42,0.24) 0%,transparent 48%)',
+      b2:   'radial-gradient(ellipse 38% 18% at 12% 70%,rgba(14,122,26,0.22) 0%,transparent 44%),' +
+            'radial-gradient(ellipse 88% 26% at 50% 98%,rgba(2,10,4,0.68) 0%,transparent 62%)',
+      t:    [28, 20, 16],
+    },
+    night: {
+      edge: '#010d01',
+      base: 'linear-gradient(to bottom,#020f02 0%,#031902 17%,#042204 36%,#031802 54%,#020e02 74%,#010901 100%)',
+      b1:   'radial-gradient(ellipse 90% 24% at 50% 4%,rgba(15,94,17,0.4) 0%,transparent 56%),' +
+            'radial-gradient(ellipse 54% 18% at 74% 58%,rgba(10,74,13,0.24) 0%,transparent 46%)',
+      b2:   'radial-gradient(ellipse 36% 15% at 24% 74%,rgba(7,54,10,0.2) 0%,transparent 42%)',
+      t:    [25, 18, 14],
+    },
+  },
+  tropical: {
+    day: {
+      edge: '#38a8d2',
+      base: 'linear-gradient(to bottom,#36a5cf 0%,#55cae0 12%,#44bdb5 26%,#28a595 43%,#1c9687 59%,#c2b354 75%,#ae9a34 89%,#9e8624 100%)',
+      b1:   'radial-gradient(ellipse 410px 230px at 82% 8%,rgba(255,236,100,0.54) 0%,transparent 60%),' +
+            'radial-gradient(ellipse 124% 27% at 50% 98%,rgba(202,172,84,0.38) 0%,transparent 63%)',
+      b2:   'radial-gradient(ellipse 72% 23% at 15% 42%,rgba(65,212,196,0.22) 0%,transparent 48%),' +
+            'radial-gradient(ellipse 40% 17% at 90% 55%,rgba(40,176,166,0.18) 0%,transparent 42%)',
+      t:    [36, 28, 22],
+    },
+    night: {
+      edge: '#020810',
+      base: 'linear-gradient(to bottom,#01060e 0%,#020c18 12%,#030e1c 26%,#041528 43%,#050f24 59%,#040b1c 75%,#030814 89%,#020710 100%)',
+      b1:   'radial-gradient(ellipse 250px 165px at 72% 7%,rgba(168,212,255,0.26) 0%,transparent 60%),' +
+            'radial-gradient(ellipse 80% 21% at 50% 95%,rgba(3,24,52,0.72) 0%,transparent 70%)',
+      b2:   'radial-gradient(ellipse 60% 19% at 15% 56%,rgba(0,70,112,0.18) 0%,transparent 48%)',
+      t:    [38, 30, 24],
+    },
+  },
+};
+
+let _dynBgCleanup = null;
+
+function applyDynamicBg(palette, isDark) {
+  stopDynamicBg();
+  const cfg = (DYN_BG[palette] || DYN_BG.tropical)[isDark ? 'night' : 'day'];
+
+  // Fix overscroll colour so rubber-band doesn't reveal white canvas
+  document.documentElement.style.backgroundColor = cfg.edge;
+  document.body.style.background = 'transparent';
+
+  // Inject keyframes (single style tag, idempotent)
+  const styleEl = document.createElement('style');
+  styleEl.id = 'mc-dyn-style';
+  styleEl.textContent =
+    '@keyframes mc-bd{0%{transform:translate(0,0) scale(1)}33%{transform:translate(2%,-2%) scale(1.04)}66%{transform:translate(-1.5%,1.5%) scale(1.02)}100%{transform:translate(0,0) scale(1)}}' +
+    '@keyframes mc-b1{0%{transform:translate(0,0)}33%{transform:translate(-6%,4%)}66%{transform:translate(5%,-3%)}100%{transform:translate(0,0)}}' +
+    '@keyframes mc-b2{0%{transform:translate(0,0)}33%{transform:translate(4%,-5%)}66%{transform:translate(-4%,3%)}100%{transform:translate(0,0)}}';
+  document.head.appendChild(styleEl);
+
+  // Background container — fixed, sits BELOW #root (which has z-index:1 in CSS)
+  const wrap = document.createElement('div');
+  wrap.id = 'mc-dyn-bg';
+  wrap.style.cssText = 'position:fixed;inset:0;z-index:0;overflow:hidden;pointer-events:none';
+
+  // Base gradient (oversized to hide drift edges)
+  const base = document.createElement('div');
+  base.style.cssText = `position:absolute;inset:-18%;background:${cfg.base};` +
+    `animation:mc-bd ${cfg.t[0]}s ease-in-out infinite`;
+  wrap.appendChild(base);
+
+  // Highlight / effect blobs
+  const b1 = document.createElement('div');
+  b1.style.cssText = `position:absolute;inset:-12%;background:${cfg.b1};` +
+    `animation:mc-b1 ${cfg.t[1]}s ease-in-out infinite`;
+  wrap.appendChild(b1);
+
+  // Depth / shadow blobs
+  const b2 = document.createElement('div');
+  b2.style.cssText = `position:absolute;inset:-12%;background:${cfg.b2};` +
+    `animation:mc-b2 ${cfg.t[2]}s ease-in-out infinite`;
+  wrap.appendChild(b2);
+
+  document.body.insertBefore(wrap, document.body.firstChild);
+
+  // Scroll parallax — background drifts at ~8% of scroll speed
+  const onScroll = () => {
+    wrap.style.transform = `translateY(${-window.scrollY * 0.08}px)`;
+  };
+  window.addEventListener('scroll', onScroll, { passive: true });
+
+  _dynBgCleanup = () => {
+    wrap.remove();
+    styleEl.remove();
+    window.removeEventListener('scroll', onScroll);
+    document.documentElement.style.backgroundColor = '';
+    document.body.style.background = '';
+  };
+}
+
+function stopDynamicBg() {
+  if (_dynBgCleanup) { _dynBgCleanup(); _dynBgCleanup = null; }
 }
 
 // Parse the stored theme, migrating the older single-string format.
@@ -1541,21 +1640,17 @@ function AppProvider({ children }) {
     }
   }, [palette, mode]);
 
-  // Dynamic background: paint the gradient on the <html> element and make
-  // <body> transparent so the gradient is always the bottom-most layer.
-  // Cards are semi-transparent (--bg-card) so the gradient shows through them.
-  // The header keeps its solid --bg colour so it stays readable.
+  // Dynamic background: animated fixed DOM layer behind #root.
+  // Re-runs whenever the toggle, palette, or mode changes so the gradient
+  // updates live. The cleanup fn tears down the DOM node + scroll listener.
   useEffect(() => {
+    const isDark = dataThemeFor(palette, mode).startsWith('dark');
     if (tropicalBg) {
-      const isDark = dataThemeFor(palette, mode).startsWith('dark');
-      document.documentElement.style.background = getDynamicBg(palette, isDark);
-      document.documentElement.style.backgroundAttachment = 'fixed';
-      document.body.style.background = 'transparent';
+      applyDynamicBg(palette, isDark);
     } else {
-      document.documentElement.style.background = '';
-      document.documentElement.style.backgroundAttachment = '';
-      document.body.style.background = '';
+      stopDynamicBg();
     }
+    return stopDynamicBg;
   }, [tropicalBg, palette, mode]);
 
   // One-time cleanup: drop the temporary drag-position key now that the bird
