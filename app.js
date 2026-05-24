@@ -26,6 +26,7 @@ const KEYS = {
   flagQueue: 'mcat:flagQueue', // Flagged questions awaiting Gemini fix (rate-limit safe)
   reaudit: 'mcat:reaudit', // boolean — show Audit button on already-audited chapters
   volume: 'mcat:volume', // 0-1, global SFX volume multiplier (default 1)
+  autoDownload: 'mcat:autoDownload', // boolean — re-download updated chapters on app load
   bankSeen: 'mcat:bankSeen', // timestamp — last time the user reviewed the Bank tab
   cars: 'mcat:cars', // { [date]: { score, total, completed_at } } — daily CARS results
   connectionsResults: 'mcat:connectionsResults', // { [date]: { solved, mistakes, completed_at } }
@@ -1428,6 +1429,11 @@ function AppProvider({ children }) {
     storage.set(KEYS.reaudit, !!v);
     setReauditEnabledState(!!v);
   }, []);
+  const [autoDownloadChapters, setAutoDownloadChaptersState] = useState(() => !!storage.get(KEYS.autoDownload, false));
+  const setAutoDownloadChapters = useCallback((v) => {
+    storage.set(KEYS.autoDownload, !!v);
+    setAutoDownloadChaptersState(!!v);
+  }, []);
   const [volume, setVolumeState] = useState(() => {
     const v = storage.get(KEYS.volume, 1);
     return typeof v === 'number' && v >= 0 && v <= 1 ? v : 1;
@@ -1629,6 +1635,55 @@ function AppProvider({ children }) {
     if (session?.token) flushSync();
   }, [session?.token, flushSync]);
 
+  // Auto-download: when enabled, silently refresh any locally-downloaded chapters
+  // whose server updated_at is newer than what we last fetched.
+  useEffect(() => {
+    if (!autoDownloadChapters || !session?.token) return;
+    const localChapters = files.filter((f) => f.chapter_id);
+    if (!localChapters.length) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await api.listChapters();
+        if (cancelled) return;
+        for (const ch of data.chapters || []) {
+          if (cancelled) return;
+          const localFile = localChapters.find((f) => f.chapter_id === ch.id);
+          if (!localFile) continue;
+          const localTs = localFile.chapter_updated_at || 0;
+          if (ch.updated_at <= localTs) continue;
+          // Fetch and store the full chapter silently.
+          try {
+            const full = await api.getChapter(ch.id);
+            if (cancelled) return;
+            const localFileId = `chap_${full.id}`;
+            const fileRecord = {
+              file_id: localFileId,
+              file_uri: 'cloud',
+              mime_type: 'application/pdf',
+              filename: full.filename,
+              size_bytes: full.size_bytes || 0,
+              subject: full.subject,
+              chapter: full.title,
+              uploaded_at: new Date(full.created_at).toISOString(),
+              chapter_id: full.id,
+              chapter_updated_at: full.updated_at,
+            };
+            setFiles((prev) => [...prev.filter((f) => f.file_id !== localFileId && f.chapter_id !== full.id), fileRecord]);
+            if (full.extraction) setExtraction(localFileId, full.extraction);
+            setQuestionsFor(localFileId, {
+              mc: full.mc || [],
+              twoPart: full.two_part || [],
+              short: full.short || [],
+              generated_at: new Date(full.updated_at).toISOString(),
+            });
+          } catch {}
+        }
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, [autoDownloadChapters, session?.token]); // eslint-disable-line
+
   const value = useMemo(
     () => ({
       apiKey, setApiKey,
@@ -1644,13 +1699,15 @@ function AppProvider({ children }) {
       client,
       reauditEnabled, setReauditEnabled,
       volume, setVolume,
+      autoDownloadChapters, setAutoDownloadChapters,
     }),
     [apiKey, setApiKey, files, setFiles, extractions, setExtraction, questions, setQuestionsFor,
      attempts, addAttempt, clearAttempts, staticBank, useStaticBank, readOnly,
      palette, mode, setPalette, setMode,
      github, setGithub, pushBank, pushStatus,
      session, setSession, api, pendingSync, flushSync, syncBusy, syncError, client,
-     reauditEnabled, setReauditEnabled, volume, setVolume]
+     reauditEnabled, setReauditEnabled, volume, setVolume,
+     autoDownloadChapters, setAutoDownloadChapters]
   );
   return <AppCtx.Provider value={value}>{children}</AppCtx.Provider>;
 }
@@ -2594,28 +2651,33 @@ function QuizLauncher({ onStart }) {
 }
 
 // ---------- quiz: flag a question ----------
+const FLAG_PRESETS = [
+  { label: 'Remove A./B./C./D. from answers', text: 'Remove the A./B./C./D. letter prefixes from the answer choices — the app adds labels itself.' },
+  { label: 'Extra context after each term', text: 'Get rid of extra context / parenthetical definitions appended after each answer choice.' },
+  { label: 'Wrong answer marked correct', text: 'The marked correct answer is wrong — please fix the correct_index.' },
+  { label: 'Garbled / encoding error', text: 'Question text contains garbled characters or encoding errors (e.g. â€" instead of —, subscript numbers rendered as symbols).' },
+];
+
 function FlagQuestionModal({ item, onClose }) {
-  const { api, session, files } = useApp();
+  const { api, session, files, client, apiKey, questions, setQuestionsFor } = useApp();
   const [description, setDescription] = useState('');
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState(null);
 
-  // Find the chapter id this question belongs to (from the local library).
   const localFile = files.find((f) => f.file_id === item.file_id);
   const chapterId = localFile?.chapter_id;
+
+  const applyPreset = (text) => {
+    setDescription((prev) => prev ? prev + '\n' + text : text);
+  };
 
   const submit = async () => {
     if (!description.trim()) { setStatus({ kind: 'err', msg: 'Describe the problem first.' }); return; }
     setBusy(true); setStatus(null);
     try {
       if (session && chapterId) {
-        // Push to the chapter's server-side flags list. Best-effort — the local
-        // queue is the source of truth, so we don't fail the flag if this 404s
-        // (e.g. server hasn't deployed the flag endpoints yet).
         try { await api.addChapterFlag(chapterId, { question_id: item.id, description: description.trim() }); } catch {}
       }
-      // Also queue locally so the user can process flags on their own copy even
-      // without a chapter on the server. Pipeline reads from both.
       const queue = storage.get(KEYS.flagQueue, []);
       queue.push({
         id: 'flq_' + Date.now().toString(36),
@@ -2637,19 +2699,82 @@ function FlagQuestionModal({ item, onClose }) {
     } finally { setBusy(false); }
   };
 
+  const fixNow = async () => {
+    if (!description.trim()) { setStatus({ kind: 'err', msg: 'Describe the problem first.' }); return; }
+    if (!apiKey) { setStatus({ kind: 'err', msg: 'Add a Gemini API key in Settings to fix now.' }); return; }
+    setBusy(true); setStatus({ kind: 'info', msg: 'Sending to Gemini…' });
+    try {
+      const fix = await client.fixFlaggedQuestion({
+        question: item.q,
+        flagDescription: description.trim(),
+        chapterContext: item.chapter,
+      });
+      const fileId = item.file_id;
+      const qbank = questions[fileId];
+      if (fix.two_part) {
+        if (qbank?.twoPart && fix.action === 'edit' && Array.isArray(fix.parts) && fix.parts.length === 2) {
+          const cleanParts = fix.parts.map((p) => ({
+            question: sanitizeText(p.question),
+            choices: (p.choices || []).slice(0, 4).map((c, i) => stripChoiceLabel(c, i)),
+            correct_index: Number.isInteger(p.correct_index) ? p.correct_index : 0,
+            explanation: sanitizeText(p.explanation),
+          }));
+          const nextTp = qbank.twoPart.map((it) => it.id === item.id ? {
+            ...it, theme: sanitizeText(fix.theme) || it.theme, parts: cleanParts,
+          } : it);
+          setQuestionsFor(fileId, { ...qbank, twoPart: nextTp });
+          if (chapterId && session) {
+            try { await api.putChapterStage(chapterId, 'two_part', nextTp); } catch {}
+          }
+        }
+      } else if (qbank?.mc) {
+        if (fix.action === 'edit') {
+          const nextMc = qbank.mc.map((q) => q.id === item.id ? {
+            ...q,
+            question: sanitizeText(fix.question) || q.question,
+            choices: (fix.choices?.length === 4 ? fix.choices : q.choices).map((c, i) => stripChoiceLabel(c, i)),
+            correct_index: Number.isInteger(fix.correct_index) ? fix.correct_index : q.correct_index,
+            explanation: sanitizeText(fix.explanation) || q.explanation,
+          } : q);
+          setQuestionsFor(fileId, { ...qbank, mc: nextMc });
+          if (chapterId && session) {
+            try { await api.putChapterStage(chapterId, 'mc', nextMc); } catch {}
+          }
+        }
+      }
+      setStatus({ kind: 'ok', msg: fix.action === 'skip' ? `Gemini skipped: ${fix.rationale || 'no real problem found'}` : 'Fixed and saved!' });
+      if (fix.action === 'edit') setTimeout(onClose, 1200);
+    } catch (e) {
+      setStatus({ kind: 'err', msg: e.message });
+    } finally { setBusy(false); }
+  };
+
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-3" onClick={onClose}>
       <div className="w-full max-w-md bg-[var(--bg)] border border-[var(--border)] rounded-2xl p-4 space-y-3" onClick={(e) => e.stopPropagation()}>
         <h3 className="font-semibold text-[var(--text-strong)]">Flag question</h3>
-        <p className="text-xs text-[var(--text-muted)]">
+        <p className="text-xs text-[var(--text-muted)] line-clamp-2">
           {item.q.question || item.q.prompt
             || (item.q.theme ? `Two-part: ${item.q.theme}` : '(no stem)')}
         </p>
+        <div>
+          <div className="text-[11px] text-[var(--text-faint)] mb-1.5">Quick options — click to fill description:</div>
+          <div className="flex flex-wrap gap-1.5">
+            {FLAG_PRESETS.map((p) => (
+              <button
+                key={p.label}
+                onClick={() => applyPreset(p.text)}
+                className="text-[11px] px-2 py-1 border border-[var(--border)] rounded hover:bg-[var(--bg-hover)] text-[var(--text-muted)] hover:text-[var(--text)]"
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+        </div>
         <textarea
           value={description}
           onChange={(e) => setDescription(e.target.value)}
-          autoFocus
-          rows={4}
+          rows={3}
           placeholder="What's wrong? (e.g. wrong answer marked correct, two choices are the same, stem is unclear)"
           className="w-full bg-[var(--bg-elev)] border border-[var(--border)] rounded px-2 py-1.5 text-sm"
         />
@@ -2663,8 +2788,13 @@ function FlagQuestionModal({ item, onClose }) {
         <div className="flex justify-end gap-2">
           <button onClick={onClose} className="text-xs px-3 py-1.5 border border-[var(--border)] hover:bg-[var(--bg-hover)] rounded">Cancel</button>
           <button onClick={submit} disabled={busy} className="text-xs px-3 py-1.5 bg-[var(--warning-text-strong)] text-white rounded hover:opacity-90 disabled:opacity-40">
-            {busy ? 'Submitting…' : 'Flag question'}
+            {busy ? 'Working…' : 'Flag only'}
           </button>
+          {apiKey && (
+            <button onClick={fixNow} disabled={busy} className="text-xs px-3 py-1.5 bg-[var(--accent)] text-white rounded hover:bg-[var(--accent-hover)] disabled:opacity-40">
+              Fix with Gemini
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -5200,7 +5330,7 @@ function StatsView() {
 
 // ---------- settings ----------
 function SettingsPanel({ onClose }) {
-  const { palette, mode, setPalette, setMode, apiKey, setApiKey, client, session, pendingSync, syncBusy, syncError, flushSync, reauditEnabled, setReauditEnabled, volume, setVolume } = useApp();
+  const { palette, mode, setPalette, setMode, apiKey, setApiKey, client, session, pendingSync, syncBusy, syncError, flushSync, reauditEnabled, setReauditEnabled, volume, setVolume, autoDownloadChapters, setAutoDownloadChapters } = useApp();
   const [keyVal, setKeyVal] = useState(apiKey || '');
   const [keyShow, setKeyShow] = useState(false);
   const [keyErr, setKeyErr] = useState('');
@@ -5388,6 +5518,24 @@ function SettingsPanel({ onClose }) {
           />
         </label>
       </div>
+
+      {session && (
+        <div>
+          <div className="text-xs uppercase tracking-wide text-[var(--text-muted)] mb-2">Chapters</div>
+          <label className="flex items-center justify-between gap-3 bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg px-3 py-2.5 cursor-pointer">
+            <div className="text-sm min-w-0">
+              <div className="text-[var(--text)]">Auto-download updates</div>
+              <div className="text-[11px] text-[var(--text-faint)] mt-0.5">Silently re-download any chapters with server-side updates when the app loads.</div>
+            </div>
+            <input
+              type="checkbox"
+              checked={autoDownloadChapters}
+              onChange={(e) => setAutoDownloadChapters(e.target.checked)}
+              className="w-4 h-4 shrink-0"
+            />
+          </label>
+        </div>
+      )}
     </div>
   );
 }
@@ -6481,6 +6629,7 @@ function BankTab() {
         chapter: full.title,
         uploaded_at: new Date(full.created_at).toISOString(),
         chapter_id: full.id,
+        chapter_updated_at: full.updated_at,
       };
       setFiles((prev) => [...prev.filter((f) => f.file_id !== localFileId && f.chapter_id !== full.id), fileRecord]);
       if (full.extraction) setExtraction(localFileId, full.extraction);
