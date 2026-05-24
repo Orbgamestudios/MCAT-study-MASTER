@@ -370,44 +370,12 @@
     border-color: var(--accent-border) !important;
   }
 
-  /* ── Tropical island background ────────────────────────────────────── */
-  /* Day / light themes */
-  body.tropical-bg {
-    background:
-      radial-gradient(ellipse 320px 180px at 82% 12%, rgba(255,230,100,0.35) 0%, transparent 65%),
-      radial-gradient(ellipse 100% 40% at 50% 100%, rgba(194,154,80,0.25) 0%, transparent 70%),
-      linear-gradient(to bottom,
-        #7ec8e3 0%,
-        #aadff0 18%,
-        #5ecfbe 42%,
-        #38b2a0 58%,
-        #e8d08a 76%,
-        #d4b86a 100%
-      ) !important;
-    background-attachment: fixed !important;
-  }
-  /* Night / dark themes */
-  :root[data-theme="dark"]        body.tropical-bg,
-  :root[data-theme="darkwarm"]    body.tropical-bg,
-  :root[data-theme="darkgreen"]   body.tropical-bg,
-  :root[data-theme="darktropical"] body.tropical-bg {
-    background:
-      radial-gradient(ellipse 180px 120px at 78% 10%, rgba(200,230,255,0.18) 0%, transparent 60%),
-      radial-gradient(ellipse 60% 30% at 50% 100%, rgba(5,25,50,0.6) 0%, transparent 80%),
-      linear-gradient(to bottom,
-        #030b1a 0%,
-        #051628 18%,
-        #062840 42%,
-        #093750 58%,
-        #0b2338 76%,
-        #060e1c 100%
-      ) !important;
-    background-attachment: fixed !important;
-  }
+  /* Tropical island background is applied entirely via JS (see app.js tropicalBg effect)
+     so it works correctly for all colour palettes in both light and dark mode. */
 </style>
 </head>
 <body>
 <div id="root"></div>
-<script type="text/babel" data-presets="react" src="app.js?v=56"></script>
+<script type="text/babel" data-presets="react" src="app.js?v=57"></script>
 </body>
 </html>

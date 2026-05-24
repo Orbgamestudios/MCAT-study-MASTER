@@ -1492,14 +1492,41 @@ function AppProvider({ children }) {
     }
   }, [palette, mode]);
 
-  // Tropical island background: toggle body class + make --bg transparent so the
-  // gradient shows through regardless of which colour palette is active.
+  // Tropical island background — managed entirely in JS so it works for every
+  // colour palette in both light and dark mode. setProperty(...,'important')
+  // beats any CSS rule; MutationObserver re-applies when the theme switches.
   useEffect(() => {
-    document.body.classList.toggle('tropical-bg', tropicalBg);
+    const html = document.documentElement;
+    const body = document.body;
+    const DARK = new Set(['dark','darkwarm','darkgreen','darktropical']);
+    const DAY = [
+      'radial-gradient(ellipse 320px 180px at 82% 12%, rgba(255,230,100,.35) 0%, transparent 65%)',
+      'radial-gradient(ellipse 100% 40% at 50% 100%, rgba(194,154,80,.25) 0%, transparent 70%)',
+      'linear-gradient(to bottom,#7ec8e3 0%,#aadff0 18%,#5ecfbe 42%,#38b2a0 58%,#e8d08a 76%,#d4b86a 100%)',
+    ].join(',');
+    const NIGHT = [
+      'radial-gradient(ellipse 180px 120px at 78% 10%, rgba(200,230,255,.18) 0%, transparent 60%)',
+      'radial-gradient(ellipse 60% 30% at 50% 100%, rgba(5,25,50,.6) 0%, transparent 80%)',
+      'linear-gradient(to bottom,#030b1a 0%,#051628 18%,#062840 42%,#093750 58%,#0b2338 76%,#060e1c 100%)',
+    ].join(',');
+    function apply() {
+      const isDark = DARK.has(html.getAttribute('data-theme') || '');
+      body.style.setProperty('background', isDark ? NIGHT : DAY, 'important');
+      body.style.setProperty('background-attachment', 'fixed', 'important');
+      html.style.setProperty('--bg', 'transparent');
+    }
+    function clear() {
+      body.style.removeProperty('background');
+      body.style.removeProperty('background-attachment');
+      html.style.removeProperty('--bg');
+    }
     if (tropicalBg) {
-      document.documentElement.style.setProperty('--bg', 'transparent');
+      apply();
+      const obs = new MutationObserver(apply);
+      obs.observe(html, { attributes: true, attributeFilter: ['data-theme'] });
+      return () => { obs.disconnect(); clear(); };
     } else {
-      document.documentElement.style.removeProperty('--bg');
+      clear();
     }
   }, [tropicalBg]);
 
