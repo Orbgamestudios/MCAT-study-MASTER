@@ -27,6 +27,7 @@ const KEYS = {
   reaudit: 'mcat:reaudit', // boolean — show Audit button on already-audited chapters
   volume: 'mcat:volume', // 0-1, global SFX volume multiplier (default 1)
   autoDownload: 'mcat:autoDownload', // boolean — re-download updated chapters on app load
+  tropicalBg: 'mcat:tropicalBg',    // boolean — tropical island background
   bankSeen: 'mcat:bankSeen', // timestamp — last time the user reviewed the Bank tab
   cars: 'mcat:cars', // { [date]: { score, total, completed_at } } — daily CARS results
   connectionsResults: 'mcat:connectionsResults', // { [date]: { solved, mistakes, completed_at } }
@@ -35,7 +36,7 @@ const KEYS = {
 // Theme is a (palette, mode) pair. Palette picks the colour family; mode picks
 // light/dark, or follows the OS when 'system'. The pair resolves to one of the
 // six concrete data-theme values the CSS defines.
-const PALETTES = ['cold', 'warm', 'duo'];
+const PALETTES = ['cold', 'warm', 'duo', 'tropical'];
 const MODES = ['light', 'dark', 'system'];
 function systemPrefersDark() {
   try { return window.matchMedia('(prefers-color-scheme: dark)').matches; }
@@ -45,6 +46,7 @@ function dataThemeFor(palette, mode) {
   const dark = mode === 'dark' || (mode === 'system' && systemPrefersDark());
   if (palette === 'warm') return dark ? 'darkwarm' : 'warm';
   if (palette === 'duo') return dark ? 'darkgreen' : 'green';
+  if (palette === 'tropical') return dark ? 'darktropical' : 'tropical';
   return dark ? 'dark' : 'light'; // cold
 }
 // Parse the stored theme, migrating the older single-string format.
@@ -1434,6 +1436,11 @@ function AppProvider({ children }) {
     storage.set(KEYS.autoDownload, !!v);
     setAutoDownloadChaptersState(!!v);
   }, []);
+  const [tropicalBg, setTropicalBgState] = useState(() => !!storage.get(KEYS.tropicalBg, false));
+  const setTropicalBg = useCallback((v) => {
+    storage.set(KEYS.tropicalBg, !!v);
+    setTropicalBgState(!!v);
+  }, []);
   const [volume, setVolumeState] = useState(() => {
     const v = storage.get(KEYS.volume, 1);
     return typeof v === 'number' && v >= 0 && v <= 1 ? v : 1;
@@ -1484,6 +1491,11 @@ function AppProvider({ children }) {
       return () => mq.removeEventListener('change', onChange);
     }
   }, [palette, mode]);
+
+  // Tropical island background: toggle a body class; CSS handles day/night via data-theme.
+  useEffect(() => {
+    document.body.classList.toggle('tropical-bg', tropicalBg);
+  }, [tropicalBg]);
 
   // One-time cleanup: drop the temporary drag-position key now that the bird
   // is anchored to the speech bubble's bottom.
@@ -1700,6 +1712,7 @@ function AppProvider({ children }) {
       reauditEnabled, setReauditEnabled,
       volume, setVolume,
       autoDownloadChapters, setAutoDownloadChapters,
+      tropicalBg, setTropicalBg,
     }),
     [apiKey, setApiKey, files, setFiles, extractions, setExtraction, questions, setQuestionsFor,
      attempts, addAttempt, clearAttempts, staticBank, useStaticBank, readOnly,
@@ -1707,7 +1720,8 @@ function AppProvider({ children }) {
      github, setGithub, pushBank, pushStatus,
      session, setSession, api, pendingSync, flushSync, syncBusy, syncError, client,
      reauditEnabled, setReauditEnabled, volume, setVolume,
-     autoDownloadChapters, setAutoDownloadChapters]
+     autoDownloadChapters, setAutoDownloadChapters,
+     tropicalBg, setTropicalBg]
   );
   return <AppCtx.Provider value={value}>{children}</AppCtx.Provider>;
 }
@@ -4931,176 +4945,93 @@ function StatBar({ correct, total, label }) {
   );
 }
 
-// ---------- predictive MCAT score ----------
-// AAMC content breakdown per section, used to weight each app subject's measured
-// accuracy into that section's predicted score. Sources: AAMC's "What's on the
-// MCAT Exam?" foundational concepts breakdown — Chem/Phys (Bio 5 / Biochem 25 /
-// Gen Chem 30 / Org Chem 15 / Physics 25), Bio/Biochem (Bio 65 / Biochem 25 /
-// Gen Chem 5 / Org Chem 5), Psych/Soc (Psych 65 / Soc 30 / Bio 5). CARS is
-// passage-based — no subject content. "Chemistry" in the app collapses both Gen
-// Chem and Org Chem into one bucket, so its weight is the sum of both. "Behavioral
-// Science" rolls up psych + soc — weighted as 95% of PS (65 + 30).
-const MCAT_SECTIONS = [
-  {
-    key: 'cp',
-    label: 'Chem/Phys',
-    // Sums to 1.00 — Biology 0.05 + Biochem 0.25 + Chemistry 0.45 + Physics 0.25
-    weights: { Biology: 0.05, Biochemistry: 0.25, Chemistry: 0.45, Physics: 0.25 },
-  },
-  {
-    key: 'cars',
-    label: 'CARS',
-    weights: { CARS: 1.00 },
-  },
-  {
-    key: 'bb',
-    label: 'Bio/Biochem',
-    // Sums to 1.00 — Biology 0.65 + Biochem 0.25 + Chemistry 0.10 (gen+org)
-    weights: { Biology: 0.65, Biochemistry: 0.25, Chemistry: 0.10 },
-  },
-  {
-    key: 'ps',
-    label: 'Psych/Soc',
-    // Sums to 1.00 — Psych 0.65 + Soc 0.30 + Bio 0.05. Behavioral Science is a
-    // catch-all that gets the full 0.95 psych+soc weight if used standalone.
-    weights: { Psychology: 0.65, Sociology: 0.30, Biology: 0.05, 'Behavioral Science': 0.95 },
-  },
+// ---------- predictive MCAT score (chapter-coverage model) ----------
+// Score scale: MCAT section is 118–132 (centre 125), linear map score = 118 + 14·p.
+const SECTION_MIN = 118, SECTION_MAX = 132, SECTION_RANGE = SECTION_MAX - SECTION_MIN;
+const EXPECTED_CHAPTERS = 12; // assumed chapters per subject
+
+// AAMC weights per section for subjects present in the app.
+// Each set is normalised on-the-fly against only the subjects the user has chapters of.
+const COVERAGE_WEIGHTS = {
+  cp:   { 'Organic Chemistry': 0.15, 'General Chemistry': 0.30, 'Physics and Math': 0.25, 'Physics & Math': 0.25, Biology: 0.05, Biochemistry: 0.25 },
+  cars: { CARS: 1.0 },
+  bb:   { Biology: 0.65, Biochemistry: 0.25, 'Organic Chemistry': 0.05, 'General Chemistry': 0.05 },
+  ps:   { 'Behavioral Science': 0.95, Biology: 0.05, Psychology: 0.65, Sociology: 0.30 },
+};
+const SECTION_DEFS = [
+  { key: 'cp', label: 'Chem/Phys' },
+  { key: 'cars', label: 'CARS' },
+  { key: 'bb', label: 'Bio/Biochem' },
+  { key: 'ps', label: 'Psych/Soc' },
 ];
 
-// Bayesian shrinkage: a Beta(α, β) prior centred on 0.55 with weight ~8 attempts.
-// Keeps tiny samples honest (5/5 doesn't project a perfect 132) and tightens the
-// standard deviation as each subject's N grows toward 200.
-// Score scale: MCAT section is 118–132 (centre 125), linear map score = 118 + 14·p.
-const MCAT_PRIOR_MEAN = 0.55;
-const MCAT_PRIOR_STRENGTH = 8;
-const SECTION_MIN = 118, SECTION_MAX = 132, SECTION_RANGE = SECTION_MAX - SECTION_MIN; // 14
-
-// Per-subject posterior: returns null if no attempts. n is capped at 200 most-recent.
-function subjectPosterior(attemptsForSubject) {
-  if (!attemptsForSubject.length) return null;
-  // attemptsForSubject is already sorted newest-first by caller.
-  const last = attemptsForSubject.slice(0, 200);
-  const correct = last.reduce((s, a) => s + (a.correct ? 1 : 0), 0);
-  const total = last.length;
-  const a = correct + MCAT_PRIOR_MEAN * MCAT_PRIOR_STRENGTH;
-  const b = (total - correct) + (1 - MCAT_PRIOR_MEAN) * MCAT_PRIOR_STRENGTH;
-  const mean = a / (a + b);
-  // Variance of the Beta posterior, then mapped to score-space.
-  const variance = (a * b) / (((a + b) ** 2) * (a + b + 1));
-  return { n: total, accuracy: correct / total, mean, variance };
-}
-
-function predictMcatScores(attempts) {
-  // Group attempts by subject (newest-first within each subject).
-  const sorted = attempts.slice().sort((a, b) => (b.ts || 0) - (a.ts || 0));
-  const bySubject = new Map();
-  for (const a of sorted) {
-    if (!a.subject) continue;
-    if (!bySubject.has(a.subject)) bySubject.set(a.subject, []);
-    bySubject.get(a.subject).push(a);
-  }
-  const posteriors = new Map();
-  for (const [subject, list] of bySubject) {
-    const p = subjectPosterior(list);
-    if (p) posteriors.set(subject, p);
+function predictMcatFromCoverage(files) {
+  // Count chapters per subject across all local files.
+  const bySubject = {};
+  for (const f of files) {
+    if (!f.subject) continue;
+    bySubject[f.subject] = (bySubject[f.subject] || 0) + 1;
   }
 
-  const sections = MCAT_SECTIONS.map((sec) => {
-    // Pull each subject's contribution to this section, ignoring ones with no data.
-    const present = Object.entries(sec.weights)
-      .map(([subject, weight]) => {
-        const post = posteriors.get(subject);
-        return post ? { subject, weight, post } : null;
-      })
-      .filter(Boolean);
-    if (!present.length) return { ...sec, completed: false, n: 0, subjects: [] };
-
-    // Renormalise the weights across only the subjects with data — so a section
-    // doesn't get penalised for sub-areas the user hasn't studied yet.
-    const wSum = present.reduce((s, x) => s + x.weight, 0);
-    let mean = 0, variance = 0;
-    for (const { weight, post } of present) {
-      const w = weight / wSum;
-      mean += w * post.mean;
-      // Var of a weighted sum of independent vars: Σ wᵢ² · varᵢ
-      variance += w * w * post.variance;
+  const sections = SECTION_DEFS.map(({ key, label }) => {
+    const weights = COVERAGE_WEIGHTS[key];
+    let numCoverage = 0;
+    let denCoverage = 0;
+    let totalChaps = 0;
+    for (const [subject, weight] of Object.entries(weights)) {
+      const count = bySubject[subject] || 0;
+      totalChaps += count;
+      if (count > 0) {
+        // Normalise only against subjects the user actually has — so a
+        // complete Behavioral Science set gives 132 in P/S even without Biology.
+        numCoverage += weight * Math.min(1, count / EXPECTED_CHAPTERS);
+        denCoverage += weight;
+      }
     }
-    const score = SECTION_MIN + SECTION_RANGE * mean;
-    const stdev = SECTION_RANGE * Math.sqrt(variance);
-    const nUsed = present.reduce((s, x) => s + x.post.n, 0);
+    if (totalChaps === 0) return { key, label, score: null, coverage: 0, chapters: 0 };
+    const coverage = denCoverage > 0 ? numCoverage / denCoverage : 0;
     return {
-      ...sec,
-      completed: true,
-      n: nUsed,
-      subjects: present.map((p) => ({
-        subject: p.subject,
-        weight: p.weight / wSum,            // renormalised weight (for tooltip/breakdown)
-        rawWeight: p.weight,
-        n: p.post.n,
-        accuracy: p.post.accuracy,
-      })),
-      score: Math.max(SECTION_MIN, Math.min(SECTION_MAX, score)),
-      stdev,
+      key, label,
+      score: Math.max(SECTION_MIN, Math.min(SECTION_MAX, SECTION_MIN + SECTION_RANGE * coverage)),
+      coverage,
+      chapters: totalChaps,
     };
   });
 
-  // Impute any section the user hasn't touched as the mean of completed sections,
-  // with a wider stdev to reflect that it's a cross-section guess (floor at ±2.5
-  // score-points, roughly one real-MCAT inter-section spread). This way the total
-  // always reads as a valid MCAT score (472–528), not a partial sum that looks
-  // nonsensical (e.g. 259 when only two sections have data).
-  const done = sections.filter((s) => s.completed);
-  if (done.length > 0 && done.length < sections.length) {
-    const meanScore = done.reduce((s, x) => s + x.score, 0) / done.length;
-    const meanVariance = done.reduce((s, x) => s + x.stdev ** 2, 0) / done.length;
-    const IMPUTED_FLOOR_STDEV = 2.5;
-    const imputedStdev = Math.max(Math.sqrt(meanVariance) * 2, IMPUTED_FLOOR_STDEV);
-    for (const s of sections) {
-      if (s.completed) continue;
-      s.imputed = true;
-      s.score = meanScore;
-      s.stdev = imputedStdev;
-    }
-  }
+  const done = sections.filter((s) => s.score !== null);
+  if (!done.length) return null;
 
-  // Total covers all 4 sections (real + imputed). Variance of a sum of independents
-  // is the sum of variances; sqrt for the stdev. Null only if nothing has been
-  // studied at all.
-  const contributing = sections.filter((s) => s.completed || s.imputed);
-  const total = done.length
-    ? {
-        score: contributing.reduce((acc, x) => acc + x.score, 0),
-        stdev: Math.sqrt(contributing.reduce((acc, x) => acc + x.stdev ** 2, 0)),
-        sectionsCompleted: done.length,
-        allFour: done.length === MCAT_SECTIONS.length,
-      }
-    : null;
-  return { sections, total };
+  // Impute missing sections as the mean of completed ones so the total is always valid.
+  const meanScore = done.reduce((s, x) => s + x.score, 0) / done.length;
+  const allSections = sections.map((s) => s.score !== null ? s : { ...s, score: meanScore, imputed: true });
+  return {
+    sections: allSections,
+    total: {
+      score: allSections.reduce((acc, s) => acc + s.score, 0),
+      sectionsCompleted: done.length,
+      allFour: done.length === 4,
+    },
+  };
 }
 
-function McatPredictionCard({ attempts }) {
-  const pred = useMemo(() => predictMcatScores(attempts), [attempts]);
+function McatPredictionCard() {
+  const { files } = useApp();
+  const pred = useMemo(() => predictMcatFromCoverage(files), [files]);
+  if (!pred) return null;
   const { sections, total } = pred;
   const [expanded, setExpanded] = useState(false);
-  const anyCompleted = sections.some((s) => s.completed);
-  if (!anyCompleted) return null;
-  const fmt = (n) => n.toFixed(1).replace(/\.0$/, '');
+  const pct = (v) => Math.round(v * 100);
   return (
     <div className="bg-[var(--bg-card)] border border-[var(--accent-border)] rounded-2xl p-5 sm:p-6">
       <div className="flex items-baseline justify-between gap-3 mb-3">
         <div>
           <div className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Predicted MCAT</div>
           <div className="text-4xl sm:text-5xl font-bold text-[var(--text-strong)] mt-1">
-            {total ? Math.round(total.score) : '—'}
-            {total && (
-              <span className="text-base sm:text-lg font-medium text-[var(--text-muted)] ml-2">
-                ± {fmt(total.stdev)}
-              </span>
-            )}
+            {Math.round(total.score)}
           </div>
-          {total && !total.allFour && (
+          {!total.allFour && (
             <div className="text-xs text-[var(--text-faint)] mt-1">
-              {total.sectionsCompleted}/4 sections studied · others estimated from your average
+              {total.sectionsCompleted}/4 sections covered · others estimated from your average
             </div>
           )}
         </div>
@@ -5110,35 +5041,27 @@ function McatPredictionCard({ attempts }) {
           <div
             key={s.key}
             className={
-              `border rounded-xl px-3 py-2.5 ` +
+              'border rounded-xl px-3 py-2.5 ' +
               (s.imputed
                 ? 'bg-[var(--bg-card-soft)] border-dashed border-[var(--border)]'
                 : 'bg-[var(--bg-elev-soft)] border-[var(--border-soft)]')
             }
           >
             <div className="text-[10px] uppercase tracking-wide text-[var(--text-muted)]">{s.label}</div>
-            {s.completed ? (
+            {s.score !== null && !s.imputed ? (
               <>
-                <div className="text-xl font-bold text-[var(--text-strong)] mt-0.5">
-                  {Math.round(s.score)}
-                  <span className="text-xs font-medium text-[var(--text-muted)] ml-1">± {fmt(s.stdev)}</span>
-                </div>
-                <div className="text-[10px] text-[var(--text-faint)] mt-0.5">
-                  n={s.n}
-                </div>
+                <div className="text-xl font-bold text-[var(--text-strong)] mt-0.5">{Math.round(s.score)}</div>
+                <div className="text-[10px] text-[var(--text-faint)] mt-0.5">{pct(s.coverage)}% · {s.chapters} ch</div>
               </>
             ) : s.imputed ? (
               <>
-                <div className="text-xl font-bold text-[var(--text-muted)] mt-0.5 italic">
-                  {Math.round(s.score)}
-                  <span className="text-xs font-medium text-[var(--text-fainter)] ml-1">± {fmt(s.stdev)}</span>
-                </div>
-                <div className="text-[10px] text-[var(--text-faint)] mt-0.5">est. (no data)</div>
+                <div className="text-xl font-bold text-[var(--text-muted)] mt-0.5 italic">{Math.round(s.score)}</div>
+                <div className="text-[10px] text-[var(--text-faint)] mt-0.5">est. (no chapters)</div>
               </>
             ) : (
               <>
                 <div className="text-xl font-bold text-[var(--text-fainter)] mt-0.5">—</div>
-                <div className="text-[10px] text-[var(--text-faint)] mt-0.5">not yet studied</div>
+                <div className="text-[10px] text-[var(--text-faint)] mt-0.5">no chapters yet</div>
               </>
             )}
           </div>
@@ -5146,40 +5069,28 @@ function McatPredictionCard({ attempts }) {
       </div>
       {expanded && (
         <div className="mt-3 space-y-2 text-[11px]">
-          {sections.filter((s) => s.completed).map((s) => (
+          {sections.filter((s) => s.score !== null && !s.imputed).map((s) => (
             <div key={s.key} className="bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg p-2.5">
-              <div className="font-semibold text-[var(--text)] mb-1">{s.label} — {Math.round(s.score)} ± {fmt(s.stdev)}</div>
-              <div className="space-y-0.5">
-                {s.subjects.map((sub) => (
-                  <div key={sub.subject} className="flex items-center justify-between gap-2 text-[var(--text-muted)]">
-                    <span className="truncate">
-                      <span className="text-[var(--text)]">{sub.subject}</span>
-                      <span className="text-[var(--text-fainter)]"> · AAMC weight {Math.round(sub.rawWeight * 100)}% → {Math.round(sub.weight * 100)}% used</span>
-                    </span>
-                    <span className="shrink-0 font-mono text-[var(--text-faint)]">
-                      n={sub.n} · {Math.round(sub.accuracy * 100)}%
-                    </span>
-                  </div>
-                ))}
-              </div>
+              <div className="font-semibold text-[var(--text)] mb-1">{s.label} — {Math.round(s.score)} ({pct(s.coverage)}% coverage, {s.chapters} chapters)</div>
             </div>
           ))}
         </div>
       )}
       <div className="flex items-center justify-between gap-3 mt-3">
         <div className="text-[11px] text-[var(--text-faint)] leading-snug flex-1">
-          Per-subject accuracy from your last 200 attempts each, weighted into sections by AAMC content (e.g. Bio/Biochem = 65% Biology + 25% Biochem + 10% Chemistry), shrunk toward a 55% prior. App questions are tuned harder than the real exam — treat as a floor.
+          Based on chapters downloaded. Coverage is normalised to available subjects — 12 chapters per subject = 132 in that section. Download more chapters from the Bank tab to raise your score.
         </div>
         <button
           onClick={() => setExpanded((x) => !x)}
           className="shrink-0 text-xs px-2.5 py-1 border border-[var(--border)] rounded hover:bg-[var(--bg-hover)]"
         >
-          {expanded ? 'Hide breakdown' : 'Breakdown'}
+          {expanded ? 'Hide' : 'Details'}
         </button>
       </div>
     </div>
   );
 }
+
 
 function StatsView() {
   const { attempts, files, questions, clearAttempts } = useApp();
@@ -5243,31 +5154,9 @@ function StatsView() {
   }
 
   const modeLabels = { mc: 'Multiple choice', short: 'Short answer', match: 'Matching' };
-  const overallPct = stats.overall.total
-    ? Math.round((stats.overall.correct / stats.overall.total) * 100)
-    : 0;
 
   return (
     <div className="space-y-5">
-      {/* Big number */}
-      <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-6 text-center">
-        <div className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Overall accuracy</div>
-        <div className="text-5xl font-bold mt-2 text-[var(--text-strong)]">{overallPct}%</div>
-        <div className="text-sm text-[var(--text-muted)] mt-1">
-          {stats.overall.correct} of {stats.overall.total} attempts correct
-        </div>
-      </div>
-
-      {/* By mode */}
-      <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-5">
-        <h3 className="font-semibold mb-3 text-[var(--text-strong)]">By mode</h3>
-        <div className="space-y-3">
-          {Object.entries(stats.byMode).map(([mode, s]) => (
-            <StatBar key={mode} label={modeLabels[mode] || mode} correct={s.correct} total={s.total} />
-          ))}
-        </div>
-      </div>
-
       {/* By subject */}
       {Object.keys(stats.bySubject).length > 0 && (
         <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-5">
@@ -5330,7 +5219,7 @@ function StatsView() {
 
 // ---------- settings ----------
 function SettingsPanel({ onClose }) {
-  const { palette, mode, setPalette, setMode, apiKey, setApiKey, client, session, pendingSync, syncBusy, syncError, flushSync, reauditEnabled, setReauditEnabled, volume, setVolume, autoDownloadChapters, setAutoDownloadChapters } = useApp();
+  const { palette, mode, setPalette, setMode, apiKey, setApiKey, client, session, pendingSync, syncBusy, syncError, flushSync, reauditEnabled, setReauditEnabled, volume, setVolume, autoDownloadChapters, setAutoDownloadChapters, tropicalBg, setTropicalBg } = useApp();
   const [keyVal, setKeyVal] = useState(apiKey || '');
   const [keyShow, setKeyShow] = useState(false);
   const [keyErr, setKeyErr] = useState('');
@@ -5360,6 +5249,7 @@ function SettingsPanel({ onClose }) {
     ['cold', '❄️', 'Cold'],
     ['warm', '🍂', 'Warm'],
     ['duo', '🦉', 'Duo'],
+    ['tropical', '🌴', 'Tropical'],
   ];
   const modeOpts = [
     ['light', '☀️', 'Light'],
@@ -5376,7 +5266,7 @@ function SettingsPanel({ onClose }) {
 
       <div>
         <div className="text-xs uppercase tracking-wide text-[var(--text-muted)] mb-2">Colour</div>
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-4 gap-2">
           {paletteOpts.map(([k, emoji, label]) => (
             <button
               key={k}
@@ -5536,6 +5426,22 @@ function SettingsPanel({ onClose }) {
           </label>
         </div>
       )}
+
+      <div>
+        <div className="text-xs uppercase tracking-wide text-[var(--text-muted)] mb-2">Background</div>
+        <label className="flex items-center justify-between gap-3 bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg px-3 py-2.5 cursor-pointer">
+          <div className="text-sm min-w-0">
+            <div className="text-[var(--text)]">🌴 Tropical island background</div>
+            <div className="text-[11px] text-[var(--text-faint)] mt-0.5">Sky-to-ocean gradient background. Switches between day and night with your light/dark mode.</div>
+          </div>
+          <input
+            type="checkbox"
+            checked={tropicalBg}
+            onChange={(e) => setTropicalBg(e.target.checked)}
+            className="w-4 h-4 shrink-0"
+          />
+        </label>
+      </div>
     </div>
   );
 }
@@ -7244,9 +7150,7 @@ function Shell() {
               ? <UserProfile username={profileUser} onBack={() => setProfileUser(null)} />
               : (
                 <>
-                  <McatPredictionCard attempts={attempts} />
-                  <Leaderboard onPickUser={(u) => setProfileUser(u)} />
-                  <CarsCalendar />
+                  <McatPredictionCard />
                   {session && <ServerStatsView />}
                   <StatsView />
                 </>

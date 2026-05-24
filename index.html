@@ -21,6 +21,7 @@
         (mode === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
       if (palette === 'warm') return dark ? 'darkwarm' : 'warm';
       if (palette === 'duo') return dark ? 'darkgreen' : 'green';
+      if (palette === 'tropical') return dark ? 'darktropical' : 'tropical';
       return dark ? 'dark' : 'light';
     }
     try {
@@ -252,6 +253,80 @@
     --warning-text-strong: #f5d590;
   }
 
+  :root[data-theme="tropical"] {
+    --bg: transparent;
+    --bg-card: rgba(255,255,255,0.78);
+    --bg-card-strong: rgba(255,255,255,0.92);
+    --bg-card-soft: rgba(255,255,255,0.52);
+    --bg-elev: rgba(220,248,255,0.85);
+    --bg-elev-soft: rgba(240,252,255,0.65);
+    --bg-hover: rgba(178,235,242,0.7);
+    --bg-hover-soft: rgba(220,248,255,0.5);
+    --border: #67c8d4;
+    --border-soft: #a7dde3;
+    --border-strong: #0097a7;
+    --text: #002b35;
+    --text-strong: #00181f;
+    --text-muted: #005f72;
+    --text-faint: #007d8f;
+    --text-fainter: #30a5b5;
+    --accent: #0097a7;
+    --accent-hover: #00838f;
+    --accent-text: #005f6b;
+    --accent-border: #00acc1;
+    --accent-soft: rgba(0,151,167,0.14);
+    --accent-2: #f97316;
+    --accent-2-text: #ea580c;
+    --success-bg: rgba(209,250,229,0.82);
+    --success-bg-strong: rgba(167,243,208,0.9);
+    --success-text: #065f46;
+    --success-border: #10b981;
+    --danger-bg: rgba(254,226,226,0.82);
+    --danger-bg-strong: rgba(254,202,202,0.9);
+    --danger-text: #991b1b;
+    --danger-border: #dc2626;
+    --warning-bg: rgba(254,243,199,0.82);
+    --warning-text: #92400e;
+    --warning-text-strong: #b45309;
+  }
+
+  :root[data-theme="darktropical"] {
+    --bg: transparent;
+    --bg-card: rgba(4,22,38,0.82);
+    --bg-card-strong: rgba(4,22,38,0.93);
+    --bg-card-soft: rgba(4,22,38,0.55);
+    --bg-elev: rgba(1,9,18,0.90);
+    --bg-elev-soft: rgba(2,13,26,0.65);
+    --bg-hover: rgba(8,42,62,0.72);
+    --bg-hover-soft: rgba(6,30,48,0.5);
+    --border: #0c5a74;
+    --border-soft: #06364a;
+    --border-strong: #0e86aa;
+    --text: #b2efef;
+    --text-strong: #e0fafa;
+    --text-muted: #56bcd5;
+    --text-faint: #388ea5;
+    --text-fainter: #1e617a;
+    --accent: #22d3ee;
+    --accent-hover: #06b6d4;
+    --accent-text: #67e8f9;
+    --accent-border: #22d3ee;
+    --accent-soft: rgba(34,211,238,0.17);
+    --accent-2: #fb923c;
+    --accent-2-text: #fdba74;
+    --success-bg: rgba(6,78,59,0.45);
+    --success-bg-strong: rgba(6,95,70,0.35);
+    --success-text: #34d399;
+    --success-border: #10b981;
+    --danger-bg: rgba(127,29,29,0.45);
+    --danger-bg-strong: rgba(127,29,29,0.35);
+    --danger-text: #fca5a5;
+    --danger-border: #ef4444;
+    --warning-bg: rgba(120,53,15,0.45);
+    --warning-text: #fcd34d;
+    --warning-text-strong: #fbbf24;
+  }
+
   :root[data-theme="darkgreen"] {
     --bg: #0e1710;
     --bg-card: rgb(20 33 23 / 0.7);
@@ -288,10 +363,60 @@
     --warning-text: #ecca78;
     --warning-text-strong: #f2d68e;
   }
+
+  /* ── Tropical animated gradient borders ─────────────────────────────── */
+  @keyframes tropicalBorder {
+    0%   { box-shadow: 0 0 0 1.5px #06b6d4; }
+    20%  { box-shadow: 0 0 0 1.5px #22d3ee; }
+    40%  { box-shadow: 0 0 0 1.5px #fb7185; }
+    60%  { box-shadow: 0 0 0 1.5px #f97316; }
+    80%  { box-shadow: 0 0 0 1.5px #a78bfa; }
+    100% { box-shadow: 0 0 0 1.5px #06b6d4; }
+  }
+  :root[data-theme="tropical"]    .rounded-2xl,
+  :root[data-theme="darktropical"] .rounded-2xl {
+    animation: tropicalBorder 4s linear infinite;
+    border-color: transparent !important;
+  }
+
+  /* ── Tropical island background ────────────────────────────────────── */
+  /* Day / light themes */
+  body.tropical-bg {
+    background:
+      radial-gradient(ellipse 320px 180px at 82% 12%, rgba(255,230,100,0.35) 0%, transparent 65%),
+      radial-gradient(ellipse 100% 40% at 50% 100%, rgba(194,154,80,0.25) 0%, transparent 70%),
+      linear-gradient(to bottom,
+        #7ec8e3 0%,
+        #aadff0 18%,
+        #5ecfbe 42%,
+        #38b2a0 58%,
+        #e8d08a 76%,
+        #d4b86a 100%
+      ) !important;
+    background-attachment: fixed !important;
+  }
+  /* Night / dark themes */
+  :root[data-theme="dark"]        body.tropical-bg,
+  :root[data-theme="darkwarm"]    body.tropical-bg,
+  :root[data-theme="darkgreen"]   body.tropical-bg,
+  :root[data-theme="darktropical"] body.tropical-bg {
+    background:
+      radial-gradient(ellipse 180px 120px at 78% 10%, rgba(200,230,255,0.18) 0%, transparent 60%),
+      radial-gradient(ellipse 60% 30% at 50% 100%, rgba(5,25,50,0.6) 0%, transparent 80%),
+      linear-gradient(to bottom,
+        #030b1a 0%,
+        #051628 18%,
+        #062840 42%,
+        #093750 58%,
+        #0b2338 76%,
+        #060e1c 100%
+      ) !important;
+    background-attachment: fixed !important;
+  }
 </style>
 </head>
 <body>
 <div id="root"></div>
-<script type="text/babel" data-presets="react" src="app.js?v=54"></script>
+<script type="text/babel" data-presets="react" src="app.js?v=55"></script>
 </body>
 </html>
