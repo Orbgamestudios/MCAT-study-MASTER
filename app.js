@@ -7695,7 +7695,6 @@ function Shell() {
               <FlagFixesPanel />
             </>
           )}
-          <div style={{ display: tab === 'study' ? undefined : 'none' }}><StudyView /></div>
           {tab === 'home' && <HomeView onGoToStudy={() => setTab('study')} />}
           {tab === 'stats' && (
             profileUser
@@ -7709,6 +7708,9 @@ function Shell() {
               )
           )}
           {tab === 'banks' && <BankTab />}
+          {/* StudyView is always mounted (preserves state) but hidden when inactive.
+              Kept last so its hidden DOM node never creates a space-y gap above other tabs. */}
+          <div style={{ display: tab === 'study' ? undefined : 'none' }}><StudyView /></div>
         </div>
       </main>
 
