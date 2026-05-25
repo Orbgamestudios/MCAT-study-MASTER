@@ -28,6 +28,7 @@ const KEYS = {
   volume: 'mcat:volume', // 0-1, global SFX volume multiplier (default 1)
   autoDownload: 'mcat:autoDownload', // boolean — re-download updated chapters on app load
   tropicalBg: 'mcat:tropicalBg',    // boolean — tropical island background
+  smoothAnim: 'mcat:smoothAnim',     // boolean — smooth tab/question/reveal transitions
   bankSeen: 'mcat:bankSeen', // timestamp — last time the user reviewed the Bank tab
   cars: 'mcat:cars', // { [date]: { score, total, completed_at } } — daily CARS results
   connectionsResults: 'mcat:connectionsResults', // { [date]: { solved, mistakes, completed_at } }
@@ -1892,6 +1893,11 @@ function AppProvider({ children }) {
     storage.set(KEYS.autoDownload, !!v);
     setAutoDownloadChaptersState(!!v);
   }, []);
+  const [smoothAnim, setSmoothAnimState] = useState(() => !!storage.get(KEYS.smoothAnim, false));
+  const setSmoothAnim = useCallback((v) => {
+    storage.set(KEYS.smoothAnim, !!v);
+    setSmoothAnimState(!!v);
+  }, []);
   const [tropicalBg, setTropicalBgState] = useState(() => !!storage.get(KEYS.tropicalBg, false));
   const setTropicalBg = useCallback((v) => {
     storage.set(KEYS.tropicalBg, !!v);
@@ -1960,6 +1966,11 @@ function AppProvider({ children }) {
     }
     return stopDynamicBg;
   }, [tropicalBg, palette, mode]);
+
+  // Smooth animations: set data-smooth attribute on <html> so CSS keyframes apply.
+  useEffect(() => {
+    document.documentElement.setAttribute('data-smooth', smoothAnim ? 'true' : 'false');
+  }, [smoothAnim]);
 
   // One-time cleanup: drop the temporary drag-position key now that the bird
   // is anchored to the speech bubble's bottom.
@@ -2114,7 +2125,7 @@ function AppProvider({ children }) {
   // Auto-download: when enabled, silently refresh any locally-downloaded chapters
   // whose server updated_at is newer than what we last fetched.
   useEffect(() => {
-    if (!autoDownloadChapters || !session?.token) return;
+    if (!autoDownloadChapters) return;
     const localChapters = files.filter((f) => f.chapter_id);
     if (!localChapters.length) return;
     let cancelled = false;
@@ -2158,7 +2169,7 @@ function AppProvider({ children }) {
       } catch {}
     })();
     return () => { cancelled = true; };
-  }, [autoDownloadChapters, session?.token]); // eslint-disable-line
+  }, [autoDownloadChapters]); // eslint-disable-line
 
   const value = useMemo(
     () => ({
@@ -2177,6 +2188,7 @@ function AppProvider({ children }) {
       volume, setVolume,
       autoDownloadChapters, setAutoDownloadChapters,
       tropicalBg, setTropicalBg,
+      smoothAnim, setSmoothAnim,
     }),
     [apiKey, setApiKey, files, setFiles, extractions, setExtraction, questions, setQuestionsFor,
      attempts, addAttempt, clearAttempts, staticBank, useStaticBank, readOnly,
@@ -2185,7 +2197,8 @@ function AppProvider({ children }) {
      session, setSession, api, pendingSync, flushSync, syncBusy, syncError, client,
      reauditEnabled, setReauditEnabled, volume, setVolume,
      autoDownloadChapters, setAutoDownloadChapters,
-     tropicalBg, setTropicalBg]
+     tropicalBg, setTropicalBg,
+     smoothAnim, setSmoothAnim]
   );
   return <AppCtx.Provider value={value}>{children}</AppCtx.Provider>;
 }
@@ -3385,7 +3398,7 @@ function MCQuestion({ item, onAnswer, nextSlot, onFlag }) {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="question-card space-y-4">
       <p className="text-base leading-relaxed">{item.q.question}</p>
       <div className="space-y-2">
         {shuffled.map((entry, i) => {
@@ -3426,7 +3439,7 @@ function MCQuestion({ item, onAnswer, nextSlot, onFlag }) {
               {nextSlot}
             </div>
           </div>
-          <div className="bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg p-3 text-sm text-[var(--text)]">
+          <div className="answer-reveal bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg p-3 text-sm text-[var(--text)]">
             {item.q.explanation}
           </div>
           <RelatedFlashcards item={item} />
@@ -3452,7 +3465,7 @@ function ShortAnswerQuestion({ item, onAnswer, nextSlot }) {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="question-card space-y-4">
       <p className="text-base leading-relaxed">{item.q.prompt}</p>
       <textarea
         value={text}
@@ -3590,7 +3603,7 @@ function SinglePart({ part, onAnswer, nextSlot, continueLabel }) {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="question-card space-y-4">
       <p className="text-base leading-relaxed">{part.question}</p>
       <div className="space-y-2">
         {shuffled.map((entry, i) => {
@@ -3632,7 +3645,7 @@ function SinglePart({ part, onAnswer, nextSlot, continueLabel }) {
             )}
             {advanced && nextSlot}
           </div>
-          <div className="bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg p-3 text-sm text-[var(--text)]">
+          <div className="answer-reveal bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg p-3 text-sm text-[var(--text)]">
             {part.explanation}
           </div>
         </>
@@ -5761,7 +5774,8 @@ function StatsView() {
 
 // ---------- settings ----------
 function SettingsPanel({ onClose }) {
-  const { palette, mode, setPalette, setMode, apiKey, setApiKey, client, session, pendingSync, syncBusy, syncError, flushSync, reauditEnabled, setReauditEnabled, volume, setVolume, autoDownloadChapters, setAutoDownloadChapters, tropicalBg, setTropicalBg } = useApp();
+  const { palette, mode, setPalette, setMode, apiKey, setApiKey, client, session, pendingSync, syncBusy, syncError, flushSync, reauditEnabled, setReauditEnabled, volume, setVolume, autoDownloadChapters, setAutoDownloadChapters, tropicalBg, setTropicalBg, smoothAnim, setSmoothAnim, files } = useApp();
+  const hasDownloadedChapters = files.some((f) => f.chapter_id);
   const [keyVal, setKeyVal] = useState(apiKey || '');
   const [keyShow, setKeyShow] = useState(false);
   const [keyErr, setKeyErr] = useState('');
@@ -5837,7 +5851,7 @@ function SettingsPanel({ onClose }) {
             </button>
           ))}
         </div>
-        <div className="mt-3">
+        <div className="mt-3 space-y-2">
           <label className="flex items-center justify-between gap-3 bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg px-3 py-2.5 cursor-pointer">
             <div className="text-sm min-w-0">
               <div className="text-[var(--text)]">
@@ -5849,6 +5863,13 @@ function SettingsPanel({ onClose }) {
               </div>
             </div>
             <input type="checkbox" checked={tropicalBg} onChange={(e) => setTropicalBg(e.target.checked)} className="w-4 h-4 shrink-0" />
+          </label>
+          <label className="flex items-center justify-between gap-3 bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg px-3 py-2.5 cursor-pointer">
+            <div className="text-sm min-w-0">
+              <div className="text-[var(--text)]">✨ Smooth animations</div>
+              <div className="text-[11px] text-[var(--text-faint)] mt-0.5">Fade and slide transitions when switching tabs and advancing questions.</div>
+            </div>
+            <input type="checkbox" checked={smoothAnim} onChange={(e) => setSmoothAnim(e.target.checked)} className="w-4 h-4 shrink-0" />
           </label>
         </div>
       </div>
@@ -5965,7 +5986,7 @@ function SettingsPanel({ onClose }) {
         </label>
       </div>
 
-      {session && (
+      {hasDownloadedChapters && (
         <div>
           <div className="text-xs uppercase tracking-wide text-[var(--text-muted)] mb-2">Chapters</div>
           <label className="flex items-center justify-between gap-3 bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg px-3 py-2.5 cursor-pointer">
@@ -7673,9 +7694,9 @@ function Shell() {
       <div style={{ height: headerH, flexShrink: 0 }} />
 
       <main className="flex-1 p-3 sm:p-6">
-        <div className="max-w-3xl mx-auto space-y-4 sm:space-y-5">
+        <div className="max-w-3xl mx-auto">
           {tab === 'library' && (
-            <>
+            <div className="tab-content space-y-4 sm:space-y-5">
               {!readOnly && apiKey && <UploadPanel />}
               {session && <PublishAllPanel />}
               {fullyProcessed > 0 && (
@@ -7693,11 +7714,12 @@ function Shell() {
               )}
               <FileList />
               <FlagFixesPanel />
-            </>
+            </div>
           )}
-          {tab === 'home' && <HomeView onGoToStudy={() => setTab('study')} />}
+          {tab === 'home' && <div className="tab-content"><HomeView onGoToStudy={() => setTab('study')} /></div>}
           {tab === 'stats' && (
-            profileUser
+            <div className="tab-content">
+            {profileUser
               ? <UserProfile username={profileUser} onBack={() => setProfileUser(null)} />
               : (
                 <>
@@ -7705,9 +7727,10 @@ function Shell() {
                   {session && <ServerStatsView />}
                   <StatsView />
                 </>
-              )
+              )}
+            </div>
           )}
-          {tab === 'banks' && <BankTab />}
+          {tab === 'banks' && <div className="tab-content"><BankTab /></div>}
           {/* StudyView is always mounted (preserves state) but hidden when inactive.
               Kept last so its hidden DOM node never creates a space-y gap above other tabs. */}
           <div style={{ display: tab === 'study' ? undefined : 'none' }}><StudyView /></div>

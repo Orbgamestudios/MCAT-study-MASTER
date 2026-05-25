@@ -377,10 +377,30 @@
 
   /* Dynamic background is applied entirely via JS (see app.js tropicalBg/getDynamicBg)
      so it works correctly for all colour palettes in both light and dark mode. */
+
+  /* ── Smooth animations ────────────────────────────────────────────────── */
+  @keyframes mcatFadeUp {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0);   }
+  }
+  @keyframes mcatFadeIn {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+  }
+
+  html[data-smooth="true"] .tab-content {
+    animation: mcatFadeUp 0.22s ease both;
+  }
+  html[data-smooth="true"] .question-card {
+    animation: mcatFadeUp 0.18s ease both;
+  }
+  html[data-smooth="true"] .answer-reveal {
+    animation: mcatFadeIn 0.15s ease both;
+  }
 </style>
 </head>
 <body>
 <div id="root"></div>
-<script type="text/babel" data-presets="react" src="app.js?v=64"></script>
+<script type="text/babel" data-presets="react" src="app.js?v=66"></script>
 </body>
 </html>
