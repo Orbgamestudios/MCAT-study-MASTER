@@ -7732,7 +7732,7 @@ function Shell() {
           )}
           {tab === 'home' && <div className="tab-content"><HomeView onGoToStudy={() => setTab('study')} /></div>}
           {tab === 'stats' && (
-            <div className="tab-content">
+            <div className="tab-content space-y-4 sm:space-y-5">
             {profileUser
               ? <UserProfile username={profileUser} onBack={() => setProfileUser(null)} />
               : (
