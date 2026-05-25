@@ -7620,6 +7620,20 @@ function Shell() {
   useEffect(() => { if (readOnly) setTab('home'); else if (!hasLibrary) setTab('home'); }, [readOnly, hasLibrary]);
   useEffect(() => { setProfileUser(null); }, [tab]);
 
+  const swipeOrigin = useRef({ x: 0, y: 0 });
+  const handleTouchStart = useCallback((e) => {
+    swipeOrigin.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+  }, []);
+  const handleTouchEnd = useCallback((e) => {
+    const dx = e.changedTouches[0].clientX - swipeOrigin.current.x;
+    const dy = e.changedTouches[0].clientY - swipeOrigin.current.y;
+    if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.3) return;
+    const keys = tabs.map(([k]) => k);
+    const idx = keys.indexOf(tab);
+    if (dx < 0 && idx < keys.length - 1) setTab(keys[idx + 1]);
+    if (dx > 0 && idx > 0) setTab(keys[idx - 1]);
+  }, [tab, tabs]);
+
   const fullyProcessed = files.filter((f) => extractions[f.file_id] && questions[f.file_id]?.mc && questions[f.file_id]?.short).length;
 
   const headerRef = useRef(null);
@@ -7693,7 +7707,7 @@ function Shell() {
       {/* Spacer pushes content below the fixed header */}
       <div style={{ height: headerH, flexShrink: 0 }} />
 
-      <main className="flex-1 p-3 sm:p-6">
+      <main className="flex-1 px-3 pb-3 pt-[17px] sm:px-6 sm:pb-6 sm:pt-[29px]" onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
         <div className="max-w-3xl mx-auto">
           {tab === 'library' && (
             <div className="tab-content space-y-4 sm:space-y-5">
