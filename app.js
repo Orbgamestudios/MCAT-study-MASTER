@@ -92,15 +92,15 @@ function _initCold(w, h, isDark) {
 function _initWarm(w, h) {
   const palette = ['#d4380a','#e8720c','#f0a818','#c83608','#8b2802','#f06010','#e04808','#b83206'];
   // Trees scattered along the ground, sorted back-to-front by scale.
-  const trees = Array.from({ length: 7 }, () => {
-    const scale = _rnd(0.55, 1.35);
+  const trees = Array.from({ length: 14 }, () => {
+    const scale = _rnd(0.9, 2.2);
     return {
       x: _rnd(-w * 0.05, w * 1.05),
       scale,
       // crown radius scaled per tree
-      cr: 38 * scale,
+      cr: 56 * scale,
       // trunk height
-      th: 70 * scale,
+      th: 110 * scale,
       // foliage hue index (used for slight crown tint variation)
       hue: Math.floor(_rnd(0, palette.length)),
       sway: _pi2(),
@@ -124,13 +124,13 @@ function _initWarm(w, h) {
 
 function _initDuo(w, h) {
   // Jungle palms — back to front.
-  const trees = Array.from({ length: 6 }, () => {
-    const scale = _rnd(0.5, 1.3);
+  const trees = Array.from({ length: 12 }, () => {
+    const scale = _rnd(0.85, 2.1);
     return {
       x: _rnd(-w * 0.05, w * 1.05),
       scale,
-      trunkH: 90 * scale,
-      frondLen: 50 * scale,
+      trunkH: 140 * scale,
+      frondLen: 80 * scale,
       lean: _rnd(-0.15, 0.15),
       sway: _pi2(),
     };
