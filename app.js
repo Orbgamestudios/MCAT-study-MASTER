@@ -428,21 +428,22 @@ function _initMadison(w, h, isDark) {
       height: Math.max(36, h * 0.08),
       numArches: 11,
     },
-    // Tiny cars driving along the lakeshore behind the terrace.
-    // Direction is +1 (right) or -1 (left); a few of each so there's
-    // visible cross-traffic. Speeds vary slightly per car.
-    cars: Array.from({ length: 14 }, (_, i) => {
-      const dir = i % 2 === 0 ? 1 : -1;
+    // Tiny cars driving at the lakeshore. Sparse traffic — a handful of
+    // cars on a single horizontal line right at the bottom of the city
+    // (next to the water). Most of them sit off-screen waiting for a
+    // long delay before they enter, so the road reads as mostly empty
+    // with the occasional headlight passing through.
+    cars: Array.from({ length: 5 }, () => {
+      const dir = Math.random() < 0.5 ? 1 : -1;
       return {
-        x: _rnd(0, w),
+        x: dir === 1 ? -40 : w + 40, // start off-screen
         dir,
-        sp: _rnd(0.35, 0.85),
-        // Two parallel rows so opposite directions don't share the same y.
-        row: dir === 1 ? 0 : 1,
-        // Colour for the car body (visible at day; at night it's mostly
-        // headlight/taillight).
+        sp: _rnd(0.4, 0.85),
         col: ['#1f2733', '#3b3b3b', '#6b5e3a', '#5a2c2c', '#2c4a5a'][Math.floor(Math.random() * 5)],
         len: _rnd(5, 8),
+        // Stagger entrance so they don't all arrive at once.
+        // (frames at 30 fps; 30-300 s gap before this car appears)
+        delay: Math.floor(30 * _rnd(20, 240)),
       };
     }),
   };
@@ -1686,11 +1687,11 @@ function _drawMadison(ctx, isDark, state, t, py, w, h) {
     const archCount = tr.numArches;
     const archW = tr.width / archCount;
     const archH = tr.height * 0.85;
-    // Solid roof + columns base colour
-    ctx.fillStyle = isDark ? '#dcdacd' : '#f5f1de';
+    // Dark roof strip across the top of the terrace.
+    ctx.fillStyle = isDark ? '#0d0d14' : '#1a1d22';
     ctx.fillRect(left, topY, tr.width, tr.height * 0.16); // top roof strip
-    // Inner arch field background (slightly darker)
-    ctx.fillStyle = isDark ? '#5c5448' : '#aea48a';
+    // Inner arch field background (medium-dark, lit from inside by the arches)
+    ctx.fillStyle = isDark ? '#1c1c24' : '#3a3a40';
     ctx.fillRect(left, topY + tr.height * 0.16, tr.width, tr.height - tr.height * 0.16);
 
     // Cut out each arch: draw a glowing "opening" with a thin column on the right.
@@ -1739,67 +1740,62 @@ function _drawMadison(ctx, isDark, state, t, py, w, h) {
         });
       }
     }
-    // Thin top trim line
-    ctx.fillStyle = isDark ? '#fff' : '#e9e3cd';
+    // Thin top trim line (subtle dark accent under the roof)
+    ctx.fillStyle = isDark ? 'rgba(0,0,0,0.55)' : 'rgba(0,0,0,0.35)';
     ctx.fillRect(left, topY + tr.height * 0.155, tr.width, 1);
     // Water-line shadow under the terrace
     ctx.fillStyle = isDark ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0.25)';
     ctx.fillRect(left, baseY - 1, tr.width, 1.5);
   }
 
-  // ── Tiny cars driving along the lakeshore behind the terrace ──
-  // Two thin rows just above the Monona Terrace top, one going right and
-  // one going left. Each car is a 5-8px rectangle with a headlight halo
-  // ahead (yellow-white) and a small taillight behind (red) at night.
+  // ── Tiny cars driving along the lakeshore (sparse, all same height) ──
+  // Single horizontal line right at the bottom of the city skyline,
+  // basically at the water's edge. Most of the time the road is empty;
+  // a car drifts past every so often, then waits a long while before
+  // its next pass.
   {
-    const tr = state.terrace;
-    const roadTopY = (groundY - tr.height) - 6; // a few px above terrace top
-    const rowH = 3;
+    const cy = groundY - 1.6; // sit right on the lake edge
     for (const car of state.cars) {
+      if (car.delay > 0) { car.delay -= 1; continue; }
       car.x += car.dir * car.sp;
-      if (car.dir === 1 && car.x > w + 12) car.x = -12;
-      if (car.dir === -1 && car.x < -12) car.x = w + 12;
-      const cy = roadTopY + car.row * (rowH + 1);
+      // When off screen, schedule a long delay before this car re-enters.
+      if (car.dir === 1 && car.x > w + 12) {
+        car.x = -12;
+        car.delay = Math.floor(30 * _rnd(30, 240));
+        continue;
+      }
+      if (car.dir === -1 && car.x < -12) {
+        car.x = w + 12;
+        car.delay = Math.floor(30 * _rnd(30, 240));
+        continue;
+      }
       const headX = car.dir === 1 ? car.x + car.len / 2 : car.x - car.len / 2;
       const tailX = car.dir === 1 ? car.x - car.len / 2 : car.x + car.len / 2;
       if (isDark) {
-        // Body — barely visible at night, just a dark sliver
         ctx.fillStyle = '#0d0e16';
         ctx.fillRect(car.x - car.len / 2, cy, car.len, 2);
-        // Headlight halo
-        const hl = ctx.createRadialGradient(headX, cy + 1, 0, headX, cy + 1, 6);
-        hl.addColorStop(0,   'rgba(255,242,180,0.85)');
-        hl.addColorStop(0.5, 'rgba(255,232,140,0.25)');
+        const hl = ctx.createRadialGradient(headX, cy + 1, 0, headX, cy + 1, 7);
+        hl.addColorStop(0,   'rgba(255,242,180,0.9)');
+        hl.addColorStop(0.5, 'rgba(255,232,140,0.28)');
         hl.addColorStop(1,   'rgba(255,232,140,0)');
         ctx.fillStyle = hl;
-        ctx.fillRect(headX - 6, cy - 5, 12, 12);
-        // Headlight core
+        ctx.fillRect(headX - 7, cy - 6, 14, 14);
         ctx.fillStyle = 'rgba(255,248,200,0.95)';
         ctx.fillRect(headX - 0.5, cy + 0.3, 1.4, 1.4);
-        // Taillight (small red)
         ctx.fillStyle = 'rgba(255,60,40,0.85)';
         ctx.fillRect(tailX - 0.6, cy + 0.4, 1.2, 1.2);
-      } else {
-        // Day: solid little block in the car's colour
-        ctx.fillStyle = car.col;
-        ctx.fillRect(car.x - car.len / 2, cy, car.len, 2);
-        // Tiny windshield highlight
-        ctx.fillStyle = 'rgba(255,255,255,0.35)';
-        ctx.fillRect(car.x - 0.5, cy - 0.4, car.len * 0.35, 0.8);
-      }
-    }
-    // Headlight reflection (night only) — a couple of soft streaks where
-    // the brightest cars are passing right now.
-    if (isDark) {
-      for (const car of state.cars) {
-        if (car.row !== 0) continue; // only the front row contributes
-        if (Math.random() < 0.85) continue; // sample very lightly
+        // Each visible car contributes one soft headlight reflection.
         reflections.push({
           x: car.x,
           color: 'rgba(255,232,140,',
-          alpha: 0.18,
-          width: 8,
+          alpha: 0.22,
+          width: 9,
         });
+      } else {
+        ctx.fillStyle = car.col;
+        ctx.fillRect(car.x - car.len / 2, cy, car.len, 2);
+        ctx.fillStyle = 'rgba(255,255,255,0.35)';
+        ctx.fillRect(car.x - 0.5, cy - 0.4, car.len * 0.35, 0.8);
       }
     }
   }
