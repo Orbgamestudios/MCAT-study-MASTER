@@ -26,7 +26,8 @@ const KEYS = {
   flagQueue: 'mcat:flagQueue', // Flagged questions awaiting Gemini fix (rate-limit safe)
   reaudit: 'mcat:reaudit', // boolean — show Audit button on already-audited chapters
   volume: 'mcat:volume', // 0-1, global SFX volume multiplier (default 1)
-  autoDownload: 'mcat:autoDownload', // boolean — re-download updated chapters on app load
+  autoDownload: 'mcat:autoDownload', // boolean — re-download updated chapters on app load (auto-UPDATE)
+  autoDownloadAll: 'mcat:autoDownloadAll', // boolean — download every cloud chapter that isn't local yet
   tropicalBg: 'mcat:tropicalBg',    // boolean — tropical island background
   smoothAnim: 'mcat:smoothAnim',     // boolean — smooth tab/question/reveal transitions
   bankSeen: 'mcat:bankSeen', // timestamp — last time the user reviewed the Bank tab
@@ -2200,6 +2201,11 @@ function AppProvider({ children }) {
     storage.set(KEYS.autoDownload, !!v);
     setAutoDownloadChaptersState(!!v);
   }, []);
+  const [autoDownloadAll, setAutoDownloadAllState] = useState(() => !!storage.get(KEYS.autoDownloadAll, false));
+  const setAutoDownloadAll = useCallback((v) => {
+    storage.set(KEYS.autoDownloadAll, !!v);
+    setAutoDownloadAllState(!!v);
+  }, []);
   const [smoothAnim, setSmoothAnimState] = useState(() => !!storage.get(KEYS.smoothAnim, false));
   const setSmoothAnim = useCallback((v) => {
     storage.set(KEYS.smoothAnim, !!v);
@@ -2429,7 +2435,7 @@ function AppProvider({ children }) {
     if (session?.token) flushSync();
   }, [session?.token, flushSync]);
 
-  // Auto-download: when enabled, silently refresh any locally-downloaded chapters
+  // Auto-update: when enabled, silently refresh any locally-downloaded chapters
   // whose server updated_at is newer than what we last fetched.
   useEffect(() => {
     if (!autoDownloadChapters) return;
@@ -2478,6 +2484,51 @@ function AppProvider({ children }) {
     return () => { cancelled = true; };
   }, [autoDownloadChapters]); // eslint-disable-line
 
+  // Auto-download-all: when enabled, silently download any cloud chapter that
+  // is not in the local library yet. Skips chapters without a finished MC stage.
+  useEffect(() => {
+    if (!autoDownloadAll) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await api.listChapters();
+        if (cancelled) return;
+        const localIds = new Set(files.filter((f) => f.chapter_id).map((f) => f.chapter_id));
+        for (const ch of data.chapters || []) {
+          if (cancelled) return;
+          if (localIds.has(ch.id)) continue;
+          if (!ch.stages?.mc?.done) continue; // skip chapters that aren't usable yet
+          try {
+            const full = await api.getChapter(ch.id);
+            if (cancelled) return;
+            const localFileId = `chap_${full.id}`;
+            const fileRecord = {
+              file_id: localFileId,
+              file_uri: 'cloud',
+              mime_type: 'application/pdf',
+              filename: full.filename,
+              size_bytes: full.size_bytes || 0,
+              subject: full.subject,
+              chapter: full.title,
+              uploaded_at: new Date(full.created_at).toISOString(),
+              chapter_id: full.id,
+              chapter_updated_at: full.updated_at,
+            };
+            setFiles((prev) => [...prev.filter((f) => f.file_id !== localFileId && f.chapter_id !== full.id), fileRecord]);
+            if (full.extraction) setExtraction(localFileId, full.extraction);
+            setQuestionsFor(localFileId, {
+              mc: full.mc || [],
+              twoPart: full.two_part || [],
+              short: full.short || [],
+              generated_at: new Date(full.updated_at).toISOString(),
+            });
+          } catch {}
+        }
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, [autoDownloadAll]); // eslint-disable-line
+
   const value = useMemo(
     () => ({
       apiKey, setApiKey,
@@ -2494,6 +2545,7 @@ function AppProvider({ children }) {
       reauditEnabled, setReauditEnabled,
       volume, setVolume,
       autoDownloadChapters, setAutoDownloadChapters,
+      autoDownloadAll, setAutoDownloadAll,
       tropicalBg, setTropicalBg,
       smoothAnim, setSmoothAnim,
     }),
@@ -2504,6 +2556,7 @@ function AppProvider({ children }) {
      session, setSession, api, pendingSync, flushSync, syncBusy, syncError, client,
      reauditEnabled, setReauditEnabled, volume, setVolume,
      autoDownloadChapters, setAutoDownloadChapters,
+     autoDownloadAll, setAutoDownloadAll,
      tropicalBg, setTropicalBg,
      smoothAnim, setSmoothAnim]
   );
@@ -6081,7 +6134,7 @@ function StatsView() {
 
 // ---------- settings ----------
 function SettingsPanel({ onClose }) {
-  const { palette, mode, setPalette, setMode, apiKey, setApiKey, client, session, pendingSync, syncBusy, syncError, flushSync, reauditEnabled, setReauditEnabled, volume, setVolume, autoDownloadChapters, setAutoDownloadChapters, tropicalBg, setTropicalBg, smoothAnim, setSmoothAnim, files } = useApp();
+  const { palette, mode, setPalette, setMode, apiKey, setApiKey, client, session, pendingSync, syncBusy, syncError, flushSync, reauditEnabled, setReauditEnabled, volume, setVolume, autoDownloadChapters, setAutoDownloadChapters, autoDownloadAll, setAutoDownloadAll, tropicalBg, setTropicalBg, smoothAnim, setSmoothAnim, files } = useApp();
   const hasDownloadedChapters = files.some((f) => f.chapter_id);
   const [keyVal, setKeyVal] = useState(apiKey || '');
   const [keyShow, setKeyShow] = useState(false);
@@ -6293,23 +6346,37 @@ function SettingsPanel({ onClose }) {
         </label>
       </div>
 
-      {hasDownloadedChapters && (
-        <div>
-          <div className="text-xs uppercase tracking-wide text-[var(--text-muted)] mb-2">Chapters</div>
+      <div>
+        <div className="text-xs uppercase tracking-wide text-[var(--text-muted)] mb-2">Chapters</div>
+        <div className="space-y-2">
           <label className="flex items-center justify-between gap-3 bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg px-3 py-2.5 cursor-pointer">
             <div className="text-sm min-w-0">
-              <div className="text-[var(--text)]">Auto-download updates</div>
-              <div className="text-[11px] text-[var(--text-faint)] mt-0.5">Silently re-download any chapters with server-side updates when the app loads.</div>
+              <div className="text-[var(--text)]">Auto-download new chapters</div>
+              <div className="text-[11px] text-[var(--text-faint)] mt-0.5">When the app loads, silently download every cloud chapter that isn't in your local library yet.</div>
             </div>
             <input
               type="checkbox"
-              checked={autoDownloadChapters}
-              onChange={(e) => setAutoDownloadChapters(e.target.checked)}
+              checked={autoDownloadAll}
+              onChange={(e) => setAutoDownloadAll(e.target.checked)}
               className="w-4 h-4 shrink-0"
             />
           </label>
+          {hasDownloadedChapters && (
+            <label className="flex items-center justify-between gap-3 bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg px-3 py-2.5 cursor-pointer">
+              <div className="text-sm min-w-0">
+                <div className="text-[var(--text)]">Auto-update downloaded chapters</div>
+                <div className="text-[11px] text-[var(--text-faint)] mt-0.5">When the app loads, silently re-download any chapter you already have whose server copy is newer.</div>
+              </div>
+              <input
+                type="checkbox"
+                checked={autoDownloadChapters}
+                onChange={(e) => setAutoDownloadChapters(e.target.checked)}
+                className="w-4 h-4 shrink-0"
+              />
+            </label>
+          )}
         </div>
-      )}
+      </div>
 
     </div>
   );
@@ -7302,7 +7369,7 @@ function ChapterRow({ chapter, onDownload, onContribute, onAudit, busy, download
           )}
         </div>
         <div className="text-xs text-[var(--text-faint)] mt-0.5 break-words">
-          {chapter.filename} · {ago}
+          {chapter.filename} · by @{chapter.uploader_username} · {ago}
         </div>
         <div className="flex flex-wrap gap-1.5 mt-1.5">
           <StageDot stage={chapter.stages.extraction} label="extract" />
@@ -7509,25 +7576,45 @@ function BankTab() {
   }
   if (!data) return <div className="text-sm text-[var(--text-muted)]">Loading bank…</div>;
 
-  // Group by uploader, then sort uploaders by their latest chapter.
-  const byUploader = {};
+  // Parse a chapter number from the title (e.g. "Chapter 12 - …") or the
+  // filename (e.g. "chapter_ch12" or "Organic Chemistry Chapter 12 …"). Falls
+  // back to a sentinel so unparseable chapters sort to the end.
+  const parseChapterNum = (ch) => {
+    const t = ch.title || '';
+    const f = ch.filename || '';
+    let m = /chapter\s*(\d+)/i.exec(t);
+    if (m) return parseInt(m[1], 10);
+    m = /chapter\s*(\d+)/i.exec(f);
+    if (m) return parseInt(m[1], 10);
+    m = /\bch(\d+)/i.exec(f);
+    if (m) return parseInt(m[1], 10);
+    return 9999;
+  };
+
+  // Group by subject, then sort each group by chapter number.
+  const bySubject = {};
   for (const ch of data.chapters) {
-    if (!byUploader[ch.uploader_username]) byUploader[ch.uploader_username] = [];
-    byUploader[ch.uploader_username].push(ch);
+    const subj = ch.subject || 'Other';
+    if (!bySubject[subj]) bySubject[subj] = [];
+    bySubject[subj].push(ch);
   }
   const localChapterIds = new Set(files.map((f) => f.chapter_id).filter(Boolean));
-  const uploaders = Object.keys(byUploader).sort((a, b) => {
-    const aMax = Math.max(...byUploader[a].map((c) => c.updated_at));
-    const bMax = Math.max(...byUploader[b].map((c) => c.updated_at));
-    return bMax - aMax;
-  });
+  const subjects = Object.keys(bySubject).sort();
+  for (const s of subjects) {
+    bySubject[s].sort((a, b) => {
+      const an = parseChapterNum(a), bn = parseChapterNum(b);
+      if (an !== bn) return an - bn;
+      return (a.title || '').localeCompare(b.title || '');
+    });
+  }
 
   const filterLc = filter.toLowerCase();
   const filtered = (chs) =>
     filterLc ? chs.filter((c) =>
       c.title.toLowerCase().includes(filterLc) ||
       c.subject.toLowerCase().includes(filterLc) ||
-      c.filename.toLowerCase().includes(filterLc)
+      c.filename.toLowerCase().includes(filterLc) ||
+      (c.uploader_username || '').toLowerCase().includes(filterLc)
     ) : chs;
 
   // Chapters touched since the user's last Bank visit. Skipped on the very first
@@ -7604,13 +7691,13 @@ function BankTab() {
         </div>
       )}
 
-      {uploaders.map((uploader) => {
-        const list = filtered(byUploader[uploader]);
+      {subjects.map((subject) => {
+        const list = filtered(bySubject[subject]);
         if (!list.length) return null;
         return (
-          <div key={uploader} className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-5">
+          <div key={subject} className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-5">
             <div className="flex items-baseline justify-between mb-2">
-              <h3 className="font-semibold text-[var(--text-strong)]">@{uploader}</h3>
+              <h3 className="font-semibold text-[var(--text-strong)]">{subject}</h3>
               <span className="text-xs text-[var(--text-faint)]">{list.length} chapter{list.length === 1 ? '' : 's'}</span>
             </div>
             <ul className="divide-y divide-[var(--border-soft)]">
