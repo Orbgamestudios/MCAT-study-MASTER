@@ -1714,8 +1714,13 @@ function _drawMadison(ctx, isDark, state, t, py, w, h) {
 
   // ── Sweeping spotlights aimed at the Capitol (night only) ──
   if (isDark && state.spotlights) {
-    // additive blending so overlapping beams brighten naturally
+    // additive blending so overlapping beams brighten naturally; clipped
+    // to the area above the lake so the lamp halos never bleed into the
+    // water.
     ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, 0, w, groundY);
+    ctx.clip();
     ctx.globalCompositeOperation = 'lighter';
     const cap = state.capitol;
     const drumTopY = (groundY - cap.height) - cap.domeRadius * 0.55;
@@ -1826,55 +1831,32 @@ function _drawMadison(ctx, isDark, state, t, py, w, h) {
     ctx.fillRect(left, baseY - 1, tr.width, 1.5);
   }
 
-  // ── Tiny cars driving along the lakeshore (sparse, all same height) ──
-  // Single horizontal line right at the bottom of the city skyline,
-  // basically at the water's edge. Most of the time the road is empty;
-  // a car drifts past every so often, then waits a long while before
-  // its next pass.
-  {
-    const cy = groundY - 1.6; // sit right on the lake edge
-    for (const car of state.cars) {
-      if (car.delay > 0) { car.delay -= 1; continue; }
-      car.x += car.dir * car.sp;
-      // When off screen, schedule a long delay before this car re-enters.
-      if (car.dir === 1 && car.x > w + 12) {
-        car.x = -12;
-        car.delay = Math.floor(30 * _rnd(30, 240));
-        continue;
-      }
-      if (car.dir === -1 && car.x < -12) {
-        car.x = w + 12;
-        car.delay = Math.floor(30 * _rnd(30, 240));
-        continue;
-      }
-      const headX = car.dir === 1 ? car.x + car.len / 2 : car.x - car.len / 2;
-      const tailX = car.dir === 1 ? car.x - car.len / 2 : car.x + car.len / 2;
-      if (isDark) {
-        ctx.fillStyle = '#0d0e16';
-        ctx.fillRect(car.x - car.len / 2, cy, car.len, 2);
-        const hl = ctx.createRadialGradient(headX, cy + 1, 0, headX, cy + 1, 7);
-        hl.addColorStop(0,   'rgba(255,242,180,0.9)');
-        hl.addColorStop(0.5, 'rgba(255,232,140,0.28)');
-        hl.addColorStop(1,   'rgba(255,232,140,0)');
-        ctx.fillStyle = hl;
-        ctx.fillRect(headX - 7, cy - 6, 14, 14);
-        ctx.fillStyle = 'rgba(255,248,200,0.95)';
-        ctx.fillRect(headX - 0.5, cy + 0.3, 1.4, 1.4);
-        ctx.fillStyle = 'rgba(255,60,40,0.85)';
-        ctx.fillRect(tailX - 0.6, cy + 0.4, 1.2, 1.2);
-        // Each visible car contributes one soft headlight reflection.
-        reflections.push({
-          x: car.x,
-          color: 'rgba(255,232,140,',
-          alpha: 0.22,
-          width: 9,
-        });
-      } else {
-        ctx.fillStyle = car.col;
-        ctx.fillRect(car.x - car.len / 2, cy, car.len, 2);
-        ctx.fillStyle = 'rgba(255,255,255,0.35)';
-        ctx.fillRect(car.x - 0.5, cy - 0.4, car.len * 0.35, 0.8);
-      }
+  // ── Update car positions + collect their reflections ──
+  // Actual car drawing happens AFTER the reflections + ripples so the
+  // headlights and bodies sit on top of everything in the water region.
+  const carY = groundY - 4;
+  const visibleCars = [];
+  for (const car of state.cars) {
+    if (car.delay > 0) { car.delay -= 1; continue; }
+    car.x += car.dir * car.sp;
+    if (car.dir === 1 && car.x > w + 12) {
+      car.x = -12;
+      car.delay = Math.floor(30 * _rnd(30, 240));
+      continue;
+    }
+    if (car.dir === -1 && car.x < -12) {
+      car.x = w + 12;
+      car.delay = Math.floor(30 * _rnd(30, 240));
+      continue;
+    }
+    visibleCars.push(car);
+    if (isDark) {
+      reflections.push({
+        x: car.x,
+        color: 'rgba(255,232,140,',
+        alpha: 0.22,
+        width: 9,
+      });
     }
   }
 
@@ -1903,6 +1885,38 @@ function _drawMadison(ctx, isDark, state, t, py, w, h) {
   for (let yy = groundY + 10; yy < lakeBottom; yy += 14) {
     const wob = Math.sin(t * 0.05 + yy * 0.07) * 2;
     ctx.fillRect(0, yy + wob, w, 1);
+  }
+
+  // ── Cars (drawn LAST so headlights sit on top of the lake) ──
+  for (const car of visibleCars) {
+    const cy = carY;
+    const headX = car.dir === 1 ? car.x + car.len / 2 : car.x - car.len / 2;
+    const tailX = car.dir === 1 ? car.x - car.len / 2 : car.x + car.len / 2;
+    if (isDark) {
+      // Dark body sliver
+      ctx.fillStyle = '#0d0e16';
+      ctx.fillRect(car.x - car.len / 2, cy, car.len, 2.2);
+      // Bright headlight halo
+      const hl = ctx.createRadialGradient(headX, cy + 1, 0, headX, cy + 1, 9);
+      hl.addColorStop(0,   'rgba(255,244,180,0.95)');
+      hl.addColorStop(0.5, 'rgba(255,232,140,0.32)');
+      hl.addColorStop(1,   'rgba(255,232,140,0)');
+      ctx.fillStyle = hl;
+      ctx.fillRect(headX - 9, cy - 7, 18, 16);
+      // Bright headlight core
+      ctx.fillStyle = 'rgba(255,250,210,1)';
+      ctx.fillRect(headX - 0.6, cy + 0.3, 1.6, 1.6);
+      // Small red taillight
+      ctx.fillStyle = 'rgba(255,60,40,0.95)';
+      ctx.fillRect(tailX - 0.7, cy + 0.4, 1.4, 1.4);
+    } else {
+      // Day: solid little block in the car's colour
+      ctx.fillStyle = car.col;
+      ctx.fillRect(car.x - car.len / 2, cy, car.len, 2.2);
+      // Tiny windshield highlight
+      ctx.fillStyle = 'rgba(255,255,255,0.45)';
+      ctx.fillRect(car.x - 0.5, cy - 0.4, car.len * 0.35, 0.8);
+    }
   }
 
   // ── window toggles (night only) — each window has its own countdown ──
