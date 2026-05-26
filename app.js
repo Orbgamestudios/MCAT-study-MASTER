@@ -67,6 +67,27 @@ function stopDynamicBg() {
 function _rnd(a, b) { return a + Math.random() * (b - a); }
 function _pi2() { return Math.random() * Math.PI * 2; }
 
+// Lazy-init + ease a per-state wind vector. Particles add state.wind.current
+// to their x each frame for a unified gust effect. Target retargets at
+// randomized intervals so the wind direction and strength vary naturally.
+//   minStrength, maxStrength: px/frame range for a new target
+//   flipSecsRange: [minSec, maxSec] until the next retarget
+function _stepWind(state, minStrength, maxStrength, flipSecsRange) {
+  if (!state.wind) state.wind = {
+    current: 0,
+    target: _rnd(minStrength, maxStrength) * 0.4,
+    flip: Math.floor(30 * _rnd(flipSecsRange[0], flipSecsRange[1])),
+  };
+  const w = state.wind;
+  w.flip -= 1;
+  if (w.flip <= 0) {
+    w.target = _rnd(minStrength, maxStrength);
+    w.flip = Math.floor(30 * _rnd(flipSecsRange[0], flipSecsRange[1]));
+  }
+  // Smooth ease toward target.
+  w.current += (w.target - w.current) * 0.012;
+}
+
 // ── particle / state factories ────────────────────────────────────────────────
 function _initCold(w, h, isDark) {
   const count = isDark ? 180 : 130;
@@ -305,10 +326,13 @@ function _drawCold(ctx, isDark, state, t, py, w, h) {
     ctx.fillStyle = gnd; ctx.fillRect(0, 0, w, h);
   }
 
+  // ── wind: smooth, random direction + strength, retargets every few seconds ──
+  _stepWind(state, -3.2, 3.2, [6, 18]);
+
   // ── snowflakes ──
   for (const f of state.flakes) {
     f.y += f.vy;
-    f.x += Math.sin(t * 0.013 + f.dp) * f.drift * 0.55;
+    f.x += Math.sin(t * 0.013 + f.dp) * f.drift * 0.55 + state.wind.current;
     if (f.y > h + 8) { f.y = -8; f.x = Math.random() * w; }
     if (f.x < -8) f.x = w + 4; if (f.x > w + 8) f.x = -4;
     ctx.beginPath();
@@ -380,11 +404,14 @@ function _drawWarm(ctx, isDark, state, t, py, w, h) {
     ctx.fill();
   }
 
+  // ── wind ──
+  _stepWind(state, -4, 4, [5, 16]);
+
   // ── falling leaves ──
   for (const lf of state.leaves) {
     lf.y += lf.vy;
-    lf.x += Math.sin(t * 0.011 + lf.dp) * lf.drift * 0.5;
-    lf.rot += lf.rs;
+    lf.x += Math.sin(t * 0.011 + lf.dp) * lf.drift * 0.5 + state.wind.current;
+    lf.rot += lf.rs + state.wind.current * 0.004;
     if (lf.y > h + 20) { lf.y = -20; lf.x = Math.random() * w; }
     if (lf.x < -20) lf.x = w + 10; if (lf.x > w + 20) lf.x = -10;
     ctx.save();
@@ -500,10 +527,13 @@ function _drawDuo(ctx, isDark, state, t, py, w, h) {
     ctx.restore();
   }
 
+  // ── wind ──
+  _stepWind(state, -2.4, 2.4, [7, 22]);
+
   // ── floating motes ──
   for (const m of state.motes) {
     m.y -= m.vy;
-    m.x += Math.sin(t * 0.016 + m.dp) * m.drift;
+    m.x += Math.sin(t * 0.016 + m.dp) * m.drift + state.wind.current * 0.7;
     if (m.y < -5) { m.y = h + 5; m.x = Math.random() * w; }
     const alp = m.alp * (0.45 + 0.55 * Math.abs(Math.sin(t * 0.025 + m.dp)));
     ctx.beginPath(); ctx.arc(m.x, m.y, m.r, 0, Math.PI * 2);
@@ -545,15 +575,17 @@ function _drawDuo(ctx, isDark, state, t, py, w, h) {
       : `rgba(210,228,245,${0.65 * rain.intensity})`;
     ctx.lineWidth = 1;
     ctx.lineCap = 'round';
+    const windPush = state.wind.current * 1.8;
     for (let i = 0; i < visible; i++) {
       const d = rain.drops[i];
-      d.x += d.vx; d.y += d.vy;
+      d.x += d.vx + windPush; d.y += d.vy;
       if (d.y > h + 20) { d.y = -20; d.x = _rnd(-40, w + 40); }
       if (d.x < -40)    { d.x = w + 20; }
+      if (d.x > w + 60) { d.x = -20; }
       ctx.globalAlpha = d.alp;
       ctx.beginPath();
       ctx.moveTo(d.x, d.y);
-      ctx.lineTo(d.x + d.vx * 1.4, d.y + d.vy * 1.4);
+      ctx.lineTo(d.x + (d.vx + windPush) * 1.4, d.y + d.vy * 1.4);
       ctx.stroke();
     }
     ctx.globalAlpha = 1;
@@ -7997,9 +8029,22 @@ function Shell() {
     };
   }, []);
 
-  // Helper: className + position style for a tab block. Adjacent tabs are
-  // positioned absolutely off either edge so they're already in the DOM
-  // when the user starts dragging.
+  // Helper: className + position style for a tab block. EVERY tab in the
+  // tabs list is rendered at all times to avoid mount cost on swap.
+  // - current tab: in normal flow
+  // - prev/next:   absolutely positioned beside the current tab, with their
+  //                vertical extent clamped to the current tab's height
+  //                (top/bottom:0 + overflow:hidden) so they cannot extend
+  //                the body's scroll height past the current tab's content.
+  // - other tabs:  display:none (mounted but invisible).
+  const adjacentStyle = (side) => ({
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    [side === 'right' ? 'left' : 'right']: `calc(100% + ${SWIPE_GAP_PX}px)`,
+    width: '100%',
+    overflow: 'hidden',
+  });
   const tabWrap = (k, baseClass) => {
     const isCurrent = tab === k;
     const isPrev = prevKey === k && !isCurrent;
@@ -8007,12 +8052,13 @@ function Shell() {
     const useFade = isCurrent && !swipeJustHappenedRef.current;
     return {
       className: `${useFade ? 'tab-content ' : ''}${baseClass}`.trim(),
-      style: isPrev ? { position: 'absolute', top: 0, right: `calc(100% + ${SWIPE_GAP_PX}px)`, width: '100%' }
-           : isNext ? { position: 'absolute', top: 0, left:  `calc(100% + ${SWIPE_GAP_PX}px)`, width: '100%' }
-           : undefined,
+      style: isPrev ? adjacentStyle('left')
+           : isNext ? adjacentStyle('right')
+           : isCurrent ? undefined
+           : { display: 'none' },
     };
   };
-  const tabIs = (k) => tab === k || prevKey === k || nextKey === k;
+  const tabIs = (k) => tabKeys.includes(k);
 
   const fullyProcessed = files.filter((f) => extractions[f.file_id] && questions[f.file_id]?.mc && questions[f.file_id]?.short).length;
 
@@ -8139,10 +8185,10 @@ function Shell() {
             const isCurrent = tab === 'study';
             const isPrev = prevKey === 'study';
             const isNext = nextKey === 'study';
-            const style = (!isCurrent && !isPrev && !isNext) ? { display: 'none' }
-                        : isPrev ? { position: 'absolute', top: 0, right: `calc(100% + ${SWIPE_GAP_PX}px)`, width: '100%' }
-                        : isNext ? { position: 'absolute', top: 0, left:  `calc(100% + ${SWIPE_GAP_PX}px)`, width: '100%' }
-                        : undefined;
+            const style = isPrev ? adjacentStyle('left')
+                        : isNext ? adjacentStyle('right')
+                        : isCurrent ? undefined
+                        : { display: 'none' };
             return <div style={style}><StudyView /></div>;
           })()}
         </div>
