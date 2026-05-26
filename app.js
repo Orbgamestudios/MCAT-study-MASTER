@@ -233,6 +233,15 @@ function _initTropical(w, h, isDark) {
   return {
     horizon, shoreline, sandH,
     waves,
+    // Day-only seagull silhouettes drifting across the sunset sky.
+    birds: isDark ? [] : Array.from({ length: 5 }, () => ({
+      x: _rnd(0, w),
+      y: _rnd(h * 0.10, horizon * 0.65),
+      sp: _rnd(0.25, 0.55),
+      sz: _rnd(5, 9),
+      ph: _pi2(),
+      fp: _rnd(0.12, 0.20),
+    })),
     // Sun glints / moon ripples on the water surface.
     sparkles: Array.from({ length: isDark ? 26 : 32 }, () => ({
       x: _rnd(0, w),
@@ -801,7 +810,13 @@ function _drawDuo(ctx, isDark, state, t, py, w, h) {
 
 function _drawTropical(ctx, isDark, state, t, py, w, h) {
   const horizon = state.horizon;
-  const shoreline = state.shoreline;
+  // Average shoreline + slow oscillation so the waves wash up and pull
+  // back down the beach over ~5-second cycles. The whole foam edge moves
+  // together with the wash.
+  const washCycle = Math.sin(t * 0.018); // slow primary swell, period ~5 s
+  const washWobble = Math.sin(t * 0.05) * 0.35; // secondary chop
+  const washOffset = (washCycle + washWobble) * 14; // ±~18 px on average
+  const shoreline = state.shoreline + washOffset;
 
   // ── sky ──
   const sky = ctx.createLinearGradient(0, 0, 0, horizon + 4);
@@ -952,6 +967,25 @@ function _drawTropical(ctx, isDark, state, t, py, w, h) {
     }
   }
 
+  // ── day birds (silhouettes against the sunset sky) ──
+  if (!isDark) {
+    ctx.strokeStyle = 'rgba(20,18,30,0.62)';
+    ctx.lineWidth = 1.4;
+    ctx.lineCap = 'round';
+    for (const b of state.birds) {
+      b.x += b.sp;
+      if (b.x > w + 30) { b.x = -30; b.y = _rnd(h * 0.10, horizon * 0.65); }
+      const flap = Math.sin(t * b.fp + b.ph);
+      const wingDip = flap * b.sz * 0.42;
+      const by = b.y + py * 0.18;
+      ctx.beginPath();
+      ctx.moveTo(b.x - b.sz, by + wingDip * 0.3);
+      ctx.quadraticCurveTo(b.x - b.sz * 0.5, by - b.sz * 0.55 - wingDip, b.x, by);
+      ctx.quadraticCurveTo(b.x + b.sz * 0.5, by - b.sz * 0.55 - wingDip, b.x + b.sz, by + wingDip * 0.3);
+      ctx.stroke();
+    }
+  }
+
   // ── water (waves bounded between horizon and shoreline) ──
   ctx.save();
   ctx.beginPath();
@@ -1012,18 +1046,62 @@ function _drawTropical(ctx, isDark, state, t, py, w, h) {
   }
   ctx.restore();
 
-  // ── wet sand strip just below the shoreline (darker, glossy) ──
-  const wetBand = 8;
+  // ── wet sand strip just below the wash edge (darker, glossy) ──
+  // The wet band always extends down from the moving shoreline, so as
+  // the wash recedes the sand it leaves behind reads as freshly wet.
+  const wetBand = 16;
   const wetGrad = ctx.createLinearGradient(0, shoreline, 0, shoreline + wetBand);
   if (isDark) {
     wetGrad.addColorStop(0, '#1b1a16');
     wetGrad.addColorStop(1, '#2a261f');
   } else {
-    wetGrad.addColorStop(0, '#9c7e58');
-    wetGrad.addColorStop(1, '#c2a07a');
+    wetGrad.addColorStop(0, '#8d7250');
+    wetGrad.addColorStop(1, '#b89473');
   }
   ctx.fillStyle = wetGrad;
   ctx.fillRect(0, shoreline, w, wetBand);
+
+  // ── foam edge — wavy white band right at the wash boundary ──
+  // Two stacked passes (thicker translucent underlay, thinner bright
+  // overlay) so the foam reads as soft and fluffy rather than a hard line.
+  const foamColor = isDark ? 'rgba(220,230,245,' : 'rgba(255,255,255,';
+  // Underlay
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(0, shoreline + 8);
+  for (let x = 0; x <= w; x += 6) {
+    const yWobble = Math.sin(x * 0.05 + t * 0.06) * 2.4
+                  + Math.sin(x * 0.012 + t * 0.025) * 3.0;
+    ctx.lineTo(x, shoreline - 1 + yWobble);
+  }
+  ctx.lineTo(w, shoreline + 8);
+  ctx.closePath();
+  ctx.fillStyle = `${foamColor}0.45)`;
+  ctx.fill();
+  ctx.restore();
+  // Bright crest
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(0, shoreline + 2);
+  for (let x = 0; x <= w; x += 4) {
+    const yWobble = Math.sin(x * 0.07 + t * 0.08) * 1.4
+                  + Math.sin(x * 0.018 + t * 0.04) * 1.8;
+    ctx.lineTo(x, shoreline - 2 + yWobble);
+  }
+  ctx.lineTo(w, shoreline + 2);
+  ctx.closePath();
+  ctx.fillStyle = `${foamColor}0.85)`;
+  ctx.fill();
+  ctx.restore();
+  // Tiny bubbly speckles trailing behind the foam (one quick pass).
+  ctx.fillStyle = `${foamColor}0.55)`;
+  for (let i = 0; i < 24; i++) {
+    const fx = (i * 53 + (t * 1.7 | 0)) % w;
+    const fy = shoreline + 4 + ((i * 31) % 8);
+    ctx.beginPath();
+    ctx.arc(fx, fy, 0.9, 0, Math.PI * 2);
+    ctx.fill();
+  }
 
   // ── sand ──
   const sandGrad = ctx.createLinearGradient(0, shoreline + wetBand, 0, h);
