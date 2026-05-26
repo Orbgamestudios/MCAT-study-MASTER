@@ -160,6 +160,23 @@ function _initDuo(w, h) {
       dp: _pi2(),
       alp: _rnd(0.3, 0.75),
     })),
+    // Rain: a pool of drops + a fade controller. intensity ramps between 0
+    // and 1 over a few seconds whenever target flips, giving a smooth onset
+    // and clearing. target flips at randomized intervals.
+    rain: {
+      drops: Array.from({ length: 220 }, () => ({
+        x: _rnd(-40, w + 40),
+        y: _rnd(-h, h),
+        len: _rnd(8, 18),
+        vy: _rnd(8, 14),
+        vx: _rnd(-2.4, -1.2), // wind angle (rain falls slightly left)
+        alp: _rnd(0.35, 0.7),
+      })),
+      intensity: 0,         // 0..1, current visible intensity
+      target: 0,            // 0 or 1, what intensity is easing toward
+      // Frames until next state flip. ~30 fps so 30 = 1s. Start dry for a bit.
+      nextFlip: 30 * _rnd(20, 60),
+    },
   };
 }
 
@@ -494,6 +511,52 @@ function _drawDuo(ctx, isDark, state, t, py, w, h) {
       ? `rgba(90,215,75,${alp * 0.58})`
       : `rgba(215,255,175,${alp})`;
     ctx.fill();
+  }
+
+  // ── rain (random downpours with smooth fade in/out) ──
+  const rain = state.rain;
+  rain.nextFlip -= 1;
+  if (rain.nextFlip <= 0) {
+    rain.target = rain.target === 0 ? 1 : 0;
+    // Wet spells are shorter than dry spells so it isn't raining most of the time.
+    rain.nextFlip = rain.target === 1
+      ? Math.floor(30 * _rnd(12, 35))   // 12–35s wet
+      : Math.floor(30 * _rnd(35, 110)); // 35–110s dry
+  }
+  // Ease intensity toward target. ~3 s in / 4 s out at 30 fps.
+  if (rain.intensity !== rain.target) {
+    const step = rain.target > rain.intensity ? 1 / 90 : -1 / 120;
+    rain.intensity = Math.max(0, Math.min(1, rain.intensity + step));
+  }
+
+  if (rain.intensity > 0.01) {
+    // Cloud darkening — pull the upper sky toward grey as it rains harder.
+    const cloudAlp = rain.intensity * (isDark ? 0.35 : 0.5);
+    const cg = ctx.createLinearGradient(0, 0, 0, h * 0.7);
+    cg.addColorStop(0,   `rgba(20,28,32,${cloudAlp})`);
+    cg.addColorStop(0.6, `rgba(20,28,32,${cloudAlp * 0.55})`);
+    cg.addColorStop(1,   'rgba(20,28,32,0)');
+    ctx.fillStyle = cg; ctx.fillRect(0, 0, w, h);
+
+    // Drops. Only render a fraction proportional to intensity for a soft onset.
+    const visible = Math.floor(rain.drops.length * rain.intensity);
+    ctx.strokeStyle = isDark
+      ? `rgba(170,200,235,${0.55 * rain.intensity})`
+      : `rgba(210,228,245,${0.65 * rain.intensity})`;
+    ctx.lineWidth = 1;
+    ctx.lineCap = 'round';
+    for (let i = 0; i < visible; i++) {
+      const d = rain.drops[i];
+      d.x += d.vx; d.y += d.vy;
+      if (d.y > h + 20) { d.y = -20; d.x = _rnd(-40, w + 40); }
+      if (d.x < -40)    { d.x = w + 20; }
+      ctx.globalAlpha = d.alp;
+      ctx.beginPath();
+      ctx.moveTo(d.x, d.y);
+      ctx.lineTo(d.x + d.vx * 1.4, d.y + d.vy * 1.4);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
   }
 }
 
