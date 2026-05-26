@@ -205,43 +205,83 @@ function _initDuo(w, h) {
 }
 
 function _initTropical(w, h, isDark) {
-  const horizon = h * (isDark ? 0.60 : 0.63);
-  return {
-    waves: Array.from({ length: 6 }, (_, i) => ({
+  // Beach scene layout (top to bottom):
+  //   sky:   0           ..  horizon (~50%)
+  //   water: horizon     ..  shoreline (~80%)
+  //   sand:  shoreline   ..  h
+  const horizon   = h * 0.50;
+  const shoreline = h * 0.80;
+  const sandH     = h - shoreline;
+
+  // Wave bands sit between horizon and shoreline so the water area is
+  // visibly bounded by sand on the bottom edge.
+  const waves = Array.from({ length: 6 }, (_, i) => {
+    const t = i / 5;
+    const y0 = horizon + (shoreline - horizon) * (0.1 + 0.85 * t);
+    return {
       ph: _pi2(),
-      amp: 4 + i * 3.5,
-      freq: 0.0095 - i * 0.0009,
-      sp: 0.016 + i * 0.005,
-      y0: horizon + i * 10,
+      amp: 3 + i * 2.6,
+      freq: 0.012 - i * 0.0010,
+      sp: 0.014 + i * 0.005,
+      y0,
       col: isDark
-        ? [`rgba(10,52,92,0.52)`,`rgba(7,40,76,0.53)`,`rgba(5,28,58,0.56)`,`rgba(3,20,46,0.57)`,`rgba(2,14,36,0.60)`,`rgba(2,10,28,0.65)`][i]
-        : [`rgba(30,165,148,0.50)`,`rgba(26,145,130,0.52)`,`rgba(22,125,112,0.54)`,`rgba(18,105,95,0.56)`,`rgba(14,85,78,0.60)`,`rgba(200,175,66,0.55)`][i],
-    })),
-    sparkles: Array.from({ length: isDark ? 30 : 20 }, () => ({
+        ? [`rgba(10,52,92,0.55)`,`rgba(7,40,76,0.58)`,`rgba(5,28,58,0.62)`,`rgba(3,20,46,0.66)`,`rgba(2,14,36,0.70)`,`rgba(2,10,28,0.76)`][i]
+        : [`rgba(40,140,160,0.55)`,`rgba(60,150,170,0.60)`,`rgba(90,170,185,0.62)`,`rgba(150,195,200,0.62)`,`rgba(210,200,165,0.55)`,`rgba(245,225,180,0.55)`][i],
+    };
+  });
+
+  return {
+    horizon, shoreline, sandH,
+    waves,
+    // Sun glints / moon ripples on the water surface.
+    sparkles: Array.from({ length: isDark ? 26 : 32 }, () => ({
       x: _rnd(0, w),
-      y: _rnd(horizon, h),
+      y: _rnd(horizon, shoreline - 6),
       ph: _pi2(),
       sp: _rnd(0.04, 0.12),
-      sz: _rnd(0.9, 2.6),
+      sz: _rnd(0.8, 2.4),
     })),
-    // Day: birds drifting across the sky.
-    birds: isDark ? [] : Array.from({ length: 6 }, () => ({
-      x: _rnd(0, w),
-      y: _rnd(h * 0.08, h * 0.42),
-      sp: _rnd(0.25, 0.6),
-      sz: _rnd(5, 10),
-      ph: _pi2(),
-      fp: _rnd(0.12, 0.22), // wing flap speed
-    })),
-    // Night: stars overhead.
-    stars: isDark ? Array.from({ length: 110 }, () => ({
-      x: _rnd(0, w), y: _rnd(0, h * 0.56),
+
+    // Sand details: small shells scattered across the sand area.
+    shells: Array.from({ length: 28 }, () => {
+      const types = ['scallop', 'cone', 'spiral', 'oval'];
+      return {
+        x: _rnd(4, w - 4),
+        // Distribute through the visible sand band, biased toward the top
+        // (closer to the waterline) so shells aren't all in one row.
+        y: _rnd(shoreline + 6, h - 8),
+        size: _rnd(2.2, 4.2),
+        rot: _rnd(-0.6, 0.6),
+        type: types[Math.floor(Math.random() * types.length)],
+        col: ['#f7e6cc', '#f0c9a5', '#e8b791', '#d99277', '#f4d6c2', '#fff1de'][Math.floor(Math.random() * 6)],
+      };
+    }),
+
+    // A single crab that appears once in a while and walks across the sand.
+    crab: {
+      active: false,
+      x: 0,
+      y: 0,
+      vx: 0,
+      legPhase: 0,
+      // Wait a stretch before the first crab.
+      nextSpawn: Math.floor(30 * _rnd(20, 60)),
+    },
+
+    // Night sky inhabitants — denser star field and rare shooting stars.
+    stars: isDark ? Array.from({ length: 140 }, () => ({
+      x: _rnd(0, w), y: _rnd(0, horizon),
       r: _rnd(0.4, 1.4),
       op: _rnd(0.4, 0.95),
       tp: _pi2(),
     })) : [],
-    // Night: shooting star state (one at a time, spawned periodically).
-    shooter: isDark ? { active: false, x: 0, y: 0, vx: 0, vy: 0, life: 0, max: 0, nextSpawn: _rnd(80, 260) } : null,
+    shooter: isDark
+      ? { active: false, x: 0, y: 0, vx: 0, vy: 0, life: 0, max: 0, nextSpawn: _rnd(120, 320) }
+      : null,
+    // A plane crosses the sky every minute or two at night.
+    plane: isDark
+      ? { active: false, x: 0, y: 0, vx: 0, nextSpawn: Math.floor(30 * _rnd(40, 150)) }
+      : null,
   };
 }
 
@@ -759,54 +799,65 @@ function _drawDuo(ctx, isDark, state, t, py, w, h) {
 }
 
 function _drawTropical(ctx, isDark, state, t, py, w, h) {
+  const horizon = state.horizon;
+  const shoreline = state.shoreline;
+
   // ── sky ──
-  const sky = ctx.createLinearGradient(0, 0, 0, h);
+  const sky = ctx.createLinearGradient(0, 0, 0, horizon + 4);
   if (isDark) {
-    sky.addColorStop(0,'#01060e'); sky.addColorStop(0.14,'#020c18');
-    sky.addColorStop(0.28,'#030e1c'); sky.addColorStop(0.46,'#04152a');
-    sky.addColorStop(0.62,'#050e24'); sky.addColorStop(0.80,'#030a1a');
-    sky.addColorStop(1,'#020810');
+    sky.addColorStop(0,    '#01060e');
+    sky.addColorStop(0.30, '#020c1c');
+    sky.addColorStop(0.65, '#040f2a');
+    sky.addColorStop(1,    '#08152e');
   } else {
-    sky.addColorStop(0,'#34a2cc'); sky.addColorStop(0.13,'#52c8de');
-    sky.addColorStop(0.27,'#42bbb4'); sky.addColorStop(0.44,'#26a292');
-    sky.addColorStop(0.62,'#1a9485'); sky.addColorStop(0.75,'#c0b050');
-    sky.addColorStop(0.88,'#ac9830'); sky.addColorStop(1,'#9c8420');
+    // Sunset: deep purple-blue at top → pink → orange → yellow at horizon.
+    sky.addColorStop(0,    '#1c2a5a');
+    sky.addColorStop(0.20, '#3a3a78');
+    sky.addColorStop(0.42, '#a8497c');
+    sky.addColorStop(0.62, '#e87749');
+    sky.addColorStop(0.85, '#f9b75a');
+    sky.addColorStop(1,    '#ffd58a');
   }
-  ctx.fillStyle = sky; ctx.fillRect(0, 0, w, h);
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, w, horizon + 4);
 
+  // ── sun (day) — sitting low on the horizon, large + warm ──
   if (!isDark) {
-    // sun
-    const sx = w*0.82, sy = h*0.09 + py*0.28;
-    const sg = ctx.createRadialGradient(sx,sy,0,sx,sy,w*0.38);
-    sg.addColorStop(0,'rgba(255,242,100,0.92)');
-    sg.addColorStop(0.12,'rgba(255,230,75,0.72)');
-    sg.addColorStop(0.4,'rgba(255,195,45,0.28)');
-    sg.addColorStop(0.7,'rgba(255,170,20,0.08)');
-    sg.addColorStop(1,'rgba(255,150,0,0)');
-    ctx.fillStyle = sg; ctx.fillRect(0, 0, w, h);
-  } else {
-    // moon + reflection streak
-    const mx = w*0.74, my = h*0.09 + py*0.28;
-    const mg = ctx.createRadialGradient(mx,my,0,mx,my,55);
-    mg.addColorStop(0,'rgba(198,222,255,0.88)');
-    mg.addColorStop(0.18,'rgba(175,208,255,0.38)');
-    mg.addColorStop(0.55,'rgba(148,188,240,0.1)');
-    mg.addColorStop(1,'rgba(100,148,220,0)');
-    ctx.fillStyle = mg; ctx.fillRect(0, 0, w, h);
-    // moon reflection on water
-    const refG = ctx.createLinearGradient(0, h*0.56, 0, h);
-    refG.addColorStop(0,'rgba(168,210,255,0)');
-    refG.addColorStop(0.35,'rgba(168,210,255,0.12)');
-    refG.addColorStop(1,'rgba(168,210,255,0)');
-    const refX = mx;
+    const sx = w * 0.5;
+    const sy = horizon - 2; // sun centre is exactly at horizon (half-set)
+    const sunR = Math.max(36, w * 0.075);
+    // Outer haze
+    const haze = ctx.createRadialGradient(sx, sy, sunR * 0.4, sx, sy, sunR * 4.5);
+    haze.addColorStop(0,   'rgba(255,200,120,0.45)');
+    haze.addColorStop(0.4, 'rgba(255,170,80,0.18)');
+    haze.addColorStop(1,   'rgba(255,150,60,0)');
+    ctx.fillStyle = haze;
+    ctx.fillRect(0, 0, w, horizon + sunR);
+    // Sun disc (clipped to sky so it looks like it's sitting on the water)
     ctx.save();
-    ctx.fillStyle = refG;
-    ctx.fillRect(refX - 18, 0, 36, h);
+    ctx.beginPath();
+    ctx.rect(0, 0, w, horizon);
+    ctx.clip();
+    const disc = ctx.createRadialGradient(sx, sy, 0, sx, sy, sunR);
+    disc.addColorStop(0,    'rgba(255,238,180,1)');
+    disc.addColorStop(0.55, 'rgba(255,200,110,0.95)');
+    disc.addColorStop(1,    'rgba(255,150,80,0.85)');
+    ctx.fillStyle = disc;
+    ctx.beginPath();
+    ctx.arc(sx, sy, sunR, 0, Math.PI * 2);
+    ctx.fill();
     ctx.restore();
+    // Soft halo above the horizon line
+    const halo = ctx.createRadialGradient(sx, sy, sunR * 0.6, sx, sy, sunR * 2.6);
+    halo.addColorStop(0,   'rgba(255,210,130,0.0)');
+    halo.addColorStop(0.4, 'rgba(255,200,120,0.20)');
+    halo.addColorStop(1,   'rgba(255,170,80,0)');
+    ctx.fillStyle = halo;
+    ctx.fillRect(0, 0, w, horizon + 4);
   }
 
+  // ── stars + shooting stars + plane (night) ──
   if (isDark) {
-    // ── stars ──
     for (const s of state.stars) {
       const tw = 0.55 + 0.45 * Math.sin(t * 0.045 + s.tp);
       ctx.beginPath();
@@ -814,7 +865,16 @@ function _drawTropical(ctx, isDark, state, t, py, w, h) {
       ctx.fillStyle = `rgba(235,242,255,${s.op * tw})`;
       ctx.fill();
     }
-    // ── shooting star ──
+    // Moon — sits high so it doesn't conflict with the horizon.
+    const mx = w * 0.74, my = h * 0.16 + py * 0.25;
+    const mg = ctx.createRadialGradient(mx, my, 0, mx, my, 52);
+    mg.addColorStop(0,    'rgba(220,234,255,0.88)');
+    mg.addColorStop(0.20, 'rgba(190,212,250,0.38)');
+    mg.addColorStop(0.6,  'rgba(150,180,230,0.08)');
+    mg.addColorStop(1,    'rgba(120,150,210,0)');
+    ctx.fillStyle = mg; ctx.fillRect(0, 0, w, horizon + 10);
+
+    // Shooting star
     const ss = state.shooter;
     if (ss) {
       if (!ss.active) {
@@ -822,7 +882,7 @@ function _drawTropical(ctx, isDark, state, t, py, w, h) {
         if (ss.nextSpawn <= 0) {
           ss.active = true;
           ss.x = _rnd(w * 0.1, w * 0.7);
-          ss.y = _rnd(h * 0.04, h * 0.30);
+          ss.y = _rnd(h * 0.04, horizon * 0.6);
           const ang = _rnd(Math.PI * 0.18, Math.PI * 0.32);
           const spd = _rnd(7, 11);
           ss.vx = Math.cos(ang) * spd;
@@ -831,10 +891,8 @@ function _drawTropical(ctx, isDark, state, t, py, w, h) {
           ss.life = 0;
         }
       } else {
-        ss.x += ss.vx; ss.y += ss.vy;
-        ss.life += 1;
+        ss.x += ss.vx; ss.y += ss.vy; ss.life += 1;
         const fade = ss.life < 6 ? ss.life / 6 : Math.max(0, 1 - (ss.life - 6) / (ss.max - 6));
-        const tailLen = 70;
         const tg = ctx.createLinearGradient(ss.x - ss.vx * 8, ss.y - ss.vy * 8, ss.x, ss.y);
         tg.addColorStop(0, 'rgba(255,255,255,0)');
         tg.addColorStop(1, `rgba(255,255,255,${0.95 * fade})`);
@@ -845,42 +903,77 @@ function _drawTropical(ctx, isDark, state, t, py, w, h) {
         ctx.moveTo(ss.x - ss.vx * 8, ss.y - ss.vy * 8);
         ctx.lineTo(ss.x, ss.y);
         ctx.stroke();
-        // bright head
         ctx.beginPath();
         ctx.arc(ss.x, ss.y, 1.6, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(255,255,255,${fade})`;
-        ctx.fill();
-        if (ss.life >= ss.max || ss.x > w + 80 || ss.y > h * 0.55) {
+        ctx.fillStyle = `rgba(255,255,255,${fade})`; ctx.fill();
+        if (ss.life >= ss.max || ss.x > w + 80 || ss.y > horizon) {
           ss.active = false;
-          ss.nextSpawn = _rnd(140, 360);
+          ss.nextSpawn = _rnd(180, 420);
         }
       }
     }
-  } else {
-    // ── birds (day) ──
-    ctx.strokeStyle = 'rgba(28,38,48,0.62)';
-    ctx.lineWidth = 1.4;
-    ctx.lineCap = 'round';
-    for (const b of state.birds) {
-      b.x += b.sp;
-      if (b.x > w + 30) { b.x = -30; b.y = _rnd(h * 0.08, h * 0.42); }
-      const flap = Math.sin(t * b.fp + b.ph);
-      const wingDip = flap * b.sz * 0.42;
-      const by = b.y + py * 0.18;
-      ctx.beginPath();
-      ctx.moveTo(b.x - b.sz, by + wingDip * 0.3);
-      ctx.quadraticCurveTo(b.x - b.sz * 0.5, by - b.sz * 0.55 - wingDip, b.x, by);
-      ctx.quadraticCurveTo(b.x + b.sz * 0.5, by - b.sz * 0.55 - wingDip, b.x + b.sz, by + wingDip * 0.3);
-      ctx.stroke();
+
+    // Plane crossing the night sky
+    const plane = state.plane;
+    if (plane) {
+      if (!plane.active) {
+        plane.nextSpawn -= 1;
+        if (plane.nextSpawn <= 0) {
+          plane.active = true;
+          plane.x = -30;
+          plane.y = _rnd(h * 0.05, horizon * 0.6);
+          plane.vx = _rnd(0.9, 1.6);
+        }
+      } else {
+        plane.x += plane.vx;
+        if (plane.x > w + 30) {
+          plane.active = false;
+          plane.nextSpawn = Math.floor(30 * _rnd(80, 320));
+        } else {
+          ctx.fillStyle = 'rgba(70,72,82,0.85)';
+          ctx.fillRect(plane.x - 6, plane.y, 12, 1.6);
+          ctx.fillRect(plane.x - 1, plane.y - 2, 2.4, 5);
+          const blinkOn = Math.floor(t / 18) % 2 === 0;
+          if (blinkOn) {
+            const halo = ctx.createRadialGradient(plane.x + 5, plane.y, 0, plane.x + 5, plane.y, 9);
+            halo.addColorStop(0,    'rgba(255,40,32,0.65)');
+            halo.addColorStop(0.55, 'rgba(255,40,32,0.18)');
+            halo.addColorStop(1,    'rgba(255,40,32,0)');
+            ctx.fillStyle = halo;
+            ctx.fillRect(plane.x - 4, plane.y - 9, 18, 18);
+            ctx.beginPath();
+            ctx.arc(plane.x + 5, plane.y, 1.7, 0, Math.PI * 2);
+            ctx.fillStyle = '#ff2820';
+            ctx.fill();
+          }
+        }
+      }
     }
   }
 
-  // ── ocean waves ──
+  // ── water (waves bounded between horizon and shoreline) ──
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, horizon, w, shoreline - horizon);
+  ctx.clip();
+  // Base water fill
+  const waterFill = ctx.createLinearGradient(0, horizon, 0, shoreline);
+  if (isDark) {
+    waterFill.addColorStop(0, '#040f1e');
+    waterFill.addColorStop(1, '#02060e');
+  } else {
+    waterFill.addColorStop(0, '#88c4cf');
+    waterFill.addColorStop(0.7, '#e0b18a');
+    waterFill.addColorStop(1, '#f0c89a');
+  }
+  ctx.fillStyle = waterFill;
+  ctx.fillRect(0, horizon, w, shoreline - horizon);
+  // Wave bands
   for (const wv of state.waves) {
     wv.ph += wv.sp;
-    const baseY = wv.y0 + py * 0.28;
+    const baseY = wv.y0 + py * 0.15;
     ctx.beginPath();
-    ctx.moveTo(-10, h + 10);
+    ctx.moveTo(-10, shoreline + 10);
     ctx.lineTo(-10, baseY);
     for (let x = -10; x <= w + 10; x += 5) {
       const y = baseY
@@ -888,23 +981,186 @@ function _drawTropical(ctx, isDark, state, t, py, w, h) {
         + Math.sin(x * wv.freq * 2.3 + wv.ph * 0.85) * wv.amp * 0.38;
       ctx.lineTo(x, y);
     }
-    ctx.lineTo(w + 10, h + 10);
+    ctx.lineTo(w + 10, shoreline + 10);
     ctx.closePath();
     ctx.fillStyle = wv.col;
     ctx.fill();
   }
-
-  // ── water sparkles ──
+  // Water sparkles
   for (const sp of state.sparkles) {
     sp.ph += sp.sp;
     const alp = Math.max(0, Math.sin(sp.ph)) ** 2 * 0.88;
     if (alp < 0.02) continue;
     ctx.beginPath();
-    ctx.arc(sp.x, sp.y + py * 0.18, sp.sz * alp, 0, Math.PI * 2);
+    ctx.arc(sp.x, sp.y + py * 0.12, sp.sz * alp, 0, Math.PI * 2);
     ctx.fillStyle = isDark
       ? `rgba(175,215,255,${alp * 0.72})`
-      : `rgba(255,246,175,${alp * 0.88})`;
+      : `rgba(255,236,170,${alp * 0.85})`;
     ctx.fill();
+  }
+  // Sun-pillar reflection (day) — column of warm light from the sun to
+  // the shoreline.
+  if (!isDark) {
+    const sx = w * 0.5;
+    const pillar = ctx.createLinearGradient(sx, horizon, sx, shoreline);
+    pillar.addColorStop(0,   'rgba(255,220,150,0.55)');
+    pillar.addColorStop(0.6, 'rgba(255,200,120,0.18)');
+    pillar.addColorStop(1,   'rgba(255,180,80,0)');
+    ctx.fillStyle = pillar;
+    ctx.fillRect(sx - 40, horizon, 80, shoreline - horizon);
+  }
+  ctx.restore();
+
+  // ── wet sand strip just below the shoreline (darker, glossy) ──
+  const wetBand = 8;
+  const wetGrad = ctx.createLinearGradient(0, shoreline, 0, shoreline + wetBand);
+  if (isDark) {
+    wetGrad.addColorStop(0, '#1b1a16');
+    wetGrad.addColorStop(1, '#2a261f');
+  } else {
+    wetGrad.addColorStop(0, '#9c7e58');
+    wetGrad.addColorStop(1, '#c2a07a');
+  }
+  ctx.fillStyle = wetGrad;
+  ctx.fillRect(0, shoreline, w, wetBand);
+
+  // ── sand ──
+  const sandGrad = ctx.createLinearGradient(0, shoreline + wetBand, 0, h);
+  if (isDark) {
+    sandGrad.addColorStop(0, '#2c2620');
+    sandGrad.addColorStop(1, '#1a160f');
+  } else {
+    sandGrad.addColorStop(0, '#e7c9a0');
+    sandGrad.addColorStop(1, '#cdab7e');
+  }
+  ctx.fillStyle = sandGrad;
+  ctx.fillRect(0, shoreline + wetBand, w, h - shoreline - wetBand);
+  // Sand grain dots — sparse texture
+  ctx.fillStyle = isDark ? 'rgba(255,240,200,0.04)' : 'rgba(120,90,50,0.10)';
+  for (let i = 0; i < 70; i++) {
+    const gx = ((i * 73 + (t & 0)) * 17) % w;
+    const gy = shoreline + wetBand + ((i * 137) % (h - shoreline - wetBand));
+    ctx.fillRect(gx, gy, 1, 1);
+  }
+
+  // ── shells ──
+  for (const sh of state.shells) {
+    ctx.save();
+    ctx.translate(sh.x, sh.y);
+    ctx.rotate(sh.rot);
+    ctx.fillStyle = sh.col;
+    // Slight dim at night
+    if (isDark) ctx.globalAlpha = 0.55;
+    if (sh.type === 'scallop') {
+      // fan shape
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.arc(0, 0, sh.size, Math.PI, 0);
+      ctx.closePath();
+      ctx.fill();
+      // ridges
+      ctx.strokeStyle = isDark ? 'rgba(0,0,0,0.4)' : 'rgba(140,90,50,0.4)';
+      ctx.lineWidth = 0.5;
+      for (let i = 1; i < 4; i++) {
+        const a = Math.PI + (Math.PI / 4) * i;
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(Math.cos(a) * sh.size, Math.sin(a) * sh.size);
+        ctx.stroke();
+      }
+    } else if (sh.type === 'cone') {
+      ctx.beginPath();
+      ctx.moveTo(-sh.size * 0.5, 0);
+      ctx.lineTo(sh.size * 0.5, 0);
+      ctx.lineTo(0, -sh.size * 1.4);
+      ctx.closePath();
+      ctx.fill();
+    } else if (sh.type === 'spiral') {
+      ctx.beginPath();
+      ctx.ellipse(0, 0, sh.size * 1.1, sh.size * 0.7, 0, 0, Math.PI * 2);
+      ctx.fill();
+      // inner spiral hint
+      ctx.strokeStyle = isDark ? 'rgba(0,0,0,0.4)' : 'rgba(140,90,50,0.5)';
+      ctx.lineWidth = 0.5;
+      ctx.beginPath();
+      ctx.arc(sh.size * 0.15, 0, sh.size * 0.45, 0, Math.PI * 2);
+      ctx.stroke();
+    } else {
+      // oval pebble shell
+      ctx.beginPath();
+      ctx.ellipse(0, 0, sh.size * 1.2, sh.size * 0.75, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,0.25)';
+      ctx.beginPath();
+      ctx.ellipse(-sh.size * 0.3, -sh.size * 0.2, sh.size * 0.45, sh.size * 0.25, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  // ── crab — rare, walks sideways across the sand ──
+  const crab = state.crab;
+  if (!crab.active) {
+    crab.nextSpawn -= 1;
+    if (crab.nextSpawn <= 0) {
+      crab.active = true;
+      const dir = Math.random() < 0.5 ? 1 : -1;
+      crab.vx = dir * _rnd(0.35, 0.6);
+      crab.x = dir === 1 ? -16 : w + 16;
+      crab.y = _rnd(shoreline + wetBand + 6, h - 12);
+      crab.legPhase = 0;
+    }
+  } else {
+    crab.x += crab.vx;
+    crab.legPhase += 0.18;
+    const cx = crab.x, cy = crab.y;
+    // Shadow
+    ctx.fillStyle = 'rgba(0,0,0,0.18)';
+    ctx.beginPath();
+    ctx.ellipse(cx, cy + 4, 8, 1.8, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // Body
+    ctx.fillStyle = isDark ? '#8a3c2c' : '#c64a32';
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, 6.5, 4.2, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // Eyes
+    ctx.fillStyle = '#1a1a1a';
+    ctx.fillRect(cx - 2, cy - 4.5, 1.2, 1.2);
+    ctx.fillRect(cx + 1, cy - 4.5, 1.2, 1.2);
+    // Claws (extend slightly toward direction of travel)
+    ctx.fillStyle = isDark ? '#8a3c2c' : '#c64a32';
+    const clawDir = Math.sign(crab.vx) || 1;
+    ctx.beginPath();
+    ctx.ellipse(cx + 6 * clawDir, cy - 1.5, 2.8, 2.0, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(cx - 5 * clawDir, cy - 1, 2.4, 1.6, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // Legs — six little lines that bob with legPhase
+    ctx.strokeStyle = isDark ? '#742d22' : '#a13a26';
+    ctx.lineWidth = 1.0;
+    ctx.lineCap = 'round';
+    for (let i = 0; i < 3; i++) {
+      const off = (i - 1) * 2.4;
+      const lift = Math.sin(crab.legPhase + i * 1.7) * 1.4;
+      // left side
+      ctx.beginPath();
+      ctx.moveTo(cx - 3.5, cy + 0.6 + off * 0.2);
+      ctx.lineTo(cx - 6.5, cy + 2.4 + off * 0.2 - lift);
+      ctx.stroke();
+      // right side
+      ctx.beginPath();
+      ctx.moveTo(cx + 3.5, cy + 0.6 + off * 0.2);
+      ctx.lineTo(cx + 6.5, cy + 2.4 + off * 0.2 - lift);
+      ctx.stroke();
+    }
+    // Despawn when off-screen.
+    if ((crab.vx > 0 && cx > w + 16) || (crab.vx < 0 && cx < -16)) {
+      crab.active = false;
+      // Long idle before the next crab appears (45-150 s).
+      crab.nextSpawn = Math.floor(30 * _rnd(45, 150));
+    }
   }
 }
 
