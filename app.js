@@ -2026,11 +2026,41 @@ function makeClient(getKey) {
     return extractJson(resp);
   }
 
+  async function generateConnectionExplanation(category, terms) {
+    const resp = await generate({
+      contents: [{
+        role: 'user',
+        parts: [{ text:
+          `In two to four sentences, explain how these four MCAT terms are connected under the category "${category}":\n` +
+          `- ${terms.join('\n- ')}\n\n` +
+          `Write for a pre-med student studying for the MCAT. Focus on what binds them together conceptually. ` +
+          `No bullet points, no headers, no markdown — just plain prose.`,
+        }],
+      }],
+      maxOutputTokens: 400,
+    });
+    return extractText(resp).trim();
+  }
+
+  async function generateTermDefinition(term, context) {
+    const resp = await generate({
+      contents: [{
+        role: 'user',
+        parts: [{ text:
+          `Define the MCAT term "${term}"${context ? ` (context: ${context})` : ''} in one short, plain-prose sentence ` +
+          `aimed at a pre-med student. No markdown, no headers, no list formatting.`,
+        }],
+      }],
+      maxOutputTokens: 220,
+    });
+    return extractText(resp).trim();
+  }
+
   return {
     uploadFile, deleteFile, generate, ping,
     extractFromPdf, generateMCQuestions, generateShortAnswers, generateTermQuestions, generateTwoPartQuestions,
     fixFlaggedQuestion, auditQuestions, generateDailyCars, generateCarsQuestions,
-    generateDailyConnections,
+    generateDailyConnections, generateConnectionExplanation, generateTermDefinition,
   };
 }
 
@@ -4886,6 +4916,7 @@ function CarsArchive() {
   const [err, setErr] = useState('');
   const [open, setOpen] = useState(null); // { date, payload }
   const [loadingDate, setLoadingDate] = useState(null);
+  const [expanded, setExpanded] = useState(false);
   const today = todayStr();
   const results = getCarsResults();
 
@@ -4913,9 +4944,17 @@ function CarsArchive() {
     }
   };
 
+  // Days come from the API sorted newest-first. Show the 3 most recent
+  // inline; the rest unlock when the user expands.
+  const visibleDays = days && (expanded ? days : days.slice(0, 3));
+  const extraCount = days ? Math.max(0, days.length - 3) : 0;
+
   return (
     <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-5">
-      <h3 className="font-semibold text-[var(--text-strong)]">Daily CARS archive</h3>
+      <div className="flex items-baseline justify-between mb-1">
+        <h3 className="font-semibold text-[var(--text-strong)]">Daily CARS archive</h3>
+        {days && <span className="text-xs text-[var(--text-faint)]">{days.length} day{days.length === 1 ? '' : 's'}</span>}
+      </div>
       <p className="text-sm text-[var(--text-muted)] mb-3">Every day's CARS passage. Open any one to read it and do the questions.</p>
       {err && <div className="text-sm text-[var(--danger-text)] mb-2">{err}</div>}
       {!days && <div className="text-sm text-[var(--text-muted)]">Loading…</div>}
@@ -4924,7 +4963,7 @@ function CarsArchive() {
       )}
       {days && days.length > 0 && (
         <ul className="divide-y divide-[var(--border-soft)]">
-          {days.map((d) => {
+          {visibleDays.map((d) => {
             const r = results[d.date];
             return (
               <li key={d.date} className="py-2.5 flex items-center gap-3">
@@ -4950,6 +4989,14 @@ function CarsArchive() {
           })}
         </ul>
       )}
+      {days && extraCount > 0 && (
+        <button
+          onClick={() => setExpanded((e) => !e)}
+          className="mt-3 text-xs text-[var(--accent-text)] hover:underline"
+        >
+          {expanded ? 'Show less' : `Show ${extraCount} more day${extraCount === 1 ? '' : 's'}`}
+        </button>
+      )}
       {open && open.payload && (
         <CarsRunner
           date={open.date}
@@ -4957,6 +5004,161 @@ function CarsArchive() {
           alreadyDone={!!results[open.date]}
           onClose={() => setOpen(null)}
         />
+      )}
+    </div>
+  );
+}
+
+// Locally-cached Gemini outputs for solved Connections groups. Keyed by
+// `${date}::${category}` for explanations and `${term}` for definitions.
+function getConnExplain(date, category) {
+  const all = storage.get('mcat:connExplain', {}) || {};
+  return all[`${date}::${category}`] || null;
+}
+function setConnExplain(date, category, text) {
+  const all = storage.get('mcat:connExplain', {}) || {};
+  all[`${date}::${category}`] = text;
+  storage.set('mcat:connExplain', all);
+}
+function getTermDefCache(term) {
+  const all = storage.get('mcat:termDefs', {}) || {};
+  return all[term.toLowerCase()] || null;
+}
+function setTermDefCache(term, def) {
+  const all = storage.get('mcat:termDefs', {}) || {};
+  all[term.toLowerCase()] = def;
+  storage.set('mcat:termDefs', all);
+}
+
+// Looks up a term's definition first in the user's local extractions
+// (key_terms across every downloaded chapter), then falls back to the
+// term-def cache (filled on demand by Gemini).
+function lookupLocalDef(term, extractions) {
+  const needle = term.toLowerCase().trim();
+  for (const ext of Object.values(extractions || {})) {
+    const kts = ext?.key_terms || [];
+    const hit = kts.find((kt) => (kt.term || '').toLowerCase().trim() === needle);
+    if (hit?.definition) return hit.definition;
+  }
+  return null;
+}
+
+function SolvedConnectionGroup({ group, date }) {
+  const { client, apiKey, extractions } = useApp();
+  const c = CONNECTIONS_COLORS[group.difficulty];
+  const [open, setOpen] = useState(false);
+  const [flippedTerm, setFlippedTerm] = useState(null);
+  const [explain, setExplain] = useState(() => getConnExplain(date, group.category));
+  const [explainBusy, setExplainBusy] = useState(false);
+  const [explainErr, setExplainErr] = useState('');
+  const [termDefs, setTermDefs] = useState(() => {
+    const seed = {};
+    for (const t of group.terms) {
+      seed[t] = lookupLocalDef(t, extractions) || getTermDefCache(t) || null;
+    }
+    return seed;
+  });
+  const [termBusy, setTermBusy] = useState({});
+
+  const fetchExplain = useCallback(async () => {
+    if (explain || explainBusy) return;
+    if (!apiKey) { setExplainErr('Add a Gemini API key in Settings to load explanations.'); return; }
+    setExplainBusy(true); setExplainErr('');
+    try {
+      const text = await client.generateConnectionExplanation(group.category, group.terms);
+      setExplain(text);
+      setConnExplain(date, group.category, text);
+    } catch (e) {
+      setExplainErr(e.message || 'Could not load explanation.');
+    } finally {
+      setExplainBusy(false);
+    }
+  }, [client, apiKey, group.category, group.terms, date, explain, explainBusy]);
+
+  const fetchTermDef = useCallback(async (term) => {
+    if (termDefs[term] || termBusy[term]) return;
+    if (!apiKey) return;
+    setTermBusy((b) => ({ ...b, [term]: true }));
+    try {
+      const def = await client.generateTermDefinition(term, group.category);
+      setTermDefs((d) => ({ ...d, [term]: def }));
+      setTermDefCache(term, def);
+    } catch {}
+    finally {
+      setTermBusy((b) => ({ ...b, [term]: false }));
+    }
+  }, [client, apiKey, group.category, termDefs, termBusy]);
+
+  // When the user opens the group, kick off any explanations/definitions
+  // we don't already have cached.
+  useEffect(() => {
+    if (!open) return;
+    fetchExplain();
+    for (const t of group.terms) if (!termDefs[t]) fetchTermDef(t);
+  // eslint-disable-next-line
+  }, [open]);
+
+  return (
+    <div className="rounded-xl overflow-hidden" style={{ background: c.bg, color: c.text }}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="w-full px-4 py-3 text-center"
+        aria-expanded={open}
+      >
+        <div className="text-xs uppercase tracking-wide font-semibold opacity-80">{group.difficulty}</div>
+        <div className="font-bold text-base sm:text-lg">{group.category}</div>
+        <div className="text-sm mt-0.5">{group.terms.join(' · ')}</div>
+        <div className="text-[10px] mt-1 opacity-70">{open ? '▾ tap to collapse' : '▸ tap for explanation and flashcards'}</div>
+      </button>
+      {open && (
+        <div className="bg-[var(--bg-card-soft)] border-t border-black/10 px-4 py-3 space-y-3" style={{ color: 'var(--text)' }}>
+          {/* How they connect */}
+          <div>
+            <div className="text-[10px] uppercase tracking-wide text-[var(--text-muted)] mb-1">How they connect</div>
+            {explainBusy && <div className="text-sm text-[var(--text-muted)]">Loading…</div>}
+            {explainErr && !explain && <div className="text-sm text-[var(--text-faint)]">{explainErr}</div>}
+            {explain && <p className="text-sm text-[var(--text)] leading-snug">{explain}</p>}
+            {!explain && !explainBusy && !explainErr && (
+              <div className="text-sm text-[var(--text-muted)]">No explanation cached.</div>
+            )}
+          </div>
+          {/* Term flashcards */}
+          <div>
+            <div className="text-[10px] uppercase tracking-wide text-[var(--text-muted)] mb-1">Flashcards</div>
+            <div className="grid grid-cols-2 gap-2">
+              {group.terms.map((t) => {
+                const flipped = flippedTerm === t;
+                const def = termDefs[t];
+                const busy = termBusy[t];
+                return (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => setFlippedTerm(flipped ? null : t)}
+                    className="bg-[var(--bg-elev)] border border-[var(--border-soft)] hover:bg-[var(--bg-hover)] rounded-lg px-3 py-2 text-left min-h-[68px]"
+                    style={{ color: 'var(--text)' }}
+                  >
+                    {flipped ? (
+                      <div className="text-xs leading-snug">
+                        {def
+                          ? def
+                          : busy
+                            ? <span className="text-[var(--text-muted)]">Loading…</span>
+                            : <span className="text-[var(--text-muted)]">{apiKey ? 'No definition cached.' : 'Add a Gemini API key in Settings.'}</span>}
+                      </div>
+                    ) : (
+                      <>
+                        <div className="text-sm font-semibold">{t}</div>
+                        <div className="text-[10px] text-[var(--text-faint)] mt-0.5">tap to flip</div>
+                      </>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -5158,20 +5360,9 @@ function ConnectionsRunner({ date, payload, onClose, alreadyDone }) {
         {/* Solved groups */}
         {solvedGroups.length > 0 && (
           <div className="space-y-2">
-            {solvedGroups.map((g) => {
-              const c = CONNECTIONS_COLORS[g.difficulty];
-              return (
-                <div
-                  key={g.category}
-                  className="rounded-xl px-4 py-3 text-center"
-                  style={{ background: c.bg, color: c.text }}
-                >
-                  <div className="text-xs uppercase tracking-wide font-semibold opacity-80">{g.difficulty}</div>
-                  <div className="font-bold text-base sm:text-lg">{g.category}</div>
-                  <div className="text-sm mt-0.5">{g.terms.join(' · ')}</div>
-                </div>
-              );
-            })}
+            {solvedGroups.map((g) => (
+              <SolvedConnectionGroup key={g.category} group={g} date={date} />
+            ))}
           </div>
         )}
 
@@ -5430,6 +5621,7 @@ function ConnectionsArchive() {
   const [err, setErr] = useState('');
   const [open, setOpen] = useState(null); // { date, payload }
   const [loadingDate, setLoadingDate] = useState(null);
+  const [expanded, setExpanded] = useState(false);
   const today = todayStr();
   const results = getConnectionsResults();
 
@@ -5456,9 +5648,15 @@ function ConnectionsArchive() {
     }
   };
 
+  const visibleDays = days && (expanded ? days : days.slice(0, 3));
+  const extraCount = days ? Math.max(0, days.length - 3) : 0;
+
   return (
     <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-5">
-      <h3 className="font-semibold text-[var(--text-strong)]">Daily Connections archive</h3>
+      <div className="flex items-baseline justify-between mb-1">
+        <h3 className="font-semibold text-[var(--text-strong)]">Daily Connections archive</h3>
+        {days && <span className="text-xs text-[var(--text-faint)]">{days.length} day{days.length === 1 ? '' : 's'}</span>}
+      </div>
       <p className="text-sm text-[var(--text-muted)] mb-3">Every day's Connections puzzle. Replay any one.</p>
       {err && <div className="text-sm text-[var(--danger-text)] mb-2">{err}</div>}
       {!days && <div className="text-sm text-[var(--text-muted)]">Loading…</div>}
@@ -5467,7 +5665,7 @@ function ConnectionsArchive() {
       )}
       {days && days.length > 0 && (
         <ul className="divide-y divide-[var(--border-soft)]">
-          {days.map((d) => {
+          {visibleDays.map((d) => {
             const r = results[d.date];
             return (
               <li key={d.date} className="py-2.5 flex items-center gap-3">
@@ -5493,6 +5691,14 @@ function ConnectionsArchive() {
             );
           })}
         </ul>
+      )}
+      {days && extraCount > 0 && (
+        <button
+          onClick={() => setExpanded((e) => !e)}
+          className="mt-3 text-xs text-[var(--accent-text)] hover:underline"
+        >
+          {expanded ? 'Show less' : `Show ${extraCount} more day${extraCount === 1 ? '' : 's'}`}
+        </button>
       )}
       {open && open.payload && (
         <ConnectionsRunner
@@ -7557,6 +7763,27 @@ function BankTab() {
     setStatus({ kind: fail === 0 ? 'ok' : 'err', msg: `Downloaded ${ok}/${chapters.length}${fail ? ` (${fail} failed)` : ''}` });
   };
 
+  // Wipe the local library and replace it with every completed bank chapter.
+  // Double-confirmed because it discards locally-processed work that isn't on
+  // the bank.
+  const replaceLibrary = async (chapters) => {
+    if (downloadingAll) return;
+    if (!confirm(`Replace your local library with ${chapters.length} bank chapter${chapters.length === 1 ? '' : 's'}? This removes any chapter that isn't on the bank.`)) return;
+    if (!confirm('Are you sure? Local PDFs you uploaded but never published will be lost.')) return;
+    setDownloadingAll(true);
+    // Drop every existing file/extraction/question entry first.
+    storage.set(KEYS.extractions, {});
+    storage.set(KEYS.questions, {});
+    setFiles(() => []);
+    let ok = 0, fail = 0;
+    for (const ch of chapters) {
+      setStatus({ kind: 'info', msg: `Downloading ${ok + fail + 1}/${chapters.length}: "${ch.title}"…` });
+      try { await downloadOne(ch); ok++; } catch { fail++; }
+    }
+    setDownloadingAll(false);
+    setStatus({ kind: fail === 0 ? 'ok' : 'err', msg: `Library replaced — ${ok}/${chapters.length} downloaded${fail ? ` (${fail} failed)` : ''}` });
+  };
+
   // Run the contributor's Gemini key against the chapter's published extraction
   // to fill in missing stages. PDF is not required for mc/two_part/short, so anyone
   // signed in with a key can advance a chapter.
@@ -7707,6 +7934,17 @@ function BankTab() {
 
   return (
     <div className="space-y-4">
+      {/* Search at the top so the user can drill into any subject without
+          scrolling past archives and download banners. */}
+      <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-3 sm:p-4">
+        <input
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          placeholder="Search bank by subject, chapter, filename, or uploader…"
+          className="w-full bg-[var(--bg-elev)] border border-[var(--border)] rounded px-3 py-2 text-sm"
+        />
+      </div>
+
       <CarsArchive />
       {changedChapters.length > 0 && !summaryDismissed && (
         <div className="bg-[var(--accent-soft)] border border-[var(--accent-border)] rounded-2xl p-4 sm:p-5">
@@ -7743,12 +7981,6 @@ function BankTab() {
             Every chapter anyone has published. Stage badges show what's been generated. Download any chapter into your local Library to quiz from it.
           </p>
         </div>
-        <input
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-          placeholder="Filter by subject, chapter, filename…"
-          className="w-full bg-[var(--bg-elev)] border border-[var(--border)] rounded px-3 py-2 text-sm"
-        />
         {status && (
           <div className={`text-sm rounded-lg px-3 py-2 ${
             status.kind === 'ok'
@@ -7769,23 +8001,43 @@ function BankTab() {
       )}
 
       {/* Library-vs-bank diff: any chapter with a complete MC stage that
-          isn't already downloaded locally. One-click pull them all. */}
+          isn't already downloaded locally. One-click pull them all, or
+          replace the entire local library with what's on the bank. */}
       {(() => {
-        const missing = data.chapters.filter((c) => c.stages?.mc?.done && !localChapterIds.has(c.id));
-        if (missing.length === 0) return null;
+        const complete = data.chapters.filter((c) => c.stages?.mc?.done);
+        const missing = complete.filter((c) => !localChapterIds.has(c.id));
+        if (missing.length === 0 && files.length === 0) return null;
         return (
-          <div className="bg-[var(--accent-soft)] border border-[var(--accent-border)] rounded-2xl p-4 sm:p-5 flex flex-wrap items-center justify-between gap-3">
+          <div className="bg-[var(--accent-soft)] border border-[var(--accent-border)] rounded-2xl p-4 sm:p-5 space-y-3">
             <div className="min-w-0">
-              <div className="font-semibold text-[var(--accent-text)]">Your library is missing {missing.length} chapter{missing.length === 1 ? '' : 's'}</div>
-              <div className="text-xs text-[var(--text-muted)] mt-0.5">Pull every completed bank chapter into your local library in one click.</div>
+              <div className="font-semibold text-[var(--accent-text)]">
+                {missing.length > 0
+                  ? <>Your library is missing {missing.length} chapter{missing.length === 1 ? '' : 's'}</>
+                  : <>Your library is in sync with the bank</>}
+              </div>
+              <div className="text-xs text-[var(--text-muted)] mt-0.5">
+                Pull any missing chapter — or replace your library outright with the {complete.length} completed bank chapter{complete.length === 1 ? '' : 's'}.
+              </div>
             </div>
-            <button
-              onClick={() => downloadAllMissing(missing)}
-              disabled={downloadingAll || !!busyId}
-              className="shrink-0 text-sm px-4 py-2 bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] disabled:opacity-40 rounded-lg font-medium"
-            >
-              {downloadingAll ? 'Downloading…' : `Download all (${missing.length})`}
-            </button>
+            <div className="flex flex-wrap gap-2">
+              {missing.length > 0 && (
+                <button
+                  onClick={() => downloadAllMissing(missing)}
+                  disabled={downloadingAll || !!busyId}
+                  className="text-sm px-4 py-2 bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] disabled:opacity-40 rounded-lg font-medium"
+                >
+                  {downloadingAll ? 'Downloading…' : `Download all new (${missing.length})`}
+                </button>
+              )}
+              <button
+                onClick={() => replaceLibrary(complete)}
+                disabled={downloadingAll || !!busyId || complete.length === 0}
+                title="Wipes your current library, then downloads every completed bank chapter."
+                className="text-sm px-4 py-2 border border-[var(--accent-border)] text-[var(--accent-text)] hover:bg-[var(--bg-hover)] disabled:opacity-40 rounded-lg font-medium"
+              >
+                Replace library with bank
+              </button>
+            </div>
           </div>
         );
       })()}
@@ -8173,8 +8425,19 @@ function Shell() {
       document.documentElement.style.setProperty('--mcat-header-h', `${h}px`);
     };
     measure();
+    // Track changes from tab wrapping, font load, orientation, etc. — not
+    // just window resize.
+    const ro = typeof ResizeObserver !== 'undefined' && headerRef.current
+      ? new ResizeObserver(measure)
+      : null;
+    if (ro) ro.observe(headerRef.current);
     window.addEventListener('resize', measure);
-    return () => window.removeEventListener('resize', measure);
+    window.addEventListener('orientationchange', measure);
+    return () => {
+      if (ro) ro.disconnect();
+      window.removeEventListener('resize', measure);
+      window.removeEventListener('orientationchange', measure);
+    };
   }, []);
 
   return (
