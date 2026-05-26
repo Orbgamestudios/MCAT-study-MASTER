@@ -7620,19 +7620,93 @@ function Shell() {
   useEffect(() => { if (readOnly) setTab('home'); else if (!hasLibrary) setTab('home'); }, [readOnly, hasLibrary]);
   useEffect(() => { setProfileUser(null); }, [tab]);
 
-  const swipeOrigin = useRef({ x: 0, y: 0 });
-  const handleTouchStart = useCallback((e) => {
-    swipeOrigin.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+  const mainRef = useRef(null);
+  const contentRef = useRef(null);
+  const tabsRef = useRef(tabs);
+  const tabRef = useRef(tab);
+  const [enterDir, setEnterDir] = useState('');
+  useEffect(() => { tabsRef.current = tabs; }, [tabs]);
+  useEffect(() => { tabRef.current = tab; }, [tab]);
+
+  // Non-passive touch handler so we can preventDefault on horizontal drags.
+  useEffect(() => {
+    const el = mainRef.current;
+    if (!el) return;
+    const drag = { active: false, isH: null, x0: 0, y0: 0 };
+
+    const onStart = (e) => {
+      drag.active = true; drag.isH = null;
+      drag.x0 = e.touches[0].clientX; drag.y0 = e.touches[0].clientY;
+      const c = contentRef.current;
+      if (c) c.style.transition = 'none';
+    };
+
+    const onMove = (e) => {
+      if (!drag.active) return;
+      const dx = e.touches[0].clientX - drag.x0;
+      const dy = e.touches[0].clientY - drag.y0;
+      if (drag.isH === null) {
+        if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+        drag.isH = Math.abs(dx) > Math.abs(dy);
+      }
+      if (!drag.isH) { drag.active = false; return; }
+      e.preventDefault();
+      const keys = tabsRef.current.map(([k]) => k);
+      const idx = keys.indexOf(tabRef.current);
+      let offset = dx;
+      if ((dx > 0 && idx === 0) || (dx < 0 && idx === keys.length - 1)) offset = dx * 0.2;
+      const c = contentRef.current;
+      if (c) c.style.transform = `translateX(${offset}px)`;
+    };
+
+    const onEnd = (e) => {
+      if (!drag.active) return;
+      drag.active = false;
+      if (!drag.isH) return;
+      const dx = e.changedTouches[0].clientX - drag.x0;
+      const c = contentRef.current;
+      const keys = tabsRef.current.map(([k]) => k);
+      const idx = keys.indexOf(tabRef.current);
+      const canNext = dx < 0 && idx < keys.length - 1;
+      const canPrev = dx > 0 && idx > 0;
+
+      if (Math.abs(dx) > 55 && (canNext || canPrev)) {
+        // Fly content off screen, then mount new tab with enter animation.
+        const flyDir = dx < 0 ? -1 : 1;
+        if (c) {
+          c.style.transition = 'transform 0.18s ease-in';
+          c.style.transform = `translateX(${flyDir * -110}vw)`;
+        }
+        setTimeout(() => {
+          if (c) { c.style.transition = 'none'; c.style.transform = ''; }
+          setEnterDir(dx < 0 ? 'right' : 'left');
+          if (canNext) setTab(keys[idx + 1]);
+          else setTab(keys[idx - 1]);
+        }, 180);
+      } else {
+        if (c) {
+          c.style.transition = 'transform 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94)';
+          c.style.transform = '';
+        }
+      }
+    };
+
+    el.addEventListener('touchstart', onStart, { passive: true });
+    el.addEventListener('touchmove', onMove, { passive: false });
+    el.addEventListener('touchend', onEnd, { passive: true });
+    return () => {
+      el.removeEventListener('touchstart', onStart);
+      el.removeEventListener('touchmove', onMove);
+      el.removeEventListener('touchend', onEnd);
+    };
   }, []);
-  const handleTouchEnd = useCallback((e) => {
-    const dx = e.changedTouches[0].clientX - swipeOrigin.current.x;
-    const dy = e.changedTouches[0].clientY - swipeOrigin.current.y;
-    if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.3) return;
-    const keys = tabs.map(([k]) => k);
-    const idx = keys.indexOf(tab);
-    if (dx < 0 && idx < keys.length - 1) setTab(keys[idx + 1]);
-    if (dx > 0 && idx > 0) setTab(keys[idx - 1]);
-  }, [tab, tabs]);
+
+  // Clear enter direction after animation completes.
+  useEffect(() => {
+    if (!enterDir) return;
+    const t = setTimeout(() => setEnterDir(''), 350);
+    return () => clearTimeout(t);
+  }, [enterDir, tab]);
 
   const fullyProcessed = files.filter((f) => extractions[f.file_id] && questions[f.file_id]?.mc && questions[f.file_id]?.short).length;
 
@@ -7647,15 +7721,15 @@ function Shell() {
 
   return (
     <div className="min-h-full flex flex-col">
-      <header ref={headerRef} className="fixed top-0 inset-x-0 z-40 border-b border-[var(--border-soft)] bg-[var(--bg)] px-3 sm:px-5 py-2.5 sm:py-3 flex flex-wrap items-center justify-between gap-y-2 gap-x-3">
-        <div className="flex items-center gap-2 sm:gap-3 order-1">
+      <header ref={headerRef} className="fixed top-0 inset-x-0 z-40 border-b border-[var(--border-soft)] bg-[var(--bg)] px-3 sm:px-5 py-2.5 sm:py-3 flex flex-wrap items-center gap-y-2 gap-x-3">
+        <div className="flex items-center gap-2 sm:gap-3 order-1 flex-1">
           <div className="w-7 h-7 rounded bg-gradient-to-br from-[var(--accent)] to-[var(--accent-2)]" />
           <div className="font-semibold text-sm sm:text-base">MCAT Study</div>
           {readOnly
             ? <span className="text-[10px] sm:text-xs text-[var(--success-text)] bg-[var(--success-bg)] rounded px-1.5 sm:px-2 py-0.5">read-only</span>
             : <span className="hidden sm:inline text-xs text-[var(--text-faint)] font-mono">{MODEL}</span>}
         </div>
-        <nav className="flex items-center gap-1 overflow-x-auto -mx-1 px-1 order-3 sm:order-2 w-full sm:w-auto">
+        <nav className="flex items-center justify-center gap-1 overflow-x-auto order-3 sm:order-2 w-full sm:w-auto">
           {tabs.map(([k, label]) => (
             <button
               key={k}
@@ -7671,7 +7745,7 @@ function Shell() {
             </button>
           ))}
         </nav>
-        <div className="flex items-center gap-2 sm:gap-3 text-xs text-[var(--text-muted)] order-2 sm:order-3">
+        <div className="flex items-center justify-end gap-2 sm:gap-3 text-xs text-[var(--text-muted)] order-2 sm:order-3 flex-1">
           {session ? (
             <button
               onClick={() => setShowAccount((s) => !s)}
@@ -7707,10 +7781,10 @@ function Shell() {
       {/* Spacer pushes content below the fixed header */}
       <div style={{ height: headerH, flexShrink: 0 }} />
 
-      <main className="flex-1 px-3 pb-3 pt-[17px] sm:px-6 sm:pb-6 sm:pt-[29px]" onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
-        <div className="max-w-3xl mx-auto">
+      <main ref={mainRef} className="flex-1 px-3 pb-3 pt-[17px] sm:px-6 sm:pb-6 sm:pt-[29px] overflow-x-hidden">
+        <div ref={contentRef} className="max-w-3xl mx-auto" style={{ willChange: 'transform' }}>
           {tab === 'library' && (
-            <div className="tab-content space-y-4 sm:space-y-5">
+            <div className="tab-content space-y-4 sm:space-y-5" data-enter={enterDir || undefined}>
               {!readOnly && apiKey && <UploadPanel />}
               {session && <PublishAllPanel />}
               {fullyProcessed > 0 && (
@@ -7730,9 +7804,9 @@ function Shell() {
               <FlagFixesPanel />
             </div>
           )}
-          {tab === 'home' && <div className="tab-content"><HomeView onGoToStudy={() => setTab('study')} /></div>}
+          {tab === 'home' && <div className="tab-content" data-enter={enterDir || undefined}><HomeView onGoToStudy={() => setTab('study')} /></div>}
           {tab === 'stats' && (
-            <div className="tab-content space-y-4 sm:space-y-5">
+            <div className="tab-content space-y-4 sm:space-y-5" data-enter={enterDir || undefined}>
             {profileUser
               ? <UserProfile username={profileUser} onBack={() => setProfileUser(null)} />
               : (
@@ -7744,7 +7818,7 @@ function Shell() {
               )}
             </div>
           )}
-          {tab === 'banks' && <div className="tab-content"><BankTab /></div>}
+          {tab === 'banks' && <div className="tab-content" data-enter={enterDir || undefined}><BankTab /></div>}
           {/* StudyView is always mounted (preserves state) but hidden when inactive.
               Kept last so its hidden DOM node never creates a space-y gap above other tabs. */}
           <div style={{ display: tab === 'study' ? undefined : 'none' }}><StudyView /></div>

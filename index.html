@@ -378,17 +378,33 @@
   /* Dynamic background is applied entirely via JS (see app.js tropicalBg/getDynamicBg)
      so it works correctly for all colour palettes in both light and dark mode. */
 
-  /* ── Smooth animations ────────────────────────────────────────────────── */
+  /* ── Animations ───────────────────────────────────────────────────────── */
   @keyframes mcatFadeUp {
-    from { opacity: 0; transform: translateY(8px); }
-    to   { opacity: 1; transform: translateY(0);   }
+    from { opacity: 0; transform: translateY(12px); }
+    to   { opacity: 1; transform: translateY(0); }
   }
   @keyframes mcatFadeIn {
     from { opacity: 0; }
     to   { opacity: 1; }
   }
+  @keyframes mcatSlideFromRight {
+    from { opacity: 0.15; transform: translateX(70px); }
+    to   { opacity: 1;    transform: translateX(0); }
+  }
+  @keyframes mcatSlideFromLeft {
+    from { opacity: 0.15; transform: translateX(-70px); }
+    to   { opacity: 1;    transform: translateX(0); }
+  }
 
-  html[data-smooth="true"] .tab-content {
+  /* Directional slide — always active, triggered by drag swipes. */
+  .tab-content[data-enter="right"] {
+    animation: mcatSlideFromRight 0.22s ease-out both;
+  }
+  .tab-content[data-enter="left"] {
+    animation: mcatSlideFromLeft 0.22s ease-out both;
+  }
+  /* Fade-up — only when smooth animations setting is on, for button-click tab switches. */
+  html[data-smooth="true"] .tab-content:not([data-enter]) {
     animation: mcatFadeUp 0.22s ease both;
   }
   html[data-smooth="true"] .question-card {
@@ -401,6 +417,6 @@
 </head>
 <body>
 <div id="root"></div>
-<script type="text/babel" data-presets="react" src="app.js?v=68"></script>
+<script type="text/babel" data-presets="react" src="app.js?v=69"></script>
 </body>
 </html>
