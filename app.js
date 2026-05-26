@@ -7934,15 +7934,32 @@ function BankTab() {
 
   return (
     <div className="space-y-4">
-      {/* Search at the top so the user can drill into any subject without
-          scrolling past archives and download banners. */}
-      <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-3 sm:p-4">
+      {/* Bank box at the very top: title, description, search, status — so
+          the user can filter before scrolling past archives and banners. */}
+      <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-5 space-y-3">
+        <div>
+          <h2 className="font-semibold text-[var(--text-strong)]">Bank</h2>
+          <p className="text-sm text-[var(--text-muted)]">
+            Every chapter anyone has published. Stage badges show what's been generated. Download any chapter into your local Library to quiz from it.
+          </p>
+        </div>
         <input
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
-          placeholder="Search bank by subject, chapter, filename, or uploader…"
+          placeholder="Search by subject, chapter, filename, or uploader…"
           className="w-full bg-[var(--bg-elev)] border border-[var(--border)] rounded px-3 py-2 text-sm"
         />
+        {status && (
+          <div className={`text-sm rounded-lg px-3 py-2 ${
+            status.kind === 'ok'
+              ? 'bg-[var(--success-bg)] text-[var(--success-text)]'
+              : status.kind === 'err'
+              ? 'bg-[var(--danger-bg)] text-[var(--danger-text)]'
+              : 'bg-[var(--accent-soft)] text-[var(--accent-text)]'
+          }`}>
+            {status.kind === 'ok' ? '✓ ' : status.kind === 'info' ? '… ' : ''}{status.msg}
+          </div>
+        )}
       </div>
 
       <CarsArchive />
@@ -7974,26 +7991,6 @@ function BankTab() {
           </div>
         </div>
       )}
-      <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-5 space-y-3">
-        <div>
-          <h2 className="font-semibold text-[var(--text-strong)]">Bank</h2>
-          <p className="text-sm text-[var(--text-muted)]">
-            Every chapter anyone has published. Stage badges show what's been generated. Download any chapter into your local Library to quiz from it.
-          </p>
-        </div>
-        {status && (
-          <div className={`text-sm rounded-lg px-3 py-2 ${
-            status.kind === 'ok'
-              ? 'bg-[var(--success-bg)] text-[var(--success-text)]'
-              : status.kind === 'err'
-              ? 'bg-[var(--danger-bg)] text-[var(--danger-text)]'
-              : 'bg-[var(--accent-soft)] text-[var(--accent-text)]'
-          }`}>
-            {status.kind === 'ok' ? '✓ ' : status.kind === 'info' ? '… ' : ''}{status.msg}
-          </div>
-        )}
-      </div>
-
       {data.chapters.length === 0 && (
         <div className="bg-[var(--bg-card-soft)] border border-dashed border-[var(--border-soft)] rounded-2xl p-6 text-sm text-[var(--text-muted)]">
           No chapters published yet. Publish your local chapters from the Library tab.
