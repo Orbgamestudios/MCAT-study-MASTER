@@ -388,6 +388,23 @@ function _initMadison(w, h, isDark) {
       height: Math.max(36, h * 0.08),
       numArches: 11,
     },
+    // Tiny cars driving along the lakeshore behind the terrace.
+    // Direction is +1 (right) or -1 (left); a few of each so there's
+    // visible cross-traffic. Speeds vary slightly per car.
+    cars: Array.from({ length: 14 }, (_, i) => {
+      const dir = i % 2 === 0 ? 1 : -1;
+      return {
+        x: _rnd(0, w),
+        dir,
+        sp: _rnd(0.35, 0.85),
+        // Two parallel rows so opposite directions don't share the same y.
+        row: dir === 1 ? 0 : 1,
+        // Colour for the car body (visible at day; at night it's mostly
+        // headlight/taillight).
+        col: ['#1f2733', '#3b3b3b', '#6b5e3a', '#5a2c2c', '#2c4a5a'][Math.floor(Math.random() * 5)],
+        len: _rnd(5, 8),
+      };
+    }),
   };
 }
 
@@ -1472,6 +1489,63 @@ function _drawMadison(ctx, isDark, state, t, py, w, h) {
     // Water-line shadow under the terrace
     ctx.fillStyle = isDark ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0.25)';
     ctx.fillRect(left, baseY - 1, tr.width, 1.5);
+  }
+
+  // ── Tiny cars driving along the lakeshore behind the terrace ──
+  // Two thin rows just above the Monona Terrace top, one going right and
+  // one going left. Each car is a 5-8px rectangle with a headlight halo
+  // ahead (yellow-white) and a small taillight behind (red) at night.
+  {
+    const tr = state.terrace;
+    const roadTopY = (groundY - tr.height) - 6; // a few px above terrace top
+    const rowH = 3;
+    for (const car of state.cars) {
+      car.x += car.dir * car.sp;
+      if (car.dir === 1 && car.x > w + 12) car.x = -12;
+      if (car.dir === -1 && car.x < -12) car.x = w + 12;
+      const cy = roadTopY + car.row * (rowH + 1);
+      const headX = car.dir === 1 ? car.x + car.len / 2 : car.x - car.len / 2;
+      const tailX = car.dir === 1 ? car.x - car.len / 2 : car.x + car.len / 2;
+      if (isDark) {
+        // Body — barely visible at night, just a dark sliver
+        ctx.fillStyle = '#0d0e16';
+        ctx.fillRect(car.x - car.len / 2, cy, car.len, 2);
+        // Headlight halo
+        const hl = ctx.createRadialGradient(headX, cy + 1, 0, headX, cy + 1, 6);
+        hl.addColorStop(0,   'rgba(255,242,180,0.85)');
+        hl.addColorStop(0.5, 'rgba(255,232,140,0.25)');
+        hl.addColorStop(1,   'rgba(255,232,140,0)');
+        ctx.fillStyle = hl;
+        ctx.fillRect(headX - 6, cy - 5, 12, 12);
+        // Headlight core
+        ctx.fillStyle = 'rgba(255,248,200,0.95)';
+        ctx.fillRect(headX - 0.5, cy + 0.3, 1.4, 1.4);
+        // Taillight (small red)
+        ctx.fillStyle = 'rgba(255,60,40,0.85)';
+        ctx.fillRect(tailX - 0.6, cy + 0.4, 1.2, 1.2);
+      } else {
+        // Day: solid little block in the car's colour
+        ctx.fillStyle = car.col;
+        ctx.fillRect(car.x - car.len / 2, cy, car.len, 2);
+        // Tiny windshield highlight
+        ctx.fillStyle = 'rgba(255,255,255,0.35)';
+        ctx.fillRect(car.x - 0.5, cy - 0.4, car.len * 0.35, 0.8);
+      }
+    }
+    // Headlight reflection (night only) — a couple of soft streaks where
+    // the brightest cars are passing right now.
+    if (isDark) {
+      for (const car of state.cars) {
+        if (car.row !== 0) continue; // only the front row contributes
+        if (Math.random() < 0.85) continue; // sample very lightly
+        reflections.push({
+          x: car.x,
+          color: 'rgba(255,232,140,',
+          alpha: 0.18,
+          width: 8,
+        });
+      }
+    }
   }
 
   // ── Lake reflections — subsampled, wide, blurred. ──
