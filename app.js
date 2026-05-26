@@ -254,12 +254,15 @@ function _initMadison(w, h, isDark) {
   // Wide lake takes the bottom ~22% of the frame (reference photo proportion).
   const groundY = h * 0.78;
 
-  // Capitol — tall central tower with hemisphere dome + cupola + spire.
-  // Reference photo: dome is the tallest thing by far, with two side wings.
+  // Capitol — central tower with hemisphere dome + cupola + spire. Reference
+  // photo: the tower itself is short and stocky (much of the iconic height
+  // comes from the dome stack), with two side wings.
   const capitol = {
     x: cx,
-    width: Math.max(72, w * 0.13),
-    height: h * 0.32, // tower height (the dome stack sits above this)
+    width: Math.max(78, w * 0.14),
+    // Tower (under-the-dome part) is now noticeably shorter. The dome stack
+    // sits above this and still reaches well above the surrounding skyline.
+    height: h * 0.20,
     domeRadius: Math.max(32, w * 0.072),
     isCapitol: true,
   };
@@ -361,6 +364,29 @@ function _initMadison(w, h, isDark) {
       vx: 0,
       // Wait a good while before the first one.
       nextSpawn: Math.floor(30 * _rnd(45, 180)),
+    },
+    // Spotlights at the base of the Capitol that sweep back and forth.
+    // Each one has an origin point and an angular range it oscillates
+    // through, with a slightly different speed so they don't lock-step.
+    spotlights: [
+      // Left-front, sweeps across the lower dome
+      { ox: cx - capitol.width * 1.4, oy: groundY * 0.99,
+        a0: -Math.PI * 0.40, a1: -Math.PI * 0.58, sp: 0.0045, ph: _pi2() },
+      // Right-front, sweeps the upper drum
+      { ox: cx + capitol.width * 1.3, oy: groundY * 0.99,
+        a0: -Math.PI * 0.40, a1: -Math.PI * 0.58, sp: 0.0036, ph: _pi2() },
+      // Centre-low, sweeps wide across the entire dome
+      { ox: cx,                       oy: groundY * 1.01,
+        a0: -Math.PI * 0.38, a1: -Math.PI * 0.62, sp: 0.0028, ph: _pi2() },
+    ],
+    // Monona Terrace — the long, white arched structure right at the
+    // lakeshore in front of the Capitol. Spans most of the width so the
+    // arches stretch across the foreground.
+    terrace: {
+      cx,
+      width: Math.max(280, w * 0.62),
+      height: Math.max(36, h * 0.08),
+      numArches: 11,
     },
   };
 }
@@ -1307,13 +1333,8 @@ function _drawMadison(ctx, isDark, state, t, py, w, h) {
       halo.addColorStop(1,    'rgba(255,205,100,0)');
       ctx.fillStyle = halo;
       ctx.fillRect(cap.x - haloR, drumTopY - haloR, haloR * 2, haloR * 2);
-      // Soft uplight beam from the dome going up
-      const beam = ctx.createLinearGradient(0, drumTopY - domeR * 6, 0, drumTopY);
-      beam.addColorStop(0,    'rgba(255,228,148,0)');
-      beam.addColorStop(0.7,  'rgba(255,228,148,0.05)');
-      beam.addColorStop(1,    'rgba(255,228,148,0.22)');
-      ctx.fillStyle = beam;
-      ctx.fillRect(cap.x - domeR * 1.3, drumTopY - domeR * 6, domeR * 2.6, domeR * 6);
+      // (Removed the static rectangular up-beam — moving spotlights now
+      // do the lit-capitol effect.)
       // Dome rim glow (front-lit)
       const rim = ctx.createRadialGradient(cap.x, drumTopY + 4, domeR * 0.6, cap.x, drumTopY + 4, domeR * 1.05);
       rim.addColorStop(0,   'rgba(255,228,148,0)');
@@ -1338,6 +1359,120 @@ function _drawMadison(ctx, isDark, state, t, py, w, h) {
   // Buildings (back to front), then Capitol on top.
   for (const b of state.buildings) drawBuilding(b);
   drawCapitol();
+
+  // ── Sweeping spotlights aimed at the Capitol (night only) ──
+  if (isDark && state.spotlights) {
+    // additive blending so overlapping beams brighten naturally
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    const cap = state.capitol;
+    const drumTopY = (groundY - cap.height) - cap.domeRadius * 0.55;
+    for (const sl of state.spotlights) {
+      // Cosine-driven angle inside [a0, a1] so the beam eases at the ends.
+      const u = 0.5 + 0.5 * Math.sin(t * sl.sp + sl.ph);
+      const ang = sl.a0 + (sl.a1 - sl.a0) * u;
+      const beamLen = Math.hypot(cap.x - sl.ox, drumTopY - sl.oy) + cap.domeRadius * 1.5;
+      // Two-sided spread cone — wider at the far end.
+      const spread = 0.085; // radians half-angle at origin
+      const ax = sl.ox + Math.cos(ang) * beamLen;
+      const ay = sl.oy + Math.sin(ang) * beamLen;
+      const px1 = ax + Math.cos(ang + Math.PI / 2) * beamLen * spread;
+      const py1 = ay + Math.sin(ang + Math.PI / 2) * beamLen * spread;
+      const px2 = ax + Math.cos(ang - Math.PI / 2) * beamLen * spread;
+      const py2 = ay + Math.sin(ang - Math.PI / 2) * beamLen * spread;
+
+      // Gradient along the beam length: bright at origin → fades to nothing.
+      const grad = ctx.createLinearGradient(sl.ox, sl.oy, ax, ay);
+      grad.addColorStop(0,   'rgba(255,236,180,0.55)');
+      grad.addColorStop(0.5, 'rgba(255,228,148,0.20)');
+      grad.addColorStop(1,   'rgba(255,228,148,0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.moveTo(sl.ox, sl.oy);
+      ctx.lineTo(px1, py1);
+      ctx.lineTo(px2, py2);
+      ctx.closePath();
+      ctx.fill();
+
+      // Small bright source at the spotlight origin so it reads as a lamp.
+      const lamp = ctx.createRadialGradient(sl.ox, sl.oy, 0, sl.ox, sl.oy, 7);
+      lamp.addColorStop(0, 'rgba(255,236,180,0.85)');
+      lamp.addColorStop(1, 'rgba(255,236,180,0)');
+      ctx.fillStyle = lamp;
+      ctx.fillRect(sl.ox - 7, sl.oy - 7, 14, 14);
+    }
+    ctx.restore();
+  }
+
+  // ── Monona Terrace — long white arched structure at the lakeshore ──
+  {
+    const tr = state.terrace;
+    const baseY = groundY;             // bottom of the structure (meets water)
+    const topY  = baseY - tr.height;   // top of the structure
+    const left  = tr.cx - tr.width / 2;
+    const archCount = tr.numArches;
+    const archW = tr.width / archCount;
+    const archH = tr.height * 0.85;
+    // Solid roof + columns base colour
+    ctx.fillStyle = isDark ? '#dcdacd' : '#f5f1de';
+    ctx.fillRect(left, topY, tr.width, tr.height * 0.16); // top roof strip
+    // Inner arch field background (slightly darker)
+    ctx.fillStyle = isDark ? '#5c5448' : '#aea48a';
+    ctx.fillRect(left, topY + tr.height * 0.16, tr.width, tr.height - tr.height * 0.16);
+
+    // Cut out each arch: draw a glowing "opening" with a thin column on the right.
+    const archInsetTop = tr.height * 0.20;
+    const archInnerH = tr.height - archInsetTop - 2; // leave a thin lip at the bottom
+    const colW = Math.max(2, archW * 0.10);
+    for (let i = 0; i < archCount; i++) {
+      const ax = left + i * archW + colW / 2;
+      const openW = archW - colW;
+      const cxArch = ax + openW / 2;
+      const arcTopY = topY + archInsetTop;
+      const radius = openW / 2;
+
+      // Lit opening at night (warm), dim sky-blue glow during day.
+      const fillTop = isDark ? '#fff1bf' : '#a9c5d5';
+      const fillMid = isDark ? '#ffd485' : '#c9d8e0';
+      const grad = ctx.createLinearGradient(0, arcTopY, 0, baseY);
+      grad.addColorStop(0,   fillTop);
+      grad.addColorStop(0.6, fillMid);
+      grad.addColorStop(1,   isDark ? '#a07a30' : '#8fa3ad');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      // Vertical sides + arched top
+      ctx.moveTo(cxArch - radius, baseY);
+      ctx.lineTo(cxArch - radius, arcTopY + radius);
+      ctx.arc(cxArch, arcTopY + radius, radius, Math.PI, 0);
+      ctx.lineTo(cxArch + radius, baseY);
+      ctx.closePath();
+      ctx.fill();
+
+      // Soft inner glow at night so the openings look lit.
+      if (isDark) {
+        const glow = ctx.createRadialGradient(cxArch, arcTopY + radius * 1.4, 0, cxArch, arcTopY + radius * 1.4, radius * 1.6);
+        glow.addColorStop(0,   'rgba(255,232,158,0.55)');
+        glow.addColorStop(0.6, 'rgba(255,200,90,0.15)');
+        glow.addColorStop(1,   'rgba(255,200,90,0)');
+        ctx.fillStyle = glow;
+        ctx.fillRect(cxArch - radius * 1.8, arcTopY - radius * 0.4, radius * 3.6, archInnerH + radius * 1.2);
+
+        // Each arch contributes one soft, wide reflection in the lake.
+        reflections.push({
+          x: cxArch,
+          color: 'rgba(255,220,140,',
+          alpha: 0.30,
+          width: openW * 0.9,
+        });
+      }
+    }
+    // Thin top trim line
+    ctx.fillStyle = isDark ? '#fff' : '#e9e3cd';
+    ctx.fillRect(left, topY + tr.height * 0.155, tr.width, 1);
+    // Water-line shadow under the terrace
+    ctx.fillStyle = isDark ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0.25)';
+    ctx.fillRect(left, baseY - 1, tr.width, 1.5);
+  }
 
   // ── Lake reflections — subsampled, wide, blurred. ──
   // Drawn through a Gaussian blur filter so the streaks read as soft
@@ -9096,7 +9231,17 @@ function Shell() {
 
   return (
     <div className="min-h-full flex flex-col">
-      <header ref={headerRef} className="fixed top-0 inset-x-0 z-40 border-b border-[var(--border-soft)] bg-[var(--bg)] px-3 sm:px-5 py-2.5 sm:py-3 flex flex-wrap items-center gap-y-2 gap-x-3">
+      <header
+        ref={headerRef}
+        className="fixed top-0 inset-x-0 z-40 border-b border-[var(--border-soft)] bg-[var(--bg)] px-3 sm:px-5 pb-2.5 sm:pb-3 flex flex-wrap items-center gap-y-2 gap-x-3"
+        style={{
+          // Push everything below the iPhone Dynamic Island / notch on
+          // devices that report a non-zero safe area inset. Falls back to
+          // the original py-2.5 / sm:py-3 padding on devices that don't
+          // report one (most desktops + older iOS).
+          paddingTop: 'max(0.625rem, calc(env(safe-area-inset-top) + 0.25rem))',
+        }}
+      >
         <div className="flex items-center gap-2 sm:gap-3 order-1 flex-1">
           <div className="w-7 h-7 rounded bg-gradient-to-br from-[var(--accent)] to-[var(--accent-2)]" />
           <div className="font-semibold text-sm sm:text-base">MCAT Study</div>
