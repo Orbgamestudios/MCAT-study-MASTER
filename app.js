@@ -8024,145 +8024,86 @@ function Shell() {
   useEffect(() => { setProfileUser(null); }, [tab]);
 
   const mainRef = useRef(null);
-  const contentRef = useRef(null);
   const tabsRef = useRef(tabs);
   const tabRef = useRef(tab);
-  const swipeJustHappenedRef = useRef(false);
   useEffect(() => { tabsRef.current = tabs; }, [tabs]);
   useEffect(() => { tabRef.current = tab; }, [tab]);
 
-  // Adjacent tab keys are pre-rendered so a swipe never has to mount a new
-  // component mid-drag. They sit absolutely 16px off either edge of the
-  // current tab and translate along with it.
-  const SWIPE_GAP_PX = 16;
   const tabKeys = tabs.map(([k]) => k);
-  const tabIdx = tabKeys.indexOf(tab);
-  const prevKey = tabIdx > 0 ? tabKeys[tabIdx - 1] : null;
-  const nextKey = tabIdx < tabKeys.length - 1 ? tabKeys[tabIdx + 1] : null;
 
-  // True carousel: pre-rendered prev/next tabs sit beside the current one and
-  // the whole track translates with the finger. On release we either commit
-  // (animate to the destination's slot, then atomically swap state) or spring
-  // back to the origin.
+  // Per-tab scroll memory. In-memory ref only — no localStorage — so it
+  // resets to "top of every tab" when the user leaves the app, exactly as
+  // requested. Switching tabs (swipe or button) saves the leaving tab's
+  // scrollY and restores the entering tab's saved scrollY (or 0).
+  const scrollMemoryRef = useRef({});
+
+  const switchTab = useCallback((newTab) => {
+    if (newTab === tabRef.current) return;
+    scrollMemoryRef.current[tabRef.current] = window.scrollY;
+    setTab(newTab);
+  }, []);
+
+  // Restore the new tab's saved scroll synchronously after commit, before
+  // the browser paints, so there's never a frame at the wrong position.
+  useLayoutEffect(() => {
+    const target = scrollMemoryRef.current[tab] ?? 0;
+    window.scrollTo(0, target);
+  }, [tab]);
+
+  // Simple swipe gesture: a clean horizontal flick past the threshold flips
+  // to the next/previous tab. No live preview, no commit animation, no
+  // spring-back — switchTab is called instantly on release and the new
+  // tab's scroll memory takes over.
   useEffect(() => {
     const el = mainRef.current;
     if (!el) return;
-    const drag = { active: false, isH: null, x0: 0, y0: 0, lastDx: 0 };
+    const drag = { active: false, isH: null, x0: 0, y0: 0, dx: 0 };
 
     const onStart = (e) => {
-      drag.active = true; drag.isH = null; drag.lastDx = 0;
-      drag.x0 = e.touches[0].clientX; drag.y0 = e.touches[0].clientY;
-      const c = contentRef.current;
-      if (c) c.style.transition = 'none';
+      drag.active = true; drag.isH = null; drag.dx = 0;
+      drag.x0 = e.touches[0].clientX;
+      drag.y0 = e.touches[0].clientY;
     };
-
     const onMove = (e) => {
       if (!drag.active) return;
       const dx = e.touches[0].clientX - drag.x0;
       const dy = e.touches[0].clientY - drag.y0;
+      drag.dx = dx;
       if (drag.isH === null) {
-        if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
-        drag.isH = Math.abs(dx) > Math.abs(dy);
+        if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return;
+        drag.isH = Math.abs(dx) > Math.abs(dy) * 1.3;
+        if (!drag.isH) drag.active = false;
       }
-      if (!drag.isH) { drag.active = false; return; }
-      e.preventDefault();
-      const keys = tabsRef.current.map(([k]) => k);
-      const idx = keys.indexOf(tabRef.current);
-      let offset = dx;
-      if ((dx > 0 && idx === 0) || (dx < 0 && idx === keys.length - 1)) offset = dx * 0.2;
-      drag.lastDx = offset;
-      const c = contentRef.current;
-      if (c) c.style.transform = `translateX(${offset}px)`;
     };
-
     const onEnd = () => {
-      if (!drag.active) return;
+      if (!drag.active || !drag.isH) { drag.active = false; return; }
       drag.active = false;
-      const c = contentRef.current;
-      if (!drag.isH || !c) return;
-      const dx = drag.lastDx;
+      const dx = drag.dx;
+      if (Math.abs(dx) < 60) return;
       const keys = tabsRef.current.map(([k]) => k);
       const idx = keys.indexOf(tabRef.current);
-      const canNext = dx < 0 && idx < keys.length - 1;
-      const canPrev = dx > 0 && idx > 0;
-      const containerW = c.offsetWidth;
-      const threshold = Math.min(80, containerW * 0.18);
-
-      if (Math.abs(dx) > threshold && (canNext || canPrev)) {
-        // Commit. Destination is positioned at ±(containerW + SWIPE_GAP_PX)
-        // relative to slot 0, so animating the track by that distance lands
-        // the destination exactly at slot 0 with no overshoot.
-        const targetPx = canNext
-          ? -(containerW + SWIPE_GAP_PX)
-          :  (containerW + SWIPE_GAP_PX);
-        c.style.transition = 'transform 0.28s cubic-bezier(0.22, 0.61, 0.36, 1)';
-        c.style.transform = `translateX(${targetPx}px)`;
-        setTimeout(() => {
-          swipeJustHappenedRef.current = true;
-          ReactDOM.flushSync(() => {
-            if (canNext) setTab(keys[idx + 1]);
-            else         setTab(keys[idx - 1]);
-          });
-          c.style.transition = 'none';
-          c.style.transform = '';
-          setTimeout(() => { swipeJustHappenedRef.current = false; }, 350);
-        }, 280);
-      } else {
-        c.style.transition = 'transform 0.28s cubic-bezier(0.25, 0.46, 0.45, 0.94)';
-        c.style.transform = '';
-      }
+      if (dx < 0 && idx < keys.length - 1) switchTab(keys[idx + 1]);
+      else if (dx > 0 && idx > 0)          switchTab(keys[idx - 1]);
     };
 
     el.addEventListener('touchstart', onStart, { passive: true });
-    el.addEventListener('touchmove', onMove, { passive: false });
-    el.addEventListener('touchend', onEnd, { passive: true });
-    el.addEventListener('touchcancel', onEnd, { passive: true });
+    el.addEventListener('touchmove',  onMove,  { passive: true });
+    el.addEventListener('touchend',   onEnd,   { passive: true });
+    el.addEventListener('touchcancel', onEnd,  { passive: true });
     return () => {
       el.removeEventListener('touchstart', onStart);
-      el.removeEventListener('touchmove', onMove);
-      el.removeEventListener('touchend', onEnd);
+      el.removeEventListener('touchmove',  onMove);
+      el.removeEventListener('touchend',   onEnd);
       el.removeEventListener('touchcancel', onEnd);
     };
-  }, []);
+  }, [switchTab]);
 
-  // Helper: className + position style for a tab block. EVERY tab in the
-  // tabs list is rendered at all times to avoid mount cost on swap.
-  // - current tab: in normal flow
-  // - prev/next:   absolutely positioned beside the current tab, with their
-  //                vertical extent clamped to the current tab's height
-  //                (top/bottom:0 + overflow:hidden) so they cannot extend
-  //                the body's scroll height past the current tab's content.
-  // - other tabs:  display:none (mounted but invisible).
-  // The clip box matches the current tab's height (top:0; bottom:0). The
-  // adjacent's content is laid out as a single-column grid anchored to the
-  // bottom of that box (alignContent:end), so if the current tab is deeper
-  // than the adjacent, the adjacent's content sits at the bottom of the
-  // viewport — matching where the user is scrolled — instead of leaving an
-  // empty band that snaps closed after the swipe commits.
-  const adjacentStyle = (side) => ({
-    position: 'absolute',
-    top: 0,
-    bottom: 0,
-    [side === 'right' ? 'left' : 'right']: `calc(100% + ${SWIPE_GAP_PX}px)`,
-    width: '100%',
-    overflow: 'hidden',
-    display: 'grid',
-    gridAutoRows: 'max-content',
-    alignContent: 'end',
+  // Every tab in the active list is mounted at all times — non-current tabs
+  // get display:none. Switching is therefore an instant visibility flip.
+  const tabWrap = (k, baseClass) => ({
+    className: baseClass,
+    style: tab === k ? undefined : { display: 'none' },
   });
-  const tabWrap = (k, baseClass) => {
-    const isCurrent = tab === k;
-    const isPrev = prevKey === k && !isCurrent;
-    const isNext = nextKey === k && !isCurrent;
-    const useFade = isCurrent && !swipeJustHappenedRef.current;
-    return {
-      className: `${useFade ? 'tab-content ' : ''}${baseClass}`.trim(),
-      style: isPrev ? adjacentStyle('left')
-           : isNext ? adjacentStyle('right')
-           : isCurrent ? undefined
-           : { display: 'none' },
-    };
-  };
   const tabIs = (k) => tabKeys.includes(k);
 
   const fullyProcessed = files.filter((f) => extractions[f.file_id] && questions[f.file_id]?.mc && questions[f.file_id]?.short).length;
@@ -8197,7 +8138,7 @@ function Shell() {
           {tabs.map(([k, label]) => (
             <button
               key={k}
-              onClick={() => setTab(k)}
+              onClick={() => switchTab(k)}
               className={`relative text-sm px-3 py-2 sm:py-1.5 rounded whitespace-nowrap shrink-0 ${tab === k
                 ? 'bg-[var(--bg-hover)] text-[var(--text-strong)]'
                 : 'text-[var(--text-muted)] hover:text-[var(--text-strong)]'}`}
@@ -8246,7 +8187,7 @@ function Shell() {
       <div style={{ height: headerH, flexShrink: 0 }} />
 
       <main ref={mainRef} className="flex-1 px-3 pb-3 pt-[17px] sm:px-6 sm:pb-6 sm:pt-[29px] overflow-x-hidden">
-        <div ref={contentRef} className="max-w-3xl mx-auto relative" style={{ willChange: 'transform' }}>
+        <div className="max-w-3xl mx-auto">
           {tabIs('library') && (
             <div {...tabWrap('library', 'space-y-4 sm:space-y-5')}>
               {!readOnly && apiKey && <UploadPanel />}
@@ -8269,7 +8210,7 @@ function Shell() {
           )}
           {tabIs('home') && (
             <div {...tabWrap('home', '')}>
-              <HomeView onGoToStudy={() => setTab('study')} />
+              <HomeView onGoToStudy={() => switchTab('study')} />
             </div>
           )}
           {tabIs('stats') && (
@@ -8290,19 +8231,11 @@ function Shell() {
               <BankTab />
             </div>
           )}
-          {/* StudyView is always mounted (preserves state). It sits in normal
-              flow when current, beside the current tab when adjacent, and is
-              hidden otherwise. */}
-          {(() => {
-            const isCurrent = tab === 'study';
-            const isPrev = prevKey === 'study';
-            const isNext = nextKey === 'study';
-            const style = isPrev ? adjacentStyle('left')
-                        : isNext ? adjacentStyle('right')
-                        : isCurrent ? undefined
-                        : { display: 'none' };
-            return <div style={style}><StudyView /></div>;
-          })()}
+          {/* StudyView is always mounted (preserves quiz state). Hidden when
+              not the active tab. */}
+          <div style={tab === 'study' ? undefined : { display: 'none' }}>
+            <StudyView />
+          </div>
         </div>
       </main>
 
