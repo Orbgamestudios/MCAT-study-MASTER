@@ -7836,27 +7836,27 @@ function Shell() {
   const contentRef = useRef(null);
   const tabsRef = useRef(tabs);
   const tabRef = useRef(tab);
-  const previewRef = useRef({ tab: null, side: null });
   const swipeJustHappenedRef = useRef(false);
-  const [previewTab, setPreviewTab] = useState(null);
-  const [previewSide, setPreviewSide] = useState(null); // 'right' (next) or 'left' (prev)
   useEffect(() => { tabsRef.current = tabs; }, [tabs]);
   useEffect(() => { tabRef.current = tab; }, [tab]);
 
-  // True carousel: during drag the destination tab is rendered beside the
-  // current one and both translate with the finger. On release we either
-  // animate to the destination (commit) or back to origin (spring back).
+  // Adjacent tab keys are pre-rendered so a swipe never has to mount a new
+  // component mid-drag. They sit absolutely 16px off either edge of the
+  // current tab and translate along with it.
+  const SWIPE_GAP_PX = 16;
+  const tabKeys = tabs.map(([k]) => k);
+  const tabIdx = tabKeys.indexOf(tab);
+  const prevKey = tabIdx > 0 ? tabKeys[tabIdx - 1] : null;
+  const nextKey = tabIdx < tabKeys.length - 1 ? tabKeys[tabIdx + 1] : null;
+
+  // True carousel: pre-rendered prev/next tabs sit beside the current one and
+  // the whole track translates with the finger. On release we either commit
+  // (animate to the destination's slot, then atomically swap state) or spring
+  // back to the origin.
   useEffect(() => {
     const el = mainRef.current;
     if (!el) return;
     const drag = { active: false, isH: null, x0: 0, y0: 0, lastDx: 0 };
-
-    const setPreview = (newPreview, newSide) => {
-      if (previewRef.current.tab === newPreview && previewRef.current.side === newSide) return;
-      previewRef.current = { tab: newPreview, side: newSide };
-      setPreviewTab(newPreview);
-      setPreviewSide(newSide);
-    };
 
     const onStart = (e) => {
       drag.active = true; drag.isH = null; drag.lastDx = 0;
@@ -7877,11 +7877,6 @@ function Shell() {
       e.preventDefault();
       const keys = tabsRef.current.map(([k]) => k);
       const idx = keys.indexOf(tabRef.current);
-      // Pick preview side based on swipe direction.
-      if (dx < 0 && idx < keys.length - 1) setPreview(keys[idx + 1], 'right');
-      else if (dx > 0 && idx > 0)         setPreview(keys[idx - 1], 'left');
-      else                                 setPreview(null, null);
-      // Rubber band at edges.
       let offset = dx;
       if ((dx > 0 && idx === 0) || (dx < 0 && idx === keys.length - 1)) offset = dx * 0.2;
       drag.lastDx = offset;
@@ -7893,43 +7888,37 @@ function Shell() {
       if (!drag.active) return;
       drag.active = false;
       const c = contentRef.current;
-      if (!drag.isH) {
-        if (previewRef.current.tab) setPreview(null, null);
-        return;
-      }
+      if (!drag.isH || !c) return;
       const dx = drag.lastDx;
       const keys = tabsRef.current.map(([k]) => k);
       const idx = keys.indexOf(tabRef.current);
       const canNext = dx < 0 && idx < keys.length - 1;
       const canPrev = dx > 0 && idx > 0;
-      const threshold = Math.min(80, window.innerWidth * 0.18);
+      const containerW = c.offsetWidth;
+      const threshold = Math.min(80, containerW * 0.18);
 
       if (Math.abs(dx) > threshold && (canNext || canPrev)) {
-        // Commit: animate to destination, then atomically swap state.
-        const targetPx = canNext ? -window.innerWidth : window.innerWidth;
-        if (c) {
-          c.style.transition = 'transform 0.26s cubic-bezier(0.22, 0.61, 0.36, 1)';
-          c.style.transform = `translateX(${targetPx}px)`;
-        }
+        // Commit. Destination is positioned at ±(containerW + SWIPE_GAP_PX)
+        // relative to slot 0, so animating the track by that distance lands
+        // the destination exactly at slot 0 with no overshoot.
+        const targetPx = canNext
+          ? -(containerW + SWIPE_GAP_PX)
+          :  (containerW + SWIPE_GAP_PX);
+        c.style.transition = 'transform 0.28s cubic-bezier(0.22, 0.61, 0.36, 1)';
+        c.style.transform = `translateX(${targetPx}px)`;
         setTimeout(() => {
           swipeJustHappenedRef.current = true;
           ReactDOM.flushSync(() => {
             if (canNext) setTab(keys[idx + 1]);
             else         setTab(keys[idx - 1]);
-            previewRef.current = { tab: null, side: null };
-            setPreviewTab(null);
-            setPreviewSide(null);
           });
-          if (c) { c.style.transition = 'none'; c.style.transform = ''; }
-          setTimeout(() => { swipeJustHappenedRef.current = false; }, 350);
-        }, 260);
-      } else {
-        // Spring back, then drop the preview.
-        if (c) {
-          c.style.transition = 'transform 0.28s cubic-bezier(0.25, 0.46, 0.45, 0.94)';
+          c.style.transition = 'none';
           c.style.transform = '';
-        }
-        setTimeout(() => { setPreview(null, null); }, 290);
+          setTimeout(() => { swipeJustHappenedRef.current = false; }, 350);
+        }, 280);
+      } else {
+        c.style.transition = 'transform 0.28s cubic-bezier(0.25, 0.46, 0.45, 0.94)';
+        c.style.transform = '';
       }
     };
 
@@ -7945,21 +7934,22 @@ function Shell() {
     };
   }, []);
 
-  // Helper: shared className/style for a tab block (current vs preview).
+  // Helper: className + position style for a tab block. Adjacent tabs are
+  // positioned absolutely off either edge so they're already in the DOM
+  // when the user starts dragging.
   const tabWrap = (k, baseClass) => {
-    const isPreview = previewTab === k && tab !== k;
-    const useFade = !isPreview && !swipeJustHappenedRef.current;
+    const isCurrent = tab === k;
+    const isPrev = prevKey === k && !isCurrent;
+    const isNext = nextKey === k && !isCurrent;
+    const useFade = isCurrent && !swipeJustHappenedRef.current;
     return {
       className: `${useFade ? 'tab-content ' : ''}${baseClass}`.trim(),
-      style: isPreview ? {
-        position: 'absolute',
-        top: 0,
-        ...(previewSide === 'right' ? { left: 'calc(100% + 16px)' } : { right: 'calc(100% + 16px)' }),
-        width: '100%',
-      } : undefined,
+      style: isPrev ? { position: 'absolute', top: 0, right: `calc(100% + ${SWIPE_GAP_PX}px)`, width: '100%' }
+           : isNext ? { position: 'absolute', top: 0, left:  `calc(100% + ${SWIPE_GAP_PX}px)`, width: '100%' }
+           : undefined,
     };
   };
-  const tabIs = (k) => tab === k || previewTab === k;
+  const tabIs = (k) => tab === k || prevKey === k || nextKey === k;
 
   const fullyProcessed = files.filter((f) => extractions[f.file_id] && questions[f.file_id]?.mc && questions[f.file_id]?.short).length;
 
@@ -8079,22 +8069,17 @@ function Shell() {
               <BankTab />
             </div>
           )}
-          {/* StudyView is always mounted (preserves state). When it is the
-              current tab it sits in normal flow; when it is the preview it is
-              positioned beside the current tab; otherwise it is hidden. */}
+          {/* StudyView is always mounted (preserves state). It sits in normal
+              flow when current, beside the current tab when adjacent, and is
+              hidden otherwise. */}
           {(() => {
             const isCurrent = tab === 'study';
-            const isPreview = previewTab === 'study' && !isCurrent;
-            const style = !isCurrent && !isPreview
-              ? { display: 'none' }
-              : isPreview
-                ? {
-                    position: 'absolute',
-                    top: 0,
-                    ...(previewSide === 'right' ? { left: 'calc(100% + 16px)' } : { right: 'calc(100% + 16px)' }),
-                    width: '100%',
-                  }
-                : undefined;
+            const isPrev = prevKey === 'study';
+            const isNext = nextKey === 'study';
+            const style = (!isCurrent && !isPrev && !isNext) ? { display: 'none' }
+                        : isPrev ? { position: 'absolute', top: 0, right: `calc(100% + ${SWIPE_GAP_PX}px)`, width: '100%' }
+                        : isNext ? { position: 'absolute', top: 0, left:  `calc(100% + ${SWIPE_GAP_PX}px)`, width: '100%' }
+                        : undefined;
             return <div style={style}><StudyView /></div>;
           })()}
         </div>
