@@ -291,6 +291,10 @@ function _initTropical(w, h, isDark) {
     plane: isDark
       ? { active: false, x: 0, y: 0, vx: 0, nextSpawn: Math.floor(30 * _rnd(40, 150)) }
       : null,
+    // A sailboat drifts past on the horizon during the day.
+    sailboat: !isDark
+      ? { active: false, x: 0, dir: 1, vx: 0, scale: 1, nextSpawn: Math.floor(30 * _rnd(20, 90)) }
+      : null,
   };
 }
 
@@ -1046,6 +1050,61 @@ function _drawTropical(ctx, isDark, state, t, py, w, h) {
   }
   ctx.restore();
 
+  // ── sailboat drifting across the horizon (day only) ──
+  if (!isDark && state.sailboat) {
+    const sb = state.sailboat;
+    if (!sb.active) {
+      sb.nextSpawn -= 1;
+      if (sb.nextSpawn <= 0) {
+        sb.active = true;
+        sb.dir = Math.random() < 0.5 ? 1 : -1;
+        sb.x = sb.dir === 1 ? -25 : w + 25;
+        // Very slow — distant boats look like they're barely moving.
+        sb.vx = sb.dir * _rnd(0.10, 0.20);
+        sb.scale = _rnd(0.85, 1.20);
+      }
+    } else {
+      sb.x += sb.vx;
+      if ((sb.dir === 1 && sb.x > w + 25) || (sb.dir === -1 && sb.x < -25)) {
+        sb.active = false;
+        // Long idle between sightings (30 s to 3 min).
+        sb.nextSpawn = Math.floor(30 * _rnd(30, 180));
+      } else {
+        const s = sb.scale;
+        const bx = sb.x;
+        // Hull sits just below the horizon line.
+        const by = horizon + 2;
+        const lean = -sb.dir;        // sail leans opposite to direction
+        const mastH = 14 * s;
+        // Hull (slim dark sliver)
+        ctx.fillStyle = 'rgba(36,26,18,0.85)';
+        ctx.fillRect(bx - 6 * s, by, 12 * s, 1.8 * s);
+        // Mast
+        ctx.fillStyle = 'rgba(60,46,30,0.85)';
+        ctx.fillRect(bx - 0.4, by - mastH, 0.8, mastH);
+        // Mainsail
+        ctx.fillStyle = 'rgba(255,250,238,0.92)';
+        ctx.beginPath();
+        ctx.moveTo(bx, by - mastH);
+        ctx.lineTo(bx + lean * 7 * s, by);
+        ctx.lineTo(bx, by);
+        ctx.closePath();
+        ctx.fill();
+        // Jib (smaller, in front of mast)
+        ctx.fillStyle = 'rgba(245,238,220,0.85)';
+        ctx.beginPath();
+        ctx.moveTo(bx, by - mastH * 0.95);
+        ctx.lineTo(bx - lean * 3.5 * s, by);
+        ctx.lineTo(bx, by);
+        ctx.closePath();
+        ctx.fill();
+        // Tiny wake under the hull
+        ctx.fillStyle = 'rgba(255,255,255,0.45)';
+        ctx.fillRect(bx - 7 * s, by + 1.8 * s, 14 * s, 0.6);
+      }
+    }
+  }
+
   // ── wet sand strip just below the wash edge (darker, glossy) ──
   // The wet band always extends down from the moving shoreline, so as
   // the wash recedes the sand it leaves behind reads as freshly wet.
@@ -1093,13 +1152,15 @@ function _drawTropical(ctx, isDark, state, t, py, w, h) {
   ctx.fillStyle = `${foamColor}0.85)`;
   ctx.fill();
   ctx.restore();
-  // Tiny bubbly speckles trailing behind the foam (one quick pass).
-  ctx.fillStyle = `${foamColor}0.55)`;
-  for (let i = 0; i < 24; i++) {
-    const fx = (i * 53 + (t * 1.7 | 0)) % w;
+  // Bubbly speckles trailing behind the foam — drift leftward.
+  ctx.fillStyle = `${foamColor}0.65)`;
+  for (let i = 0; i < 22; i++) {
+    // Negative time term so bubbles slowly drift to the left.
+    let fx = (i * 71 - (t * 1.4 | 0)) % w;
+    if (fx < 0) fx += w;
     const fy = shoreline + 4 + ((i * 31) % 8);
     ctx.beginPath();
-    ctx.arc(fx, fy, 0.9, 0, Math.PI * 2);
+    ctx.arc(fx, fy, 1.7, 0, Math.PI * 2);
     ctx.fill();
   }
 
