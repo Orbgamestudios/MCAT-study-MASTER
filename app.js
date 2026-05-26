@@ -28,6 +28,7 @@ const KEYS = {
   volume: 'mcat:volume', // 0-1, global SFX volume multiplier (default 1)
   autoDownload: 'mcat:autoDownload', // boolean — re-download updated chapters on app load (auto-UPDATE)
   autoDownloadAll: 'mcat:autoDownloadAll', // boolean — download every cloud chapter that isn't local yet
+  contributorMode: 'mcat:contributorMode', // boolean — show upload/publish/export panels in Library
   tropicalBg: 'mcat:tropicalBg',    // boolean — tropical island background
   smoothAnim: 'mcat:smoothAnim',     // boolean — smooth tab/question/reveal transitions
   bankSeen: 'mcat:bankSeen', // timestamp — last time the user reviewed the Bank tab
@@ -2206,6 +2207,11 @@ function AppProvider({ children }) {
     storage.set(KEYS.autoDownloadAll, !!v);
     setAutoDownloadAllState(!!v);
   }, []);
+  const [contributorMode, setContributorModeState] = useState(() => !!storage.get(KEYS.contributorMode, false));
+  const setContributorMode = useCallback((v) => {
+    storage.set(KEYS.contributorMode, !!v);
+    setContributorModeState(!!v);
+  }, []);
   const [smoothAnim, setSmoothAnimState] = useState(() => !!storage.get(KEYS.smoothAnim, false));
   const setSmoothAnim = useCallback((v) => {
     storage.set(KEYS.smoothAnim, !!v);
@@ -2546,6 +2552,7 @@ function AppProvider({ children }) {
       volume, setVolume,
       autoDownloadChapters, setAutoDownloadChapters,
       autoDownloadAll, setAutoDownloadAll,
+      contributorMode, setContributorMode,
       tropicalBg, setTropicalBg,
       smoothAnim, setSmoothAnim,
     }),
@@ -2557,6 +2564,7 @@ function AppProvider({ children }) {
      reauditEnabled, setReauditEnabled, volume, setVolume,
      autoDownloadChapters, setAutoDownloadChapters,
      autoDownloadAll, setAutoDownloadAll,
+     contributorMode, setContributorMode,
      tropicalBg, setTropicalBg,
      smoothAnim, setSmoothAnim]
   );
@@ -3323,6 +3331,8 @@ function QuizLauncher({ onStart }) {
 
   // Selected file_ids — default to all ready chapters.
   const [selected, setSelected] = useState(() => new Set(readyChapters.map((f) => f.file_id)));
+  // Subjects collapsed by default — open to drill down into individual chapters.
+  const [openSubjects, setOpenSubjects] = useState({});
   // Re-sync selection if the set of ready chapters changes (e.g. user pulled a new bank).
   useEffect(() => {
     setSelected((prev) => {
@@ -3419,35 +3429,56 @@ function QuizLauncher({ onStart }) {
             Pool draws only from your {wrongCount} previously-missed question{wrongCount === 1 ? '' : 's'}.
           </div>
         ) : (
-          <div className="border border-[var(--border-soft)] rounded-lg divide-y divide-[var(--border-soft)] max-h-72 overflow-y-auto">
-            {Object.entries(grouped).map(([subject, items]) => (
-              <div key={subject}>
-                <label className="flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-[var(--bg-hover-soft)]">
-                  <input
-                    type="checkbox"
-                    checked={isSubjectFully(subject)}
-                    ref={(el) => { if (el) el.indeterminate = isSubjectPartial(subject); }}
-                    onChange={() => toggleSubject(subject)}
-                    className="w-4 h-4 accent-[var(--accent)]"
-                  />
-                  <span className="font-medium text-[var(--text-strong)] flex-1">{subject}</span>
-                  <span className="text-xs text-[var(--text-faint)]">{items.length}</span>
-                </label>
-                <div className="pl-7 pb-1">
-                  {items.map((f) => (
-                    <label key={f.file_id} className="flex items-center gap-3 px-3 py-1.5 cursor-pointer hover:bg-[var(--bg-hover-soft)] rounded">
-                      <input
-                        type="checkbox"
-                        checked={selected.has(f.file_id)}
-                        onChange={() => toggleChapter(f.file_id)}
-                        className="w-4 h-4 accent-[var(--accent)]"
-                      />
-                      <span className="text-sm text-[var(--text)] flex-1">{f.chapter}</span>
-                    </label>
-                  ))}
+          <div className="border border-[var(--border-soft)] rounded-lg divide-y divide-[var(--border-soft)] max-h-96 overflow-y-auto">
+            {Object.entries(grouped).map(([subject, items]) => {
+              const open = !!openSubjects[subject];
+              const subjectSelectedCount = items.filter((f) => selected.has(f.file_id)).length;
+              return (
+                <div key={subject}>
+                  <div className="flex items-center gap-2 px-3 py-2 hover:bg-[var(--bg-hover-soft)]">
+                    <input
+                      type="checkbox"
+                      checked={isSubjectFully(subject)}
+                      ref={(el) => { if (el) el.indeterminate = isSubjectPartial(subject); }}
+                      onChange={() => toggleSubject(subject)}
+                      onClick={(e) => e.stopPropagation()}
+                      className="w-4 h-4 accent-[var(--accent)] cursor-pointer"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setOpenSubjects((p) => ({ ...p, [subject]: !p[subject] }))}
+                      className="flex-1 flex items-center gap-2 text-left"
+                      aria-expanded={open}
+                    >
+                      <span
+                        aria-hidden="true"
+                        className="text-[var(--text-muted)] transition-transform inline-block text-xs"
+                        style={{ transform: open ? 'rotate(90deg)' : 'rotate(0deg)' }}
+                      >
+                        ▶
+                      </span>
+                      <span className="font-medium text-[var(--text-strong)] flex-1">{subject}</span>
+                      <span className="text-xs text-[var(--text-faint)]">{subjectSelectedCount}/{items.length}</span>
+                    </button>
+                  </div>
+                  {open && (
+                    <div className="pl-9 pb-1">
+                      {items.map((f) => (
+                        <label key={f.file_id} className="flex items-center gap-3 px-3 py-1.5 cursor-pointer hover:bg-[var(--bg-hover-soft)] rounded">
+                          <input
+                            type="checkbox"
+                            checked={selected.has(f.file_id)}
+                            onChange={() => toggleChapter(f.file_id)}
+                            className="w-4 h-4 accent-[var(--accent)]"
+                          />
+                          <span className="text-sm text-[var(--text)] flex-1">{f.chapter}</span>
+                        </label>
+                      ))}
+                    </div>
+                  )}
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
 
@@ -6134,7 +6165,7 @@ function StatsView() {
 
 // ---------- settings ----------
 function SettingsPanel({ onClose }) {
-  const { palette, mode, setPalette, setMode, apiKey, setApiKey, client, session, pendingSync, syncBusy, syncError, flushSync, reauditEnabled, setReauditEnabled, volume, setVolume, autoDownloadChapters, setAutoDownloadChapters, autoDownloadAll, setAutoDownloadAll, tropicalBg, setTropicalBg, smoothAnim, setSmoothAnim, files } = useApp();
+  const { palette, mode, setPalette, setMode, apiKey, setApiKey, client, session, pendingSync, syncBusy, syncError, flushSync, reauditEnabled, setReauditEnabled, volume, setVolume, autoDownloadChapters, setAutoDownloadChapters, autoDownloadAll, setAutoDownloadAll, contributorMode, setContributorMode, tropicalBg, setTropicalBg, smoothAnim, setSmoothAnim, files } = useApp();
   const hasDownloadedChapters = files.some((f) => f.chapter_id);
   const [keyVal, setKeyVal] = useState(apiKey || '');
   const [keyShow, setKeyShow] = useState(false);
@@ -6376,6 +6407,22 @@ function SettingsPanel({ onClose }) {
             </label>
           )}
         </div>
+      </div>
+
+      <div>
+        <div className="text-xs uppercase tracking-wide text-[var(--text-muted)] mb-2">Advanced</div>
+        <label className="flex items-center justify-between gap-3 bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg px-3 py-2.5 cursor-pointer">
+          <div className="text-sm min-w-0">
+            <div className="text-[var(--text)]">Contributor mode</div>
+            <div className="text-[11px] text-[var(--text-faint)] mt-0.5">Show the upload, publish-to-bank, export, and flag-fixes panels in the Library tab. Off for most users.</div>
+          </div>
+          <input
+            type="checkbox"
+            checked={contributorMode}
+            onChange={(e) => setContributorMode(e.target.checked)}
+            className="w-4 h-4 shrink-0"
+          />
+        </label>
       </div>
 
     </div>
@@ -7435,6 +7482,10 @@ function BankTab() {
   // Captured once at mount — the timestamp of the user's previous Bank visit.
   const [seenAt] = useState(() => storage.get(KEYS.bankSeen, 0));
   const [summaryDismissed, setSummaryDismissed] = useState(false);
+  // Subjects collapse by default; user opens what they need.
+  const [openSubjects, setOpenSubjects] = useState({});
+  const toggleSubject = (s) => setOpenSubjects((p) => ({ ...p, [s]: !p[s] }));
+  const [downloadingAll, setDownloadingAll] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -7455,38 +7506,55 @@ function BankTab() {
     }
   }, [data, seenAt]);
 
+  const downloadOne = async (chapter) => {
+    const full = await api.getChapter(chapter.id);
+    const localFileId = `chap_${full.id}`;
+    const fileRecord = {
+      file_id: localFileId,
+      file_uri: 'cloud',
+      mime_type: 'application/pdf',
+      filename: full.filename,
+      size_bytes: full.size_bytes || 0,
+      subject: full.subject,
+      chapter: full.title,
+      uploaded_at: new Date(full.created_at).toISOString(),
+      chapter_id: full.id,
+      chapter_updated_at: full.updated_at,
+    };
+    setFiles((prev) => [...prev.filter((f) => f.file_id !== localFileId && f.chapter_id !== full.id), fileRecord]);
+    if (full.extraction) setExtraction(localFileId, full.extraction);
+    setQuestionsFor(localFileId, {
+      mc: full.mc || [],
+      twoPart: full.two_part || [],
+      short: full.short || [],
+      generated_at: new Date(full.updated_at).toISOString(),
+    });
+    return full;
+  };
+
   const downloadChapter = async (chapter) => {
     if (busyId) return;
     setBusyId(chapter.id); setBusyKind('downloading'); setStatus(null);
     try {
-      const full = await api.getChapter(chapter.id);
-      const localFileId = `chap_${full.id}`;
-      const fileRecord = {
-        file_id: localFileId,
-        file_uri: 'cloud',
-        mime_type: 'application/pdf',
-        filename: full.filename,
-        size_bytes: full.size_bytes || 0,
-        subject: full.subject,
-        chapter: full.title,
-        uploaded_at: new Date(full.created_at).toISOString(),
-        chapter_id: full.id,
-        chapter_updated_at: full.updated_at,
-      };
-      setFiles((prev) => [...prev.filter((f) => f.file_id !== localFileId && f.chapter_id !== full.id), fileRecord]);
-      if (full.extraction) setExtraction(localFileId, full.extraction);
-      setQuestionsFor(localFileId, {
-        mc: full.mc || [],
-        twoPart: full.two_part || [],
-        short: full.short || [],
-        generated_at: new Date(full.updated_at).toISOString(),
-      });
+      const full = await downloadOne(chapter);
       setStatus({ kind: 'ok', msg: `Downloaded "${full.title}"` });
     } catch (e) {
       setStatus({ kind: 'err', msg: e.message });
     } finally {
       setBusyId(null); setBusyKind(null);
     }
+  };
+
+  const downloadAllMissing = async (chapters) => {
+    if (downloadingAll || !chapters.length) return;
+    setDownloadingAll(true);
+    let ok = 0, fail = 0;
+    for (const ch of chapters) {
+      setStatus({ kind: 'info', msg: `Downloading ${ok + fail + 1}/${chapters.length}: "${ch.title}"…` });
+      try { await downloadOne(ch); ok++; } catch { fail++; }
+    }
+    setDownloadingAll(false);
+    setStatus({ kind: fail === 0 ? 'ok' : 'err', msg: `Downloaded ${ok}/${chapters.length}${fail ? ` (${fail} failed)` : ''}` });
   };
 
   // Run the contributor's Gemini key against the chapter's published extraction
@@ -7700,30 +7768,71 @@ function BankTab() {
         </div>
       )}
 
+      {/* Library-vs-bank diff: any chapter with a complete MC stage that
+          isn't already downloaded locally. One-click pull them all. */}
+      {(() => {
+        const missing = data.chapters.filter((c) => c.stages?.mc?.done && !localChapterIds.has(c.id));
+        if (missing.length === 0) return null;
+        return (
+          <div className="bg-[var(--accent-soft)] border border-[var(--accent-border)] rounded-2xl p-4 sm:p-5 flex flex-wrap items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="font-semibold text-[var(--accent-text)]">Your library is missing {missing.length} chapter{missing.length === 1 ? '' : 's'}</div>
+              <div className="text-xs text-[var(--text-muted)] mt-0.5">Pull every completed bank chapter into your local library in one click.</div>
+            </div>
+            <button
+              onClick={() => downloadAllMissing(missing)}
+              disabled={downloadingAll || !!busyId}
+              className="shrink-0 text-sm px-4 py-2 bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] disabled:opacity-40 rounded-lg font-medium"
+            >
+              {downloadingAll ? 'Downloading…' : `Download all (${missing.length})`}
+            </button>
+          </div>
+        );
+      })()}
+
       {subjects.map((subject) => {
         const list = filtered(bySubject[subject]);
         if (!list.length) return null;
+        const open = !!openSubjects[subject];
+        const downloadedCount = list.filter((c) => localChapterIds.has(c.id)).length;
         return (
-          <div key={subject} className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-5">
-            <div className="flex items-baseline justify-between mb-2">
-              <h3 className="font-semibold text-[var(--text-strong)]">{subject}</h3>
-              <span className="text-xs text-[var(--text-faint)]">{list.length} chapter{list.length === 1 ? '' : 's'}</span>
-            </div>
-            <ul className="divide-y divide-[var(--border-soft)]">
-              {list.map((ch) => (
-                <ChapterRow
-                  key={ch.id}
-                  chapter={ch}
-                  onDownload={() => downloadChapter(ch)}
-                  onContribute={(stages) => contributeChapter(ch, stages)}
-                  onAudit={() => setAuditChapter(ch)}
-                  busy={busyId === ch.id ? busyKind : null}
-                  downloaded={localChapterIds.has(ch.id)}
-                  canContribute={!!session && !!apiKey}
-                  reauditEnabled={reauditEnabled}
-                />
-              ))}
-            </ul>
+          <div key={subject} className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl">
+            <button
+              onClick={() => toggleSubject(subject)}
+              className="w-full flex items-center justify-between gap-3 p-4 sm:p-5 text-left"
+              aria-expanded={open}
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                <span
+                  aria-hidden="true"
+                  className="text-[var(--text-muted)] transition-transform inline-block"
+                  style={{ transform: open ? 'rotate(90deg)' : 'rotate(0deg)' }}
+                >
+                  ▶
+                </span>
+                <h3 className="font-semibold text-[var(--text-strong)] truncate">{subject}</h3>
+              </div>
+              <span className="text-xs text-[var(--text-faint)] shrink-0">
+                {downloadedCount}/{list.length} downloaded
+              </span>
+            </button>
+            {open && (
+              <ul className="divide-y divide-[var(--border-soft)] border-t border-[var(--border-soft)] px-4 sm:px-5">
+                {list.map((ch) => (
+                  <ChapterRow
+                    key={ch.id}
+                    chapter={ch}
+                    onDownload={() => downloadChapter(ch)}
+                    onContribute={(stages) => contributeChapter(ch, stages)}
+                    onAudit={() => setAuditChapter(ch)}
+                    busy={busyId === ch.id ? busyKind : null}
+                    downloaded={localChapterIds.has(ch.id)}
+                    canContribute={!!session && !!apiKey}
+                    reauditEnabled={reauditEnabled}
+                  />
+                ))}
+              </ul>
+            )}
           </div>
         );
       })}
@@ -7938,7 +8047,7 @@ function ServerStatsView() {
 }
 
 function Shell() {
-  const { apiKey, setApiKey, attempts, readOnly, files, extractions, questions, session, setSession, pendingSync, syncBusy, api, palette, mode } = useApp();
+  const { apiKey, setApiKey, attempts, readOnly, files, extractions, questions, session, setSession, pendingSync, syncBusy, api, palette, mode, contributorMode } = useApp();
   const [tab, setTab] = useState('home');
   const [showAccount, setShowAccount] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -8023,18 +8132,14 @@ function Shell() {
   useEffect(() => { if (readOnly) setTab('home'); else if (!hasLibrary) setTab('home'); }, [readOnly, hasLibrary]);
   useEffect(() => { setProfileUser(null); }, [tab]);
 
-  const mainRef = useRef(null);
-  const tabsRef = useRef(tabs);
   const tabRef = useRef(tab);
-  useEffect(() => { tabsRef.current = tabs; }, [tabs]);
   useEffect(() => { tabRef.current = tab; }, [tab]);
 
   const tabKeys = tabs.map(([k]) => k);
 
-  // Per-tab scroll memory. In-memory ref only — no localStorage — so it
-  // resets to "top of every tab" when the user leaves the app, exactly as
-  // requested. Switching tabs (swipe or button) saves the leaving tab's
-  // scrollY and restores the entering tab's saved scrollY (or 0).
+  // Per-tab scroll memory — ref, not state, so it never persists across
+  // reloads. Switching saves the leaving tab's scrollY and restores the
+  // entering tab's saved value (or 0 on first visit).
   const scrollMemoryRef = useRef({});
 
   const switchTab = useCallback((newTab) => {
@@ -8043,63 +8148,11 @@ function Shell() {
     setTab(newTab);
   }, []);
 
-  // Restore the new tab's saved scroll synchronously after commit, before
-  // the browser paints, so there's never a frame at the wrong position.
   useLayoutEffect(() => {
     const target = scrollMemoryRef.current[tab] ?? 0;
     window.scrollTo(0, target);
   }, [tab]);
 
-  // Simple swipe gesture: a clean horizontal flick past the threshold flips
-  // to the next/previous tab. No live preview, no commit animation, no
-  // spring-back — switchTab is called instantly on release and the new
-  // tab's scroll memory takes over.
-  useEffect(() => {
-    const el = mainRef.current;
-    if (!el) return;
-    const drag = { active: false, isH: null, x0: 0, y0: 0, dx: 0 };
-
-    const onStart = (e) => {
-      drag.active = true; drag.isH = null; drag.dx = 0;
-      drag.x0 = e.touches[0].clientX;
-      drag.y0 = e.touches[0].clientY;
-    };
-    const onMove = (e) => {
-      if (!drag.active) return;
-      const dx = e.touches[0].clientX - drag.x0;
-      const dy = e.touches[0].clientY - drag.y0;
-      drag.dx = dx;
-      if (drag.isH === null) {
-        if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return;
-        drag.isH = Math.abs(dx) > Math.abs(dy) * 1.3;
-        if (!drag.isH) drag.active = false;
-      }
-    };
-    const onEnd = () => {
-      if (!drag.active || !drag.isH) { drag.active = false; return; }
-      drag.active = false;
-      const dx = drag.dx;
-      if (Math.abs(dx) < 60) return;
-      const keys = tabsRef.current.map(([k]) => k);
-      const idx = keys.indexOf(tabRef.current);
-      if (dx < 0 && idx < keys.length - 1) switchTab(keys[idx + 1]);
-      else if (dx > 0 && idx > 0)          switchTab(keys[idx - 1]);
-    };
-
-    el.addEventListener('touchstart', onStart, { passive: true });
-    el.addEventListener('touchmove',  onMove,  { passive: true });
-    el.addEventListener('touchend',   onEnd,   { passive: true });
-    el.addEventListener('touchcancel', onEnd,  { passive: true });
-    return () => {
-      el.removeEventListener('touchstart', onStart);
-      el.removeEventListener('touchmove',  onMove);
-      el.removeEventListener('touchend',   onEnd);
-      el.removeEventListener('touchcancel', onEnd);
-    };
-  }, [switchTab]);
-
-  // Every tab in the active list is mounted at all times — non-current tabs
-  // get display:none. Switching is therefore an instant visibility flip.
   const tabWrap = (k, baseClass) => ({
     className: baseClass,
     style: tab === k ? undefined : { display: 'none' },
@@ -8186,26 +8239,24 @@ function Shell() {
       {/* Spacer pushes content below the fixed header */}
       <div style={{ height: headerH, flexShrink: 0 }} />
 
-      <main ref={mainRef} className="flex-1 px-3 pb-3 pt-[17px] sm:px-6 sm:pb-6 sm:pt-[29px] overflow-x-hidden">
+      <main className="flex-1 px-3 pb-3 pt-[17px] sm:px-6 sm:pb-6 sm:pt-[29px] overflow-x-hidden">
         <div className="max-w-3xl mx-auto">
           {tabIs('library') && (
             <div {...tabWrap('library', 'space-y-4 sm:space-y-5')}>
-              {!readOnly && apiKey && <UploadPanel />}
-              {session && <PublishAllPanel />}
-              {fullyProcessed > 0 && (
-                <>
-                  <div className="flex justify-end">
-                    <button
-                      onClick={() => exportBank({ files, extractions, questions })}
-                      className="text-xs px-3 py-1.5 border border-[var(--border)] hover:bg-[var(--bg-hover)] text-[var(--text-muted)] rounded"
-                    >
-                      Export data.json locally
-                    </button>
-                  </div>
-                </>
+              {contributorMode && !readOnly && apiKey && <UploadPanel />}
+              {contributorMode && session && <PublishAllPanel />}
+              {contributorMode && fullyProcessed > 0 && (
+                <div className="flex justify-end">
+                  <button
+                    onClick={() => exportBank({ files, extractions, questions })}
+                    className="text-xs px-3 py-1.5 border border-[var(--border)] hover:bg-[var(--bg-hover)] text-[var(--text-muted)] rounded"
+                  >
+                    Export data.json locally
+                  </button>
+                </div>
               )}
               <FileList />
-              <FlagFixesPanel />
+              {contributorMode && <FlagFixesPanel />}
             </div>
           )}
           {tabIs('home') && (
