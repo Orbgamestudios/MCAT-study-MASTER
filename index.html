@@ -387,24 +387,12 @@
     from { opacity: 0; }
     to   { opacity: 1; }
   }
-  @keyframes mcatSlideFromRight {
-    from { opacity: 0.15; transform: translateX(70px); }
-    to   { opacity: 1;    transform: translateX(0); }
-  }
-  @keyframes mcatSlideFromLeft {
-    from { opacity: 0.15; transform: translateX(-70px); }
-    to   { opacity: 1;    transform: translateX(0); }
-  }
 
-  /* Directional slide — always active, triggered by drag swipes. */
-  .tab-content[data-enter="right"] {
-    animation: mcatSlideFromRight 0.22s ease-out both;
-  }
-  .tab-content[data-enter="left"] {
-    animation: mcatSlideFromLeft 0.22s ease-out both;
-  }
-  /* Fade-up — only when smooth animations setting is on, for button-click tab switches. */
-  html[data-smooth="true"] .tab-content:not([data-enter]) {
+  /* Fade-up for button-click tab switches — only when the smooth setting is on.
+     Swipe-driven switches set swipeJustHappened, which omits the .tab-content
+     class on first render so this animation does not double up with the
+     carousel motion. */
+  html[data-smooth="true"] .tab-content {
     animation: mcatFadeUp 0.22s ease both;
   }
   html[data-smooth="true"] .question-card {
@@ -417,6 +405,6 @@
 </head>
 <body>
 <div id="root"></div>
-<script type="text/babel" data-presets="react" src="app.js?v=70"></script>
+<script type="text/babel" data-presets="react" src="app.js?v=71"></script>
 </body>
 </html>
