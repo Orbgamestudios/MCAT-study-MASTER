@@ -4626,9 +4626,9 @@ function CarsRunner({ date, payload, onClose, alreadyDone }) {
   const goReview = () => { setPhase('review'); scrollTop(); };
 
   return (
-    <div ref={scrollRef} className="fixed inset-0 z-50 bg-[var(--bg)] overflow-y-auto">
+    <div ref={scrollRef} className="fixed inset-x-0 bottom-0 z-30 bg-[var(--bg)] overflow-y-auto" style={{ top: 'var(--mcat-header-h, 56px)' }}>
       <div className="max-w-3xl mx-auto p-3 sm:p-6 space-y-4">
-        <div className="flex items-center justify-between gap-3 sticky top-0 bg-[var(--bg)] py-2 z-10">
+        <div className="flex items-center justify-between gap-3 sticky top-0 bg-[var(--bg)] py-2 z-10 -mx-3 sm:-mx-6 px-3 sm:px-6 border-b border-[var(--border-soft)]">
           <div className="min-w-0">
             <div className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Daily CARS · {date}</div>
             <h2 className="font-semibold text-[var(--text-strong)] truncate">{payload.title || payload.discipline || 'CARS passage'}</h2>
@@ -5106,13 +5106,13 @@ function ConnectionsRunner({ date, payload, onClose, alreadyDone }) {
   const mistakesLeft = 4 - mistakes;
 
   return (
-    <div className="fixed inset-0 z-50 bg-[var(--bg)] overflow-y-auto">
+    <div className="fixed inset-x-0 bottom-0 z-30 bg-[var(--bg)] overflow-y-auto" style={{ top: 'var(--mcat-header-h, 56px)' }}>
       <style>{`
         @keyframes conn-shake { 10%,90%{transform:translateX(-2px)} 20%,80%{transform:translateX(3px)} 30%,50%,70%{transform:translateX(-5px)} 40%,60%{transform:translateX(5px)} }
         .conn-shake { animation: conn-shake 0.45s ease-in-out; }
       `}</style>
       <div className="max-w-2xl mx-auto p-3 sm:p-6 space-y-4">
-        <div className="flex items-center justify-between gap-3 sticky top-0 bg-[var(--bg)] py-2 z-10">
+        <div className="flex items-center justify-between gap-3 sticky top-0 bg-[var(--bg)] py-2 z-10 -mx-3 sm:-mx-6 px-3 sm:px-6 border-b border-[var(--border-soft)]">
           <div className="min-w-0">
             <div className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Daily Connections · {date}</div>
             <h2 className="font-semibold text-[var(--text-strong)] truncate">{payload.title || 'MCAT Connections'}</h2>
@@ -7599,7 +7599,16 @@ function BankTab() {
     bySubject[subj].push(ch);
   }
   const localChapterIds = new Set(files.map((f) => f.chapter_id).filter(Boolean));
-  const subjects = Object.keys(bySubject).sort();
+  // Canonical MCAT subject order; anything outside this list falls back to
+  // alphabetical.
+  const subjectOrder = ['Biology', 'Biochemistry', 'General Chemistry', 'Organic Chemistry', 'Physics', 'Behavioral Science', 'Psychology', 'Sociology', 'CARS'];
+  const subjects = Object.keys(bySubject).sort((a, b) => {
+    const ai = subjectOrder.indexOf(a), bi = subjectOrder.indexOf(b);
+    if (ai !== -1 && bi !== -1) return ai - bi;
+    if (ai !== -1) return -1;
+    if (bi !== -1) return 1;
+    return a.localeCompare(b);
+  });
   for (const s of subjects) {
     bySubject[s].sort((a, b) => {
       const an = parseChapterNum(a), bn = parseChapterNum(b);
@@ -8161,7 +8170,14 @@ function Shell() {
   const headerRef = useRef(null);
   const [headerH, setHeaderH] = useState(56);
   useLayoutEffect(() => {
-    const measure = () => { if (headerRef.current) setHeaderH(headerRef.current.offsetHeight); };
+    const measure = () => {
+      if (!headerRef.current) return;
+      const h = headerRef.current.offsetHeight;
+      setHeaderH(h);
+      // Exposed for full-screen overlays (CARS / Connections) so their
+      // top edge sits below the persistent tabs bar.
+      document.documentElement.style.setProperty('--mcat-header-h', `${h}px`);
+    };
     measure();
     window.addEventListener('resize', measure);
     return () => window.removeEventListener('resize', measure);
