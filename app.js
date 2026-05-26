@@ -86,8 +86,9 @@ function _stepWind(state, minStrength, maxStrength, flipSecsRange) {
     w.target = _rnd(minStrength, maxStrength);
     w.flip = Math.floor(30 * _rnd(flipSecsRange[0], flipSecsRange[1]));
   }
-  // Smooth ease toward target.
-  w.current += (w.target - w.current) * 0.012;
+  // Slow ease toward target — wind changes direction over many seconds, not
+  // a fraction of a second.
+  w.current += (w.target - w.current) * 0.0045;
 }
 
 // ── particle / state factories ────────────────────────────────────────────────
@@ -280,18 +281,18 @@ function _initMadison(w, h, isDark) {
     const tallness = (1 - distFrac * 0.55) * (0.75 + Math.random() * 0.15);
     const height = capitol.height * tallness;
     const width = _rnd(34, 64);
-    // Window grid — used at night for lit-windows simulation. Each cell
-    // tracks lit + next toggle time.
-    const cols = Math.max(2, Math.floor(width / 13));
-    const rows = Math.max(3, Math.floor(height / 18));
+    // Window grid — small and dense. Each cell tracks lit + next toggle
+    // time. Lit fraction is intentionally low so the skyline reads as
+    // "city at night", not "every light on".
+    const cols = Math.max(3, Math.floor(width / 7));
+    const rows = Math.max(5, Math.floor(height / 10));
     const windows = [];
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         windows.push({
-          on: Math.random() < 0.42,
-          // Each window flips after a randomized interval (frames at 30fps).
-          // Most stay put for a long time; a few flicker.
-          flipAt: Math.floor(30 * _rnd(8, 60)),
+          on: Math.random() < 0.22,
+          // Toggles are rare — most windows stay put for a minute or more.
+          flipAt: Math.floor(30 * _rnd(45, 240)),
         });
       }
     }
@@ -299,14 +300,14 @@ function _initMadison(w, h, isDark) {
   }
   // Capitol's own windows.
   {
-    const cols = Math.max(3, Math.floor(capitol.width / 14));
-    const rows = Math.max(5, Math.floor(capitol.height / 18));
+    const cols = Math.max(4, Math.floor(capitol.width / 8));
+    const rows = Math.max(7, Math.floor(capitol.height / 11));
     const windows = [];
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         windows.push({
-          on: Math.random() < 0.5,
-          flipAt: Math.floor(30 * _rnd(10, 80)),
+          on: Math.random() < 0.28,
+          flipAt: Math.floor(30 * _rnd(60, 300)),
         });
       }
     }
@@ -341,6 +342,25 @@ function _initMadison(w, h, isDark) {
       target: 0,
       // Long dry stretch at the start so the user sees a sunny city first.
       nextFlip: Math.floor(30 * _rnd(60, 180)),
+    },
+    // Fluffy day clouds — drift in whatever direction the wind is blowing.
+    clouds: Array.from({ length: 4 }, () => ({
+      x: _rnd(-w * 0.3, w * 1.2),
+      y: _rnd(h * 0.05, h * 0.30),
+      scale: _rnd(0.85, 1.6),
+      // Each cloud picks up wind but also has a small base drift so a calm
+      // day still gets some movement.
+      baseDrift: _rnd(0.05, 0.18),
+      alpha: _rnd(0.55, 0.85),
+    })),
+    // Rare plane crossing the night sky with a blinking red light.
+    plane: {
+      active: false,
+      x: 0,
+      y: 0,
+      vx: 0,
+      // Wait a good while before the first one.
+      nextSpawn: Math.floor(30 * _rnd(45, 180)),
     },
   };
 }
@@ -430,7 +450,7 @@ function _drawCold(ctx, isDark, state, t, py, w, h) {
   }
 
   // ── wind: smooth, random direction + strength, retargets every few seconds ──
-  _stepWind(state, -3.2, 3.2, [6, 18]);
+  _stepWind(state, -3.2, 3.2, [20, 60]);
 
   // ── snowflakes ──
   for (const f of state.flakes) {
@@ -508,7 +528,7 @@ function _drawWarm(ctx, isDark, state, t, py, w, h) {
   }
 
   // ── wind ──
-  _stepWind(state, -4, 4, [5, 16]);
+  _stepWind(state, -4, 4, [20, 55]);
 
   // ── falling leaves ──
   for (const lf of state.leaves) {
@@ -631,7 +651,7 @@ function _drawDuo(ctx, isDark, state, t, py, w, h) {
   }
 
   // ── wind ──
-  _stepWind(state, -2.4, 2.4, [7, 22]);
+  _stepWind(state, -2.4, 2.4, [25, 70]);
 
   // ── floating motes ──
   for (const m of state.motes) {
@@ -860,7 +880,7 @@ function _drawMadison(ctx, isDark, state, t, py, w, h) {
   ctx.fillStyle = sky; ctx.fillRect(0, 0, w, h);
 
   // ── wind: smooth, retargets every few seconds. drives rain tilt. ──
-  _stepWind(state, -3.4, 3.4, [6, 18]);
+  _stepWind(state, -3.4, 3.4, [25, 65]);
 
   // Rain controller: rare and short. Most of the day is sunny.
   const rain = state.rain;
@@ -942,6 +962,84 @@ function _drawMadison(ctx, isDark, state, t, py, w, h) {
         }
       }
     }
+
+    // ── rare night plane with blinking red light ──
+    const plane = state.plane;
+    if (!plane.active) {
+      plane.nextSpawn -= 1;
+      if (plane.nextSpawn <= 0) {
+        plane.active = true;
+        plane.x = -30;
+        plane.y = _rnd(h * 0.05, h * 0.30);
+        plane.vx = _rnd(0.9, 1.6);
+      }
+    } else {
+      plane.x += plane.vx;
+      if (plane.x > w + 30) {
+        plane.active = false;
+        // Long gap until the next plane — 1.5 to 6 minutes.
+        plane.nextSpawn = Math.floor(30 * _rnd(90, 360));
+      } else {
+        // Fuselage as a tiny dim grey rectangle
+        ctx.fillStyle = 'rgba(70,72,82,0.85)';
+        ctx.fillRect(plane.x - 6, plane.y, 12, 1.6);
+        // Wing
+        ctx.fillRect(plane.x - 1, plane.y - 2, 2.4, 5);
+        // Blinking red navigation light (~0.6 s cycle)
+        const blinkOn = Math.floor(t / 18) % 2 === 0;
+        if (blinkOn) {
+          // Halo
+          const halo = ctx.createRadialGradient(plane.x + 5, plane.y, 0, plane.x + 5, plane.y, 9);
+          halo.addColorStop(0,   'rgba(255,40,32,0.65)');
+          halo.addColorStop(0.55,'rgba(255,40,32,0.18)');
+          halo.addColorStop(1,   'rgba(255,40,32,0)');
+          ctx.fillStyle = halo;
+          ctx.fillRect(plane.x - 4, plane.y - 9, 18, 18);
+          // Core dot
+          ctx.beginPath();
+          ctx.arc(plane.x + 5, plane.y, 1.7, 0, Math.PI * 2);
+          ctx.fillStyle = '#ff2820';
+          ctx.fill();
+        }
+      }
+    }
+  }
+
+  // ── day clouds: drift with the wind ──
+  if (!isDark) {
+    for (const c of state.clouds) {
+      // Clouds carry most of the wind plus a tiny base drift so a calm
+      // moment still nudges them along.
+      c.x += state.wind.current * 0.35 + c.baseDrift;
+      if (c.x > w + 120) c.x = -180;
+      if (c.x < -180)    c.x = w + 120;
+      const baseR = 22 * c.scale;
+      const cy = c.y + py * 0.3;
+      // Storm fades clouds (everything turns one big grey sheet during rain).
+      const alp = c.alpha * (1 - Math.min(1, rain.intensity * 1.4));
+      if (alp < 0.03) continue;
+      ctx.save();
+      ctx.globalAlpha = alp;
+      const lobes = [
+        [0,            0,             1.55],
+        [baseR * 0.62, baseR * 0.10,  1.10],
+        [-baseR * 0.55,baseR * 0.16,  1.00],
+        [baseR * 0.30, -baseR * 0.30, 0.85],
+        [-baseR * 0.22,-baseR * 0.22, 0.78],
+        [baseR * 1.00, baseR * 0.25,  0.70],
+      ];
+      for (const [ox, oy, rf] of lobes) {
+        const cg = ctx.createRadialGradient(c.x + ox, cy + oy, 0, c.x + ox, cy + oy, baseR * rf);
+        cg.addColorStop(0,   'rgba(255,255,255,0.95)');
+        cg.addColorStop(0.5, 'rgba(248,252,255,0.55)');
+        cg.addColorStop(1,   'rgba(255,255,255,0)');
+        ctx.fillStyle = cg;
+        ctx.beginPath();
+        ctx.arc(c.x + ox, cy + oy, baseR * rf, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
   }
 
   // ── clouds during rain ──
@@ -1015,17 +1113,20 @@ function _drawMadison(ctx, isDark, state, t, py, w, h) {
         if (isDark) {
           if (win.on) {
             const fl = 0.85 + 0.15 * Math.sin(t * 0.08 + (idx % 7));
-            // Warm yellow with a slight blue/red occasional tint for variety.
-            const tint = idx % 17 === 0 ? 'rgba(255,80,60,' : idx % 13 === 0 ? 'rgba(200,220,255,' : 'rgba(255,220,120,';
+            // Warm yellow with rare red/cool tints for variety.
+            const tint = idx % 31 === 0 ? 'rgba(255,80,60,' : idx % 23 === 0 ? 'rgba(200,220,255,' : 'rgba(255,220,120,';
             ctx.fillStyle = `${tint}${fl})`;
             ctx.fillRect(wx, wy, wW, wH);
-            // Queue a reflection streak for this lit window.
-            reflections.push({
-              x: wx + wW / 2,
-              color: tint,
-              alpha: 0.55 * fl,
-              width: wW * 0.7,
-            });
+            // Only every ~6th lit window emits a reflection — keeps the
+            // lake from looking like a barcode.
+            if (idx % 6 === 0) {
+              reflections.push({
+                x: wx + wW / 2,
+                color: tint,
+                alpha: 0.30 * fl,
+                width: wW * 2.4, // wide+soft = blurry
+              });
+            }
           } else {
             ctx.fillStyle = 'rgba(10,12,22,0.85)';
             ctx.fillRect(wx, wy, wW, wH);
@@ -1078,7 +1179,9 @@ function _drawMadison(ctx, isDark, state, t, py, w, h) {
               const fl = 0.85 + 0.15 * Math.sin(t * 0.08 + n);
               ctx.fillStyle = `rgba(255,220,120,${fl})`;
               ctx.fillRect(wx, wy, wW, wH);
-              reflections.push({ x: wx + wW/2, color: 'rgba(255,220,120,', alpha: 0.45 * fl, width: wW*0.6 });
+              if (n % 5 === 0) {
+                reflections.push({ x: wx + wW/2, color: 'rgba(255,220,120,', alpha: 0.22 * fl, width: wW * 2.2 });
+              }
             } else {
               ctx.fillStyle = 'rgba(10,12,22,0.85)';
               ctx.fillRect(wx, wy, wW, wH);
@@ -1120,7 +1223,9 @@ function _drawMadison(ctx, isDark, state, t, py, w, h) {
               const fl = 0.85 + 0.15 * Math.sin(t * 0.08 + idx);
               ctx.fillStyle = `rgba(255,228,140,${fl})`;
               ctx.fillRect(wx, wy, wW, wH);
-              reflections.push({ x: wx + wW/2, color: 'rgba(255,228,140,', alpha: 0.55 * fl, width: wW*0.7 });
+              if (idx % 7 === 0) {
+                reflections.push({ x: wx + wW/2, color: 'rgba(255,228,140,', alpha: 0.28 * fl, width: wW * 2.2 });
+              }
             } else {
               ctx.fillStyle = 'rgba(10,12,22,0.85)';
               ctx.fillRect(wx, wy, wW, wH);
@@ -1225,10 +1330,8 @@ function _drawMadison(ctx, isDark, state, t, py, w, h) {
       ctx.closePath();
       ctx.fillStyle = 'rgba(255,238,180,0.20)';
       ctx.fill();
-      // Capitol reflection streak (much bigger)
-      reflections.push({ x: cap.x - domeR*0.3, color: 'rgba(255,228,148,', alpha: 0.55, width: domeR*0.6 });
-      reflections.push({ x: cap.x,            color: 'rgba(255,228,148,', alpha: 0.75, width: domeR*0.4 });
-      reflections.push({ x: cap.x + domeR*0.3, color: 'rgba(255,228,148,', alpha: 0.55, width: domeR*0.6 });
+      // Capitol reflection streak — wide and soft.
+      reflections.push({ x: cap.x, color: 'rgba(255,228,148,', alpha: 0.35, width: domeR * 2.0 });
     }
   };
 
@@ -1236,19 +1339,22 @@ function _drawMadison(ctx, isDark, state, t, py, w, h) {
   for (const b of state.buildings) drawBuilding(b);
   drawCapitol();
 
-  // ── Lake reflections — one vertical streak per lit window/dome. ──
-  // Each streak is a thin vertical gradient fading down through the lake,
-  // with a slight time-based horizontal wobble (water ripples).
+  // ── Lake reflections — subsampled, wide, blurred. ──
+  // Drawn through a Gaussian blur filter so the streaks read as soft
+  // mirror smudges rather than crisp vertical bars.
+  ctx.save();
+  if (typeof ctx.filter === 'string') ctx.filter = 'blur(3px)';
   for (const r of reflections) {
     const sway = Math.sin(t * 0.04 + r.x * 0.013) * 1.6;
     const rx = r.x + sway;
     const grad = ctx.createLinearGradient(rx, groundY, rx, lakeBottom);
     grad.addColorStop(0,    `${r.color}${r.alpha})`);
-    grad.addColorStop(0.45, `${r.color}${r.alpha * 0.55})`);
+    grad.addColorStop(0.55, `${r.color}${r.alpha * 0.45})`);
     grad.addColorStop(1,    `${r.color}0)`);
     ctx.fillStyle = grad;
     ctx.fillRect(rx - r.width / 2, groundY, r.width, lakeHeight);
   }
+  ctx.restore();
   // Horizontal ripple lines breaking the reflections.
   if (isDark) {
     ctx.fillStyle = 'rgba(0,0,0,0.55)';
@@ -1261,15 +1367,16 @@ function _drawMadison(ctx, isDark, state, t, py, w, h) {
   }
 
   // ── window toggles (night only) — each window has its own countdown ──
+  // Toggles are infrequent: most windows hold their state for 1-5 minutes.
+  // The probability is also biased toward "stay off" so the lit fraction
+  // doesn't drift up over time.
   if (isDark) {
     const tickAll = (b) => {
       for (const win of b.windows) {
         win.flipAt -= 1;
         if (win.flipAt <= 0) {
-          // Slightly bias toward keeping the current state, so they don't
-          // flicker constantly.
-          win.on = Math.random() < (win.on ? 0.78 : 0.32);
-          win.flipAt = Math.floor(30 * _rnd(6, 80));
+          win.on = Math.random() < (win.on ? 0.62 : 0.18);
+          win.flipAt = Math.floor(30 * _rnd(60, 300));
         }
       }
     };
