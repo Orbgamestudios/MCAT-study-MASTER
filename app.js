@@ -7997,20 +7997,22 @@ function BankTab() {
         </div>
       )}
 
-      {/* Library-vs-bank diff: any chapter with a complete MC stage that
-          isn't already downloaded locally. One-click pull them all, or
-          replace the entire local library with what's on the bank. */}
+      {/* Library-vs-bank diff: only rendered when the local library
+          doesn't match the bank — either it's missing a completed bank
+          chapter, or it has local-only chapters the bank doesn't carry. */}
       {(() => {
         const complete = data.chapters.filter((c) => c.stages?.mc?.done);
+        const bankIds = new Set(complete.map((c) => c.id));
         const missing = complete.filter((c) => !localChapterIds.has(c.id));
-        if (missing.length === 0 && files.length === 0) return null;
+        const localOnly = files.filter((f) => !f.chapter_id || !bankIds.has(f.chapter_id));
+        if (missing.length === 0 && localOnly.length === 0) return null;
         return (
           <div className="bg-[var(--accent-soft)] border border-[var(--accent-border)] rounded-2xl p-4 sm:p-5 space-y-3">
             <div className="min-w-0">
               <div className="font-semibold text-[var(--accent-text)]">
                 {missing.length > 0
                   ? <>Your library is missing {missing.length} chapter{missing.length === 1 ? '' : 's'}</>
-                  : <>Your library is in sync with the bank</>}
+                  : <>Your library has {localOnly.length} chapter{localOnly.length === 1 ? '' : 's'} not on the bank</>}
               </div>
               <div className="text-xs text-[var(--text-muted)] mt-0.5">
                 Pull any missing chapter — or replace your library outright with the {complete.length} completed bank chapter{complete.length === 1 ? '' : 's'}.
