@@ -39,7 +39,7 @@ const KEYS = {
 // Theme is a (palette, mode) pair. Palette picks the colour family; mode picks
 // light/dark, or follows the OS when 'system'. The pair resolves to one of the
 // six concrete data-theme values the CSS defines.
-const PALETTES = ['cold', 'warm', 'duo', 'tropical'];
+const PALETTES = ['cold', 'warm', 'duo', 'tropical', 'madison'];
 const MODES = ['light', 'dark', 'system'];
 function systemPrefersDark() {
   try { return window.matchMedia('(prefers-color-scheme: dark)').matches; }
@@ -50,6 +50,9 @@ function dataThemeFor(palette, mode) {
   if (palette === 'warm') return dark ? 'darkwarm' : 'warm';
   if (palette === 'duo') return dark ? 'darkgreen' : 'green';
   if (palette === 'tropical') return dark ? 'darktropical' : 'tropical';
+  // Madison reuses cold's data-theme so the UI colors stay readable; the
+  // canvas renderer below is what makes the palette visually distinct.
+  if (palette === 'madison') return dark ? 'dark' : 'light';
   return dark ? 'dark' : 'light'; // cold
 }
 // ---------- dynamic background — Canvas 2D renderer ----------
@@ -241,6 +244,104 @@ function _initTropical(w, h, isDark) {
     })) : [],
     // Night: shooting star state (one at a time, spawned periodically).
     shooter: isDark ? { active: false, x: 0, y: 0, vx: 0, vy: 0, life: 0, max: 0, nextSpawn: _rnd(80, 260) } : null,
+  };
+}
+
+function _initMadison(w, h, isDark) {
+  // Skyline geometry. The Capitol sits dead center as the tallest building
+  // with a dome on top; the rest are shorter and arranged on either side,
+  // sorted by distance from center so the closest-to-center buildings draw
+  // last (in front of further ones). A few buildings overlap slightly.
+  const cx = w * 0.5;
+  const groundY = h * 0.92;
+
+  // Capitol — distinctive: tall central tower, large dome on top.
+  const capitol = {
+    x: cx,
+    width: Math.max(80, w * 0.16),
+    height: h * 0.42,
+    domeRadius: Math.max(28, w * 0.06),
+    isCapitol: true,
+  };
+
+  // Surrounding skyline. ~14 rectangular buildings, never as tall as the
+  // Capitol. Closer to centre = slightly taller; flanks fall off.
+  const buildings = [];
+  const slotCount = 14;
+  for (let i = 0; i < slotCount; i++) {
+    const side = i < slotCount / 2 ? -1 : 1; // left or right of capitol
+    const idxInSide = side === -1 ? i : (i - slotCount / 2);
+    // Distance from capitol in slot units (1, 2, 3, ...).
+    const slot = idxInSide + 1;
+    const distFrac = slot / (slotCount / 2);
+    const distFromCap = capitol.width * 0.55 + slot * (w * 0.055);
+    const x = cx + side * distFromCap + _rnd(-6, 6);
+    // Tallest neighbours roughly 65% of capitol; outer falls off to ~40%.
+    const tallness = (1 - distFrac * 0.55) * (0.55 + Math.random() * 0.15);
+    const height = capitol.height * tallness;
+    const width = _rnd(38, 70);
+    // Window grid — used at night for lit-windows simulation. Each cell
+    // tracks lit + next toggle time.
+    const cols = Math.max(2, Math.floor(width / 13));
+    const rows = Math.max(3, Math.floor(height / 18));
+    const windows = [];
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        windows.push({
+          on: Math.random() < 0.42,
+          // Each window flips after a randomized interval (frames at 30fps).
+          // Most stay put for a long time; a few flicker.
+          flipAt: Math.floor(30 * _rnd(8, 60)),
+        });
+      }
+    }
+    buildings.push({ x, width, height, cols, rows, windows, isCapitol: false });
+  }
+  // Capitol's own windows.
+  {
+    const cols = Math.max(3, Math.floor(capitol.width / 14));
+    const rows = Math.max(5, Math.floor(capitol.height / 18));
+    const windows = [];
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        windows.push({
+          on: Math.random() < 0.5,
+          flipAt: Math.floor(30 * _rnd(10, 80)),
+        });
+      }
+    }
+    capitol.cols = cols; capitol.rows = rows; capitol.windows = windows;
+  }
+  // Draw furthest first so closer buildings (incl. capitol) sit in front.
+  buildings.sort((a, b) => Math.abs(b.x - cx) - Math.abs(a.x - cx));
+
+  return {
+    cx, groundY,
+    capitol,
+    buildings,
+    // Night sky: dense stars and a shooting-star slot.
+    stars: isDark ? Array.from({ length: 130 }, () => ({
+      x: _rnd(0, w), y: _rnd(0, h * 0.55),
+      r: _rnd(0.4, 1.4),
+      op: _rnd(0.4, 0.95),
+      tp: _pi2(),
+    })) : [],
+    shooter: isDark ? { active: false, x: 0, y: 0, vx: 0, vy: 0, life: 0, max: 0, nextSpawn: _rnd(120, 320) } : null,
+    // Day: rain pool (always allocated; used only when intensity > 0).
+    rain: {
+      drops: Array.from({ length: 240 }, () => ({
+        x: _rnd(-40, w + 40),
+        y: _rnd(-h, h),
+        len: _rnd(8, 18),
+        vy: _rnd(8, 14),
+        vx: _rnd(-2.4, -1.2),
+        alp: _rnd(0.35, 0.7),
+      })),
+      intensity: 0,
+      target: 0,
+      // Long dry stretch at the start so the user sees a sunny city first.
+      nextFlip: Math.floor(30 * _rnd(60, 180)),
+    },
   };
 }
 
@@ -744,6 +845,254 @@ function _drawTropical(ctx, isDark, state, t, py, w, h) {
   }
 }
 
+function _drawMadison(ctx, isDark, state, t, py, w, h) {
+  // ── sky ──
+  const sky = ctx.createLinearGradient(0, 0, 0, h);
+  if (isDark) {
+    sky.addColorStop(0,    '#02041a'); sky.addColorStop(0.20, '#040a26');
+    sky.addColorStop(0.45, '#06112e'); sky.addColorStop(0.70, '#040a22');
+    sky.addColorStop(0.90, '#020618'); sky.addColorStop(1,    '#01030d');
+  } else {
+    sky.addColorStop(0,    '#79c2ea'); sky.addColorStop(0.22, '#9ed3ee');
+    sky.addColorStop(0.50, '#c6e5f4'); sky.addColorStop(0.75, '#e5f1f7');
+    sky.addColorStop(1,    '#f4f8fa');
+  }
+  ctx.fillStyle = sky; ctx.fillRect(0, 0, w, h);
+
+  // ── wind: smooth, retargets every few seconds. drives rain tilt. ──
+  _stepWind(state, -3.4, 3.4, [6, 18]);
+
+  // Rain controller: rare and short. Most of the day is sunny.
+  const rain = state.rain;
+  if (!isDark) {
+    rain.nextFlip -= 1;
+    if (rain.nextFlip <= 0) {
+      rain.target = rain.target === 0 ? 1 : 0;
+      // Wet stretches are short (10-25 s); dry stretches are long (45-150 s).
+      rain.nextFlip = rain.target === 1
+        ? Math.floor(30 * _rnd(10, 25))
+        : Math.floor(30 * _rnd(45, 150));
+    }
+    if (rain.intensity !== rain.target) {
+      const step = rain.target > rain.intensity ? 1 / 90 : -1 / 120;
+      rain.intensity = Math.max(0, Math.min(1, rain.intensity + step));
+    }
+  } else {
+    rain.intensity = 0; // no rain at night
+  }
+
+  // ── sun (day only, dimmed by rain intensity) ──
+  if (!isDark) {
+    const sx = w * 0.82, sy = h * 0.13 + py * 0.25;
+    const sunAlp = 1 - rain.intensity * 0.85;
+    const sg = ctx.createRadialGradient(sx, sy, 0, sx, sy, w * 0.34);
+    sg.addColorStop(0,    `rgba(255,244,180,${0.95 * sunAlp})`);
+    sg.addColorStop(0.18, `rgba(255,228,130,${0.55 * sunAlp})`);
+    sg.addColorStop(0.55, `rgba(255,200,90,${0.18 * sunAlp})`);
+    sg.addColorStop(1,    'rgba(255,180,60,0)');
+    ctx.fillStyle = sg; ctx.fillRect(0, 0, w, h);
+  } else {
+    // moon
+    const mx = w * 0.18, my = h * 0.13 + py * 0.25;
+    const mg = ctx.createRadialGradient(mx, my, 0, mx, my, 60);
+    mg.addColorStop(0,    'rgba(220,234,255,0.90)');
+    mg.addColorStop(0.20, 'rgba(190,212,250,0.42)');
+    mg.addColorStop(0.55, 'rgba(150,180,230,0.10)');
+    mg.addColorStop(1,    'rgba(120,150,210,0)');
+    ctx.fillStyle = mg; ctx.fillRect(0, 0, w, h);
+  }
+
+  // ── stars + shooting stars (night) ──
+  if (isDark) {
+    for (const s of state.stars) {
+      const tw = 0.55 + 0.45 * Math.sin(t * 0.045 + s.tp);
+      ctx.beginPath();
+      ctx.arc(s.x, s.y + py * 0.18, s.r, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(235,242,255,${s.op * tw})`;
+      ctx.fill();
+    }
+    const ss = state.shooter;
+    if (ss) {
+      if (!ss.active) {
+        ss.nextSpawn -= 1;
+        if (ss.nextSpawn <= 0) {
+          ss.active = true;
+          ss.x = _rnd(w * 0.1, w * 0.7);
+          ss.y = _rnd(h * 0.04, h * 0.30);
+          const ang = _rnd(Math.PI * 0.18, Math.PI * 0.32);
+          const spd = _rnd(7, 11);
+          ss.vx = Math.cos(ang) * spd; ss.vy = Math.sin(ang) * spd;
+          ss.max = _rnd(28, 48); ss.life = 0;
+        }
+      } else {
+        ss.x += ss.vx; ss.y += ss.vy; ss.life += 1;
+        const fade = ss.life < 6 ? ss.life / 6 : Math.max(0, 1 - (ss.life - 6) / (ss.max - 6));
+        const tg = ctx.createLinearGradient(ss.x - ss.vx * 8, ss.y - ss.vy * 8, ss.x, ss.y);
+        tg.addColorStop(0, 'rgba(255,255,255,0)');
+        tg.addColorStop(1, `rgba(255,255,255,${0.95 * fade})`);
+        ctx.strokeStyle = tg; ctx.lineWidth = 1.8; ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(ss.x - ss.vx * 8, ss.y - ss.vy * 8);
+        ctx.lineTo(ss.x, ss.y);
+        ctx.stroke();
+        ctx.beginPath(); ctx.arc(ss.x, ss.y, 1.6, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(255,255,255,${fade})`; ctx.fill();
+        if (ss.life >= ss.max || ss.x > w + 80 || ss.y > h * 0.55) {
+          ss.active = false; ss.nextSpawn = _rnd(180, 420);
+        }
+      }
+    }
+  }
+
+  // ── clouds during rain ──
+  if (!isDark && rain.intensity > 0.01) {
+    const cloudAlp = rain.intensity * 0.55;
+    const cg = ctx.createLinearGradient(0, 0, 0, h * 0.7);
+    cg.addColorStop(0,   `rgba(30,38,46,${cloudAlp})`);
+    cg.addColorStop(0.6, `rgba(30,38,46,${cloudAlp * 0.55})`);
+    cg.addColorStop(1,   'rgba(30,38,46,0)');
+    ctx.fillStyle = cg; ctx.fillRect(0, 0, w, h);
+  }
+
+  // ── distant lake band + ground ──
+  const groundY = state.groundY + py * 0.55;
+  // Lake (a few px above ground, with subtle reflection tint)
+  const lakeY = groundY - 6;
+  ctx.fillStyle = isDark ? 'rgba(2,8,28,0.85)' : 'rgba(108,158,196,0.55)';
+  ctx.fillRect(0, lakeY, w, 8);
+  // Ground silhouette under buildings.
+  ctx.fillStyle = isDark ? '#02030a' : '#243846';
+  ctx.fillRect(0, groundY, w, h - groundY);
+
+  // ── helper to draw a single window (used by buildings + capitol) ──
+  const drawBuilding = (b) => {
+    const baseY = groundY;
+    const topY = baseY - b.height;
+    const left = b.x - b.width / 2;
+    // Body
+    ctx.fillStyle = isDark
+      ? (b.isCapitol ? '#0a1224' : '#070b16')
+      : (b.isCapitol ? '#d0d6dc' : '#2f4452');
+    ctx.fillRect(left, topY, b.width, b.height);
+    // Subtle highlight strip on left edge for depth
+    ctx.fillStyle = isDark ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.10)';
+    ctx.fillRect(left, topY, 1.5, b.height);
+
+    // Capitol dome
+    if (b.isCapitol) {
+      const domeBaseY = topY;
+      const domeR = b.domeRadius;
+      // Dome base "drum"
+      ctx.fillStyle = isDark ? '#0a1224' : '#d0d6dc';
+      ctx.fillRect(b.x - domeR * 0.85, domeBaseY - domeR * 0.35, domeR * 1.7, domeR * 0.35);
+      // Dome hemisphere
+      ctx.beginPath();
+      ctx.arc(b.x, domeBaseY - domeR * 0.35, domeR, Math.PI, 0);
+      ctx.closePath();
+      ctx.fillStyle = isDark ? '#0d162a' : '#e0e6ec';
+      ctx.fill();
+      // Lantern/cupola on top
+      ctx.fillStyle = isDark ? '#0a1224' : '#c0c8cf';
+      ctx.fillRect(b.x - 3, domeBaseY - domeR * 1.5, 6, domeR * 0.45);
+      // Spire
+      ctx.beginPath();
+      ctx.moveTo(b.x, domeBaseY - domeR * 1.85);
+      ctx.lineTo(b.x - 2, domeBaseY - domeR * 1.5);
+      ctx.lineTo(b.x + 2, domeBaseY - domeR * 1.5);
+      ctx.closePath();
+      ctx.fillStyle = isDark ? '#1a2440' : '#8a949e';
+      ctx.fill();
+      // Glow at night so the Capitol reads as the focal point
+      if (isDark) {
+        const cap = ctx.createRadialGradient(b.x, domeBaseY - domeR * 0.6, 0, b.x, domeBaseY - domeR * 0.6, domeR * 2.6);
+        cap.addColorStop(0,    'rgba(255,228,148,0.35)');
+        cap.addColorStop(0.5,  'rgba(255,200,90,0.08)');
+        cap.addColorStop(1,    'rgba(255,200,90,0)');
+        ctx.fillStyle = cap;
+        ctx.fillRect(b.x - domeR * 2.6, domeBaseY - domeR * 3.2, domeR * 5.2, domeR * 5.2);
+      }
+    }
+
+    // Windows. At night they glow; during the day they're flat dark panes.
+    const cols = b.cols, rows = b.rows;
+    const padX = b.width * 0.10;
+    const padY = b.height * 0.06;
+    const cellW = (b.width - padX * 2) / cols;
+    const cellH = (b.height - padY * 2) / rows;
+    const wW = Math.min(cellW * 0.55, 10);
+    const wH = Math.min(cellH * 0.55, 12);
+    let idx = 0;
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const win = b.windows[idx++];
+        if (!win) continue;
+        const wx = left + padX + c * cellW + (cellW - wW) / 2;
+        const wy = topY + padY + r * cellH + (cellH - wH) / 2;
+        if (isDark) {
+          if (win.on) {
+            // Lit window — warm yellow with slight flicker
+            const fl = 0.85 + 0.15 * Math.sin(t * 0.08 + (idx % 7));
+            ctx.fillStyle = `rgba(255,220,120,${fl})`;
+            ctx.fillRect(wx, wy, wW, wH);
+          } else {
+            ctx.fillStyle = 'rgba(10,16,28,0.9)';
+            ctx.fillRect(wx, wy, wW, wH);
+          }
+        } else {
+          // Day: dark blue-ish panes
+          ctx.fillStyle = b.isCapitol ? 'rgba(80,100,130,0.55)' : 'rgba(20,40,60,0.6)';
+          ctx.fillRect(wx, wy, wW, wH);
+        }
+      }
+    }
+  };
+
+  // Buildings (back to front)
+  for (const b of state.buildings) drawBuilding(b);
+  // Capitol on top of everything else (foreground centerpiece)
+  drawBuilding(state.capitol);
+
+  // ── window toggles (night only) — each window has its own countdown ──
+  if (isDark) {
+    const tickAll = (b) => {
+      for (const win of b.windows) {
+        win.flipAt -= 1;
+        if (win.flipAt <= 0) {
+          // Slightly bias toward keeping the current state, so they don't
+          // flicker constantly.
+          win.on = Math.random() < (win.on ? 0.78 : 0.32);
+          win.flipAt = Math.floor(30 * _rnd(6, 80));
+        }
+      }
+    };
+    for (const b of state.buildings) tickAll(b);
+    tickAll(state.capitol);
+  }
+
+  // ── rain on top of everything ──
+  if (rain.intensity > 0.01) {
+    const visible = Math.floor(rain.drops.length * rain.intensity);
+    ctx.strokeStyle = isDark
+      ? `rgba(170,200,235,${0.55 * rain.intensity})`
+      : `rgba(210,228,245,${0.65 * rain.intensity})`;
+    ctx.lineWidth = 1; ctx.lineCap = 'round';
+    const windPush = state.wind.current * 1.8;
+    for (let i = 0; i < visible; i++) {
+      const d = rain.drops[i];
+      d.x += d.vx + windPush; d.y += d.vy;
+      if (d.y > h + 20) { d.y = -20; d.x = _rnd(-40, w + 40); }
+      if (d.x < -40)    { d.x = w + 20; }
+      if (d.x > w + 60) { d.x = -20; }
+      ctx.globalAlpha = d.alp;
+      ctx.beginPath();
+      ctx.moveTo(d.x, d.y);
+      ctx.lineTo(d.x + (d.vx + windPush) * 1.4, d.y + d.vy * 1.4);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  }
+}
+
 // ── main entry points ─────────────────────────────────────────────────────────
 function applyDynamicBg(palette, isDark) {
   stopDynamicBg();
@@ -757,6 +1106,7 @@ function applyDynamicBg(palette, isDark) {
     warm:  { day:'#e07830', night:'#120800' },
     duo:   { day:'#3e9e20', night:'#010d01' },
     tropical: { day:'#34a2cc', night:'#020810' },
+    madison: { day:'#9ec9e8', night:'#020414' },
   };
   const edge = (edgeColors[palette] || edgeColors.tropical)[isDark ? 'night' : 'day'];
   document.documentElement.style.background = edge;
@@ -781,6 +1131,7 @@ function applyDynamicBg(palette, isDark) {
     if (palette === 'cold')     return _initCold(w(), h(), isDark);
     if (palette === 'warm')     return _initWarm(w(), h());
     if (palette === 'duo')      return _initDuo(w(), h());
+    if (palette === 'madison')  return _initMadison(w(), h(), isDark);
     return _initTropical(w(), h(), isDark);
   };
   state = buildState();
@@ -793,10 +1144,11 @@ function applyDynamicBg(palette, isDark) {
     const cw = w(), ch = h();
     ctx.clearRect(0, 0, cw, ch);
     const py = -scrollY * 0.07; // parallax offset
-    if (palette === 'cold')     _drawCold(ctx, isDark, state, t, py, cw, ch);
-    else if (palette === 'warm') _drawWarm(ctx, isDark, state, t, py, cw, ch);
-    else if (palette === 'duo')  _drawDuo(ctx, isDark, state, t, py, cw, ch);
-    else                         _drawTropical(ctx, isDark, state, t, py, cw, ch);
+    if (palette === 'cold')         _drawCold(ctx, isDark, state, t, py, cw, ch);
+    else if (palette === 'warm')    _drawWarm(ctx, isDark, state, t, py, cw, ch);
+    else if (palette === 'duo')     _drawDuo(ctx, isDark, state, t, py, cw, ch);
+    else if (palette === 'madison') _drawMadison(ctx, isDark, state, t, py, cw, ch);
+    else                            _drawTropical(ctx, isDark, state, t, py, cw, ch);
   };
   animId = requestAnimationFrame(draw);
 
@@ -4688,8 +5040,11 @@ function CarsRunner({ date, payload, onClose, alreadyDone }) {
 
   return (
     <div ref={scrollRef} className="fixed inset-x-0 bottom-0 z-30 bg-[var(--bg)] overflow-y-auto" style={{ top: 'var(--mcat-header-h, 56px)' }}>
-      <div className="max-w-3xl mx-auto p-3 sm:p-6 space-y-4">
-        <div className="flex items-center justify-between gap-3 sticky top-0 bg-[var(--bg)] py-2 z-10 -mx-3 sm:-mx-6 px-3 sm:px-6 border-b border-[var(--border-soft)]">
+      {/* Banner is the FIRST child of the scroll container, with no padding
+          above it, so it sits flush against the tabs bar and the sticky
+          behavior keeps it there as the passage scrolls. */}
+      <div className="sticky top-0 z-10 bg-[var(--bg)] border-b border-[var(--border-soft)] px-3 sm:px-6 py-2">
+        <div className="max-w-3xl mx-auto flex items-center justify-between gap-3">
           <div className="min-w-0">
             <div className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Daily CARS · {date}</div>
             <h2 className="font-semibold text-[var(--text-strong)] truncate">{payload.title || payload.discipline || 'CARS passage'}</h2>
@@ -4700,7 +5055,8 @@ function CarsRunner({ date, payload, onClose, alreadyDone }) {
             <button onClick={onClose} className="text-xs px-3 py-1.5 border border-[var(--border)] rounded hover:bg-[var(--bg-hover)]">Close</button>
           </div>
         </div>
-
+      </div>
+      <div className="max-w-3xl mx-auto p-3 sm:p-6 space-y-4">
         {/* Graded screen — score only, no answers revealed */}
         {phase === 'graded' ? (
           <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-6 text-center space-y-3">
@@ -5344,14 +5700,16 @@ function ConnectionsRunner({ date, payload, onClose, alreadyDone }) {
         @keyframes conn-shake { 10%,90%{transform:translateX(-2px)} 20%,80%{transform:translateX(3px)} 30%,50%,70%{transform:translateX(-5px)} 40%,60%{transform:translateX(5px)} }
         .conn-shake { animation: conn-shake 0.45s ease-in-out; }
       `}</style>
-      <div className="max-w-2xl mx-auto p-3 sm:p-6 space-y-4">
-        <div className="flex items-center justify-between gap-3 sticky top-0 bg-[var(--bg)] py-2 z-10 -mx-3 sm:-mx-6 px-3 sm:px-6 border-b border-[var(--border-soft)]">
+      <div className="sticky top-0 z-10 bg-[var(--bg)] border-b border-[var(--border-soft)] px-3 sm:px-6 py-2">
+        <div className="max-w-2xl mx-auto flex items-center justify-between gap-3">
           <div className="min-w-0">
             <div className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Daily Connections · {date}</div>
             <h2 className="font-semibold text-[var(--text-strong)] truncate">{payload.title || 'MCAT Connections'}</h2>
           </div>
           <button onClick={onClose} className="shrink-0 text-xs px-3 py-1.5 border border-[var(--border)] rounded hover:bg-[var(--bg-hover)]">Close</button>
         </div>
+      </div>
+      <div className="max-w-2xl mx-auto p-3 sm:p-6 space-y-4">
 
         <div className="bg-[var(--bg-card-soft)] border border-[var(--border-soft)] rounded-xl p-3 text-sm text-[var(--text-muted)]">
           Pick 4 terms that share a hidden MCAT connection. Solve all 4 groups — green is easiest, purple is hardest. 4 mistakes and it's over.
@@ -6403,6 +6761,7 @@ function SettingsPanel({ onClose }) {
     ['warm', '🍂', 'Warm'],
     ['duo', '🦉', 'Duo'],
     ['tropical', '🌴', 'Tropical'],
+    ['madison', '🏛️', 'Madison'],
   ];
   const modeOpts = [
     ['light', '☀️', 'Light'],
