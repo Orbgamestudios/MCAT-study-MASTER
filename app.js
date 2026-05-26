@@ -30,7 +30,6 @@ const KEYS = {
   autoDownloadAll: 'mcat:autoDownloadAll', // boolean — download every cloud chapter that isn't local yet
   contributorMode: 'mcat:contributorMode', // boolean — show upload/publish/export panels in Library
   tropicalBg: 'mcat:tropicalBg',    // boolean — tropical island background
-  smoothAnim: 'mcat:smoothAnim',     // boolean — smooth tab/question/reveal transitions
   bankSeen: 'mcat:bankSeen', // timestamp — last time the user reviewed the Bank tab
   cars: 'mcat:cars', // { [date]: { score, total, completed_at } } — daily CARS results
   connectionsResults: 'mcat:connectionsResults', // { [date]: { solved, mistakes, completed_at } }
@@ -50,9 +49,7 @@ function dataThemeFor(palette, mode) {
   if (palette === 'warm') return dark ? 'darkwarm' : 'warm';
   if (palette === 'duo') return dark ? 'darkgreen' : 'green';
   if (palette === 'tropical') return dark ? 'darktropical' : 'tropical';
-  // Madison reuses cold's data-theme so the UI colors stay readable; the
-  // canvas renderer below is what makes the palette visually distinct.
-  if (palette === 'madison') return dark ? 'dark' : 'light';
+  if (palette === 'madison') return dark ? 'darkmadison' : 'madison';
   return dark ? 'dark' : 'light'; // cold
 }
 // ---------- dynamic background — Canvas 2D renderer ----------
@@ -253,33 +250,36 @@ function _initMadison(w, h, isDark) {
   // sorted by distance from center so the closest-to-center buildings draw
   // last (in front of further ones). A few buildings overlap slightly.
   const cx = w * 0.5;
-  const groundY = h * 0.92;
+  // Wide lake takes the bottom ~22% of the frame (reference photo proportion).
+  const groundY = h * 0.78;
 
-  // Capitol — distinctive: tall central tower, large dome on top.
+  // Capitol — tall central tower with hemisphere dome + cupola + spire.
+  // Reference photo: dome is the tallest thing by far, with two side wings.
   const capitol = {
     x: cx,
-    width: Math.max(80, w * 0.16),
-    height: h * 0.42,
-    domeRadius: Math.max(28, w * 0.06),
+    width: Math.max(72, w * 0.13),
+    height: h * 0.32, // tower height (the dome stack sits above this)
+    domeRadius: Math.max(32, w * 0.072),
     isCapitol: true,
   };
 
-  // Surrounding skyline. ~14 rectangular buildings, never as tall as the
-  // Capitol. Closer to centre = slightly taller; flanks fall off.
+  // Surrounding skyline. ~20 rectangular buildings, never as tall as the
+  // Capitol dome. Closer to centre = slightly taller; flanks fall off.
   const buildings = [];
-  const slotCount = 14;
+  const slotCount = 20;
   for (let i = 0; i < slotCount; i++) {
     const side = i < slotCount / 2 ? -1 : 1; // left or right of capitol
     const idxInSide = side === -1 ? i : (i - slotCount / 2);
     // Distance from capitol in slot units (1, 2, 3, ...).
     const slot = idxInSide + 1;
     const distFrac = slot / (slotCount / 2);
-    const distFromCap = capitol.width * 0.55 + slot * (w * 0.055);
+    const distFromCap = capitol.width * 0.7 + slot * (w * 0.048);
     const x = cx + side * distFromCap + _rnd(-6, 6);
-    // Tallest neighbours roughly 65% of capitol; outer falls off to ~40%.
-    const tallness = (1 - distFrac * 0.55) * (0.55 + Math.random() * 0.15);
+    // Match the reference: neighbours roughly 55%-85% of capitol height,
+    // outer ones taper down to ~30%. Slightly random for visual variety.
+    const tallness = (1 - distFrac * 0.55) * (0.75 + Math.random() * 0.15);
     const height = capitol.height * tallness;
-    const width = _rnd(38, 70);
+    const width = _rnd(34, 64);
     // Window grid — used at night for lit-windows simulation. Each cell
     // tracks lit + next toggle time.
     const cols = Math.max(2, Math.floor(width / 13));
@@ -954,66 +954,50 @@ function _drawMadison(ctx, isDark, state, t, py, w, h) {
     ctx.fillStyle = cg; ctx.fillRect(0, 0, w, h);
   }
 
-  // ── distant lake band + ground ──
+  // ── ground (city block ribbon) + large lake band ──
+  // Lake takes the bottom 25 % of the frame and reflects the skyline.
   const groundY = state.groundY + py * 0.55;
-  // Lake (a few px above ground, with subtle reflection tint)
-  const lakeY = groundY - 6;
-  ctx.fillStyle = isDark ? 'rgba(2,8,28,0.85)' : 'rgba(108,158,196,0.55)';
-  ctx.fillRect(0, lakeY, w, 8);
-  // Ground silhouette under buildings.
-  ctx.fillStyle = isDark ? '#02030a' : '#243846';
-  ctx.fillRect(0, groundY, w, h - groundY);
+  const lakeBottom = h;
+  const lakeHeight = lakeBottom - groundY;
+  // Lake base gradient
+  const lakeGrad = ctx.createLinearGradient(0, groundY, 0, lakeBottom);
+  if (isDark) {
+    lakeGrad.addColorStop(0,   '#020414');
+    lakeGrad.addColorStop(0.7, '#01030c');
+    lakeGrad.addColorStop(1,   '#000206');
+  } else {
+    lakeGrad.addColorStop(0,   '#6a9bbf');
+    lakeGrad.addColorStop(0.6, '#4f7c9c');
+    lakeGrad.addColorStop(1,   '#3a5e7a');
+  }
+  ctx.fillStyle = lakeGrad;
+  ctx.fillRect(0, groundY, w, lakeHeight);
+  // Thin water-line highlight where buildings meet the lake.
+  ctx.fillStyle = isDark ? 'rgba(255,220,150,0.12)' : 'rgba(255,255,255,0.45)';
+  ctx.fillRect(0, groundY, w, 1.5);
 
-  // ── helper to draw a single window (used by buildings + capitol) ──
+  // We collect every lit window (and the dome glow) so we can draw vertical
+  // reflection streaks in the lake afterwards in one pass.
+  const reflections = [];
+
+  // ── helper to draw a single building ──
   const drawBuilding = (b) => {
     const baseY = groundY;
     const topY = baseY - b.height;
     const left = b.x - b.width / 2;
     // Body
     ctx.fillStyle = isDark
-      ? (b.isCapitol ? '#0a1224' : '#070b16')
-      : (b.isCapitol ? '#d0d6dc' : '#2f4452');
+      ? (b.isCapitol ? '#1a1a26' : '#0c0d18')
+      : (b.isCapitol ? '#e6ddc2' : '#576f7e');
     ctx.fillRect(left, topY, b.width, b.height);
-    // Subtle highlight strip on left edge for depth
-    ctx.fillStyle = isDark ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.10)';
+    // Soft left-edge highlight for depth.
+    ctx.fillStyle = isDark ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.12)';
     ctx.fillRect(left, topY, 1.5, b.height);
+    // Right-edge shadow.
+    ctx.fillStyle = isDark ? 'rgba(0,0,0,0.35)' : 'rgba(0,0,0,0.18)';
+    ctx.fillRect(left + b.width - 1.5, topY, 1.5, b.height);
 
-    // Capitol dome
-    if (b.isCapitol) {
-      const domeBaseY = topY;
-      const domeR = b.domeRadius;
-      // Dome base "drum"
-      ctx.fillStyle = isDark ? '#0a1224' : '#d0d6dc';
-      ctx.fillRect(b.x - domeR * 0.85, domeBaseY - domeR * 0.35, domeR * 1.7, domeR * 0.35);
-      // Dome hemisphere
-      ctx.beginPath();
-      ctx.arc(b.x, domeBaseY - domeR * 0.35, domeR, Math.PI, 0);
-      ctx.closePath();
-      ctx.fillStyle = isDark ? '#0d162a' : '#e0e6ec';
-      ctx.fill();
-      // Lantern/cupola on top
-      ctx.fillStyle = isDark ? '#0a1224' : '#c0c8cf';
-      ctx.fillRect(b.x - 3, domeBaseY - domeR * 1.5, 6, domeR * 0.45);
-      // Spire
-      ctx.beginPath();
-      ctx.moveTo(b.x, domeBaseY - domeR * 1.85);
-      ctx.lineTo(b.x - 2, domeBaseY - domeR * 1.5);
-      ctx.lineTo(b.x + 2, domeBaseY - domeR * 1.5);
-      ctx.closePath();
-      ctx.fillStyle = isDark ? '#1a2440' : '#8a949e';
-      ctx.fill();
-      // Glow at night so the Capitol reads as the focal point
-      if (isDark) {
-        const cap = ctx.createRadialGradient(b.x, domeBaseY - domeR * 0.6, 0, b.x, domeBaseY - domeR * 0.6, domeR * 2.6);
-        cap.addColorStop(0,    'rgba(255,228,148,0.35)');
-        cap.addColorStop(0.5,  'rgba(255,200,90,0.08)');
-        cap.addColorStop(1,    'rgba(255,200,90,0)');
-        ctx.fillStyle = cap;
-        ctx.fillRect(b.x - domeR * 2.6, domeBaseY - domeR * 3.2, domeR * 5.2, domeR * 5.2);
-      }
-    }
-
-    // Windows. At night they glow; during the day they're flat dark panes.
+    // Windows.
     const cols = b.cols, rows = b.rows;
     const padX = b.width * 0.10;
     const padY = b.height * 0.06;
@@ -1030,27 +1014,251 @@ function _drawMadison(ctx, isDark, state, t, py, w, h) {
         const wy = topY + padY + r * cellH + (cellH - wH) / 2;
         if (isDark) {
           if (win.on) {
-            // Lit window — warm yellow with slight flicker
             const fl = 0.85 + 0.15 * Math.sin(t * 0.08 + (idx % 7));
-            ctx.fillStyle = `rgba(255,220,120,${fl})`;
+            // Warm yellow with a slight blue/red occasional tint for variety.
+            const tint = idx % 17 === 0 ? 'rgba(255,80,60,' : idx % 13 === 0 ? 'rgba(200,220,255,' : 'rgba(255,220,120,';
+            ctx.fillStyle = `${tint}${fl})`;
             ctx.fillRect(wx, wy, wW, wH);
+            // Queue a reflection streak for this lit window.
+            reflections.push({
+              x: wx + wW / 2,
+              color: tint,
+              alpha: 0.55 * fl,
+              width: wW * 0.7,
+            });
           } else {
-            ctx.fillStyle = 'rgba(10,16,28,0.9)';
+            ctx.fillStyle = 'rgba(10,12,22,0.85)';
             ctx.fillRect(wx, wy, wW, wH);
           }
         } else {
-          // Day: dark blue-ish panes
-          ctx.fillStyle = b.isCapitol ? 'rgba(80,100,130,0.55)' : 'rgba(20,40,60,0.6)';
+          ctx.fillStyle = b.isCapitol ? 'rgba(120,110,80,0.55)' : 'rgba(30,50,75,0.55)';
           ctx.fillRect(wx, wy, wW, wH);
         }
       }
     }
   };
 
-  // Buildings (back to front)
+  // ── Capitol: drawn separately because its silhouette is much richer ──
+  const drawCapitol = () => {
+    const cap = state.capitol;
+    const baseY = groundY;
+    const mainTop = baseY - cap.height;
+    const mainLeft = cap.x - cap.width / 2;
+
+    // Two stepped side wings flanking the central tower.
+    const wingW = cap.width * 0.55;
+    const wingH = cap.height * 0.62;
+    const wingTop = baseY - wingH;
+    ctx.fillStyle = isDark ? '#15151f' : '#dccfb0';
+    ctx.fillRect(mainLeft - wingW + 4, wingTop, wingW, wingH);
+    ctx.fillRect(mainLeft + cap.width - 4, wingTop, wingW, wingH);
+    // Highlight + shadow on wings
+    ctx.fillStyle = isDark ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.10)';
+    ctx.fillRect(mainLeft - wingW + 4, wingTop, 1.2, wingH);
+    ctx.fillRect(mainLeft + cap.width - 4, wingTop, 1.2, wingH);
+
+    // Wing windows (sparser; use a simple grid).
+    const drawWingWindows = (wLeft, wTop) => {
+      const colsW = Math.max(3, Math.floor(wingW / 12));
+      const rowsW = Math.max(2, Math.floor(wingH / 16));
+      const padX = wingW * 0.10, padY = wingH * 0.08;
+      const cellW = (wingW - padX * 2) / colsW;
+      const cellH = (wingH - padY * 2) / rowsW;
+      const wW = Math.min(cellW * 0.55, 8);
+      const wH = Math.min(cellH * 0.5, 9);
+      let n = 0;
+      for (let r = 0; r < rowsW; r++) {
+        for (let c = 0; c < colsW; c++) {
+          n++;
+          const wx = wLeft + padX + c * cellW + (cellW - wW) / 2;
+          const wy = wTop + padY + r * cellH + (cellH - wH) / 2;
+          if (isDark) {
+            const on = (cap.windows[n % cap.windows.length] || {}).on;
+            if (on) {
+              const fl = 0.85 + 0.15 * Math.sin(t * 0.08 + n);
+              ctx.fillStyle = `rgba(255,220,120,${fl})`;
+              ctx.fillRect(wx, wy, wW, wH);
+              reflections.push({ x: wx + wW/2, color: 'rgba(255,220,120,', alpha: 0.45 * fl, width: wW*0.6 });
+            } else {
+              ctx.fillStyle = 'rgba(10,12,22,0.85)';
+              ctx.fillRect(wx, wy, wW, wH);
+            }
+          } else {
+            ctx.fillStyle = 'rgba(110,100,70,0.55)';
+            ctx.fillRect(wx, wy, wW, wH);
+          }
+        }
+      }
+    };
+    drawWingWindows(mainLeft - wingW + 4, wingTop);
+    drawWingWindows(mainLeft + cap.width - 4, wingTop);
+
+    // Central tower (the part the dome sits on).
+    ctx.fillStyle = isDark ? '#1c1c2a' : '#ece1c5';
+    ctx.fillRect(mainLeft, mainTop, cap.width, cap.height);
+    ctx.fillStyle = isDark ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.14)';
+    ctx.fillRect(mainLeft, mainTop, 1.5, cap.height);
+
+    // Central tower windows.
+    {
+      const cols = cap.cols, rows = cap.rows;
+      const padX = cap.width * 0.10;
+      const padY = cap.height * 0.05;
+      const cellW = (cap.width - padX * 2) / cols;
+      const cellH = (cap.height - padY * 2) / rows;
+      const wW = Math.min(cellW * 0.55, 10);
+      const wH = Math.min(cellH * 0.55, 12);
+      let idx = 0;
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          const win = cap.windows[idx++];
+          if (!win) continue;
+          const wx = mainLeft + padX + c * cellW + (cellW - wW) / 2;
+          const wy = mainTop + padY + r * cellH + (cellH - wH) / 2;
+          if (isDark) {
+            if (win.on) {
+              const fl = 0.85 + 0.15 * Math.sin(t * 0.08 + idx);
+              ctx.fillStyle = `rgba(255,228,140,${fl})`;
+              ctx.fillRect(wx, wy, wW, wH);
+              reflections.push({ x: wx + wW/2, color: 'rgba(255,228,140,', alpha: 0.55 * fl, width: wW*0.7 });
+            } else {
+              ctx.fillStyle = 'rgba(10,12,22,0.85)';
+              ctx.fillRect(wx, wy, wW, wH);
+            }
+          } else {
+            ctx.fillStyle = 'rgba(120,110,80,0.55)';
+            ctx.fillRect(wx, wy, wW, wH);
+          }
+        }
+      }
+    }
+
+    // ── Dome stack ──
+    const domeR = cap.domeRadius;
+    const drumW = domeR * 2.1;
+    const drumH = domeR * 0.55;
+    const drumTopY = mainTop - drumH;
+    // Drum (cylindrical base)
+    ctx.fillStyle = isDark ? '#22222e' : '#f1ead4';
+    ctx.fillRect(cap.x - drumW / 2, drumTopY, drumW, drumH);
+    // Drum column hints (vertical lines for columns)
+    ctx.strokeStyle = isDark ? 'rgba(0,0,0,0.35)' : 'rgba(80,70,40,0.35)';
+    ctx.lineWidth = 1;
+    for (let i = 1; i < 8; i++) {
+      const cx = cap.x - drumW / 2 + (drumW / 8) * i;
+      ctx.beginPath(); ctx.moveTo(cx, drumTopY + 2); ctx.lineTo(cx, drumTopY + drumH - 2); ctx.stroke();
+    }
+    // Dome — hemisphere
+    ctx.beginPath();
+    ctx.arc(cap.x, drumTopY, domeR, Math.PI, 0);
+    ctx.closePath();
+    ctx.fillStyle = isDark ? '#2a2a3a' : '#f6efd7';
+    ctx.fill();
+    // Dome ribs
+    ctx.strokeStyle = isDark ? 'rgba(0,0,0,0.30)' : 'rgba(120,100,50,0.35)';
+    ctx.lineWidth = 0.8;
+    for (let i = 1; i < 5; i++) {
+      const ang = Math.PI + (Math.PI / 5) * i;
+      ctx.beginPath();
+      ctx.moveTo(cap.x, drumTopY);
+      ctx.lineTo(cap.x + Math.cos(ang) * domeR, drumTopY + Math.sin(ang) * domeR);
+      ctx.stroke();
+    }
+    // Cupola — small drum on top
+    const cupolaW = domeR * 0.55;
+    const cupolaH = domeR * 0.45;
+    const cupolaTopY = drumTopY - domeR - cupolaH;
+    ctx.fillStyle = isDark ? '#2a2a3a' : '#f6efd7';
+    ctx.fillRect(cap.x - cupolaW / 2, cupolaTopY, cupolaW, cupolaH);
+    // Spire
+    const spireH = domeR * 0.95;
+    ctx.beginPath();
+    ctx.moveTo(cap.x, cupolaTopY - spireH);
+    ctx.lineTo(cap.x - cupolaW * 0.18, cupolaTopY);
+    ctx.lineTo(cap.x + cupolaW * 0.18, cupolaTopY);
+    ctx.closePath();
+    ctx.fillStyle = isDark ? '#2a2a3a' : '#c8b870';
+    ctx.fill();
+    // Golden statue silhouette ("Wisconsin") at the very top.
+    ctx.beginPath();
+    ctx.arc(cap.x, cupolaTopY - spireH - 3, 2.8, 0, Math.PI * 2);
+    ctx.fillStyle = isDark ? '#f5b400' : '#c69214';
+    ctx.fill();
+    // Statue arms
+    ctx.beginPath();
+    ctx.moveTo(cap.x - 4, cupolaTopY - spireH - 1);
+    ctx.lineTo(cap.x + 4, cupolaTopY - spireH - 1);
+    ctx.strokeStyle = isDark ? '#f5b400' : '#a07b1c';
+    ctx.lineWidth = 1.4;
+    ctx.stroke();
+
+    // Night halo + uplight beam — the Capitol is floodlit in real life.
+    if (isDark) {
+      // Diffuse halo around the whole dome
+      const haloR = domeR * 3.4;
+      const halo = ctx.createRadialGradient(cap.x, drumTopY - domeR * 0.3, 0, cap.x, drumTopY - domeR * 0.3, haloR);
+      halo.addColorStop(0,    'rgba(255,228,148,0.42)');
+      halo.addColorStop(0.45, 'rgba(255,205,100,0.16)');
+      halo.addColorStop(1,    'rgba(255,205,100,0)');
+      ctx.fillStyle = halo;
+      ctx.fillRect(cap.x - haloR, drumTopY - haloR, haloR * 2, haloR * 2);
+      // Soft uplight beam from the dome going up
+      const beam = ctx.createLinearGradient(0, drumTopY - domeR * 6, 0, drumTopY);
+      beam.addColorStop(0,    'rgba(255,228,148,0)');
+      beam.addColorStop(0.7,  'rgba(255,228,148,0.05)');
+      beam.addColorStop(1,    'rgba(255,228,148,0.22)');
+      ctx.fillStyle = beam;
+      ctx.fillRect(cap.x - domeR * 1.3, drumTopY - domeR * 6, domeR * 2.6, domeR * 6);
+      // Dome rim glow (front-lit)
+      const rim = ctx.createRadialGradient(cap.x, drumTopY + 4, domeR * 0.6, cap.x, drumTopY + 4, domeR * 1.05);
+      rim.addColorStop(0,   'rgba(255,228,148,0)');
+      rim.addColorStop(0.9, 'rgba(255,228,148,0.32)');
+      rim.addColorStop(1,   'rgba(255,228,148,0)');
+      ctx.fillStyle = rim;
+      ctx.beginPath();
+      ctx.arc(cap.x, drumTopY, domeR * 1.05, Math.PI, 0);
+      ctx.closePath();
+      ctx.fill();
+      // Lit dome surface tint
+      ctx.beginPath();
+      ctx.arc(cap.x, drumTopY, domeR, Math.PI, 0);
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(255,238,180,0.20)';
+      ctx.fill();
+      // Capitol reflection streak (much bigger)
+      reflections.push({ x: cap.x - domeR*0.3, color: 'rgba(255,228,148,', alpha: 0.55, width: domeR*0.6 });
+      reflections.push({ x: cap.x,            color: 'rgba(255,228,148,', alpha: 0.75, width: domeR*0.4 });
+      reflections.push({ x: cap.x + domeR*0.3, color: 'rgba(255,228,148,', alpha: 0.55, width: domeR*0.6 });
+    }
+  };
+
+  // Buildings (back to front), then Capitol on top.
   for (const b of state.buildings) drawBuilding(b);
-  // Capitol on top of everything else (foreground centerpiece)
-  drawBuilding(state.capitol);
+  drawCapitol();
+
+  // ── Lake reflections — one vertical streak per lit window/dome. ──
+  // Each streak is a thin vertical gradient fading down through the lake,
+  // with a slight time-based horizontal wobble (water ripples).
+  for (const r of reflections) {
+    const sway = Math.sin(t * 0.04 + r.x * 0.013) * 1.6;
+    const rx = r.x + sway;
+    const grad = ctx.createLinearGradient(rx, groundY, rx, lakeBottom);
+    grad.addColorStop(0,    `${r.color}${r.alpha})`);
+    grad.addColorStop(0.45, `${r.color}${r.alpha * 0.55})`);
+    grad.addColorStop(1,    `${r.color}0)`);
+    ctx.fillStyle = grad;
+    ctx.fillRect(rx - r.width / 2, groundY, r.width, lakeHeight);
+  }
+  // Horizontal ripple lines breaking the reflections.
+  if (isDark) {
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  } else {
+    ctx.fillStyle = 'rgba(255,255,255,0.20)';
+  }
+  for (let yy = groundY + 10; yy < lakeBottom; yy += 14) {
+    const wob = Math.sin(t * 0.05 + yy * 0.07) * 2;
+    ctx.fillRect(0, yy + wob, w, 1);
+  }
 
   // ── window toggles (night only) — each window has its own countdown ──
   if (isDark) {
@@ -2594,11 +2802,6 @@ function AppProvider({ children }) {
     storage.set(KEYS.contributorMode, !!v);
     setContributorModeState(!!v);
   }, []);
-  const [smoothAnim, setSmoothAnimState] = useState(() => !!storage.get(KEYS.smoothAnim, false));
-  const setSmoothAnim = useCallback((v) => {
-    storage.set(KEYS.smoothAnim, !!v);
-    setSmoothAnimState(!!v);
-  }, []);
   const [tropicalBg, setTropicalBgState] = useState(() => !!storage.get(KEYS.tropicalBg, false));
   const setTropicalBg = useCallback((v) => {
     storage.set(KEYS.tropicalBg, !!v);
@@ -2667,11 +2870,6 @@ function AppProvider({ children }) {
     }
     return stopDynamicBg;
   }, [tropicalBg, palette, mode]);
-
-  // Smooth animations: set data-smooth attribute on <html> so CSS keyframes apply.
-  useEffect(() => {
-    document.documentElement.setAttribute('data-smooth', smoothAnim ? 'true' : 'false');
-  }, [smoothAnim]);
 
   // One-time cleanup: drop the temporary drag-position key now that the bird
   // is anchored to the speech bubble's bottom.
@@ -2936,7 +3134,6 @@ function AppProvider({ children }) {
       autoDownloadAll, setAutoDownloadAll,
       contributorMode, setContributorMode,
       tropicalBg, setTropicalBg,
-      smoothAnim, setSmoothAnim,
     }),
     [apiKey, setApiKey, files, setFiles, extractions, setExtraction, questions, setQuestionsFor,
      attempts, addAttempt, clearAttempts, staticBank, useStaticBank, readOnly,
@@ -2947,8 +3144,7 @@ function AppProvider({ children }) {
      autoDownloadChapters, setAutoDownloadChapters,
      autoDownloadAll, setAutoDownloadAll,
      contributorMode, setContributorMode,
-     tropicalBg, setTropicalBg,
-     smoothAnim, setSmoothAnim]
+     tropicalBg, setTropicalBg]
   );
   return <AppCtx.Provider value={value}>{children}</AppCtx.Provider>;
 }
@@ -6729,7 +6925,7 @@ function StatsView() {
 
 // ---------- settings ----------
 function SettingsPanel({ onClose }) {
-  const { palette, mode, setPalette, setMode, apiKey, setApiKey, client, session, pendingSync, syncBusy, syncError, flushSync, reauditEnabled, setReauditEnabled, volume, setVolume, autoDownloadChapters, setAutoDownloadChapters, autoDownloadAll, setAutoDownloadAll, contributorMode, setContributorMode, tropicalBg, setTropicalBg, smoothAnim, setSmoothAnim, files } = useApp();
+  const { palette, mode, setPalette, setMode, apiKey, setApiKey, client, session, pendingSync, syncBusy, syncError, flushSync, reauditEnabled, setReauditEnabled, volume, setVolume, autoDownloadChapters, setAutoDownloadChapters, autoDownloadAll, setAutoDownloadAll, contributorMode, setContributorMode, tropicalBg, setTropicalBg, files } = useApp();
   const hasDownloadedChapters = files.some((f) => f.chapter_id);
   const [keyVal, setKeyVal] = useState(apiKey || '');
   const [keyShow, setKeyShow] = useState(false);
@@ -6819,13 +7015,6 @@ function SettingsPanel({ onClose }) {
               </div>
             </div>
             <input type="checkbox" checked={tropicalBg} onChange={(e) => setTropicalBg(e.target.checked)} className="w-4 h-4 shrink-0" />
-          </label>
-          <label className="flex items-center justify-between gap-3 bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg px-3 py-2.5 cursor-pointer">
-            <div className="text-sm min-w-0">
-              <div className="text-[var(--text)]">✨ Smooth animations</div>
-              <div className="text-[11px] text-[var(--text-faint)] mt-0.5">Fade and slide transitions when switching tabs and advancing questions.</div>
-            </div>
-            <input type="checkbox" checked={smoothAnim} onChange={(e) => setSmoothAnim(e.target.checked)} className="w-4 h-4 shrink-0" />
           </label>
         </div>
       </div>

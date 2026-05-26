@@ -332,6 +332,80 @@
     --warning-text-strong: #fbbf24;
   }
 
+  :root[data-theme="madison"] {
+    --bg: #fff8e1;
+    --bg-card: rgba(255,255,255,0.86);
+    --bg-card-strong: rgba(255,255,255,0.95);
+    --bg-card-soft: rgba(255,255,255,0.6);
+    --bg-elev: rgba(255,243,200,0.85);
+    --bg-elev-soft: rgba(255,249,224,0.65);
+    --bg-hover: rgba(253,224,138,0.6);
+    --bg-hover-soft: rgba(255,243,200,0.5);
+    --border: #d6b34a;
+    --border-soft: #ecd58a;
+    --border-strong: #a07b1c;
+    --text: #2c1f00;
+    --text-strong: #1a1300;
+    --text-muted: #6b4a00;
+    --text-faint: #8a6400;
+    --text-fainter: #b89240;
+    --accent: #c69214;
+    --accent-hover: #a17307;
+    --accent-text: #7a5500;
+    --accent-border: #d99700;
+    --accent-soft: rgba(217,151,0,0.16);
+    --accent-2: #b41010;
+    --accent-2-text: #8c0a0a;
+    --success-bg: rgba(209,250,229,0.82);
+    --success-bg-strong: rgba(167,243,208,0.9);
+    --success-text: #065f46;
+    --success-border: #10b981;
+    --danger-bg: rgba(254,226,226,0.82);
+    --danger-bg-strong: rgba(254,202,202,0.9);
+    --danger-text: #991b1b;
+    --danger-border: #dc2626;
+    --warning-bg: rgba(254,243,199,0.82);
+    --warning-text: #92400e;
+    --warning-text-strong: #b45309;
+  }
+
+  :root[data-theme="darkmadison"] {
+    --bg: #0a0a18;
+    --bg-card: rgba(18,18,32,0.84);
+    --bg-card-strong: rgba(18,18,32,0.94);
+    --bg-card-soft: rgba(18,18,32,0.55);
+    --bg-elev: rgba(10,10,22,0.92);
+    --bg-elev-soft: rgba(14,14,28,0.65);
+    --bg-hover: rgba(40,32,8,0.72);
+    --bg-hover-soft: rgba(28,22,4,0.5);
+    --border: #6b5418;
+    --border-soft: #3a2e0c;
+    --border-strong: #c69214;
+    --text: #f2e6b5;
+    --text-strong: #fff4cc;
+    --text-muted: #c9a850;
+    --text-faint: #8a7028;
+    --text-fainter: #5a4818;
+    --accent: #f5b400;
+    --accent-hover: #d99700;
+    --accent-text: #fbbf24;
+    --accent-border: #f5b400;
+    --accent-soft: rgba(245,180,0,0.18);
+    --accent-2: #ff7a45;
+    --accent-2-text: #fb923c;
+    --success-bg: rgba(6,78,59,0.45);
+    --success-bg-strong: rgba(6,95,70,0.35);
+    --success-text: #34d399;
+    --success-border: #10b981;
+    --danger-bg: rgba(127,29,29,0.45);
+    --danger-bg-strong: rgba(127,29,29,0.35);
+    --danger-text: #fca5a5;
+    --danger-border: #ef4444;
+    --warning-bg: rgba(120,53,15,0.45);
+    --warning-text: #fcd34d;
+    --warning-text-strong: #fbbf24;
+  }
+
   :root[data-theme="darkgreen"] {
     --bg: #0e1710;
     --bg-card: rgb(20 33 23 / 0.7);
@@ -378,33 +452,10 @@
   /* Dynamic background is applied entirely via JS (see app.js tropicalBg/getDynamicBg)
      so it works correctly for all colour palettes in both light and dark mode. */
 
-  /* ── Animations ───────────────────────────────────────────────────────── */
-  @keyframes mcatFadeUp {
-    from { opacity: 0; transform: translateY(12px); }
-    to   { opacity: 1; transform: translateY(0); }
-  }
-  @keyframes mcatFadeIn {
-    from { opacity: 0; }
-    to   { opacity: 1; }
-  }
-
-  /* Fade-up for button-click tab switches — only when the smooth setting is on.
-     Swipe-driven switches set swipeJustHappened, which omits the .tab-content
-     class on first render so this animation does not double up with the
-     carousel motion. */
-  html[data-smooth="true"] .tab-content {
-    animation: mcatFadeUp 0.22s ease both;
-  }
-  html[data-smooth="true"] .question-card {
-    animation: mcatFadeUp 0.18s ease both;
-  }
-  html[data-smooth="true"] .answer-reveal {
-    animation: mcatFadeIn 0.15s ease both;
-  }
 </style>
 </head>
 <body>
 <div id="root"></div>
-<script type="text/babel" data-presets="react" src="app.js?v=84"></script>
+<script type="text/babel" data-presets="react" src="app.js?v=85"></script>
 </body>
 </html>
