@@ -8037,6 +8037,12 @@ function Shell() {
   //                (top/bottom:0 + overflow:hidden) so they cannot extend
   //                the body's scroll height past the current tab's content.
   // - other tabs:  display:none (mounted but invisible).
+  // The clip box matches the current tab's height (top:0; bottom:0). The
+  // adjacent's content is laid out as a single-column grid anchored to the
+  // bottom of that box (alignContent:end), so if the current tab is deeper
+  // than the adjacent, the adjacent's content sits at the bottom of the
+  // viewport — matching where the user is scrolled — instead of leaving an
+  // empty band that snaps closed after the swipe commits.
   const adjacentStyle = (side) => ({
     position: 'absolute',
     top: 0,
@@ -8044,6 +8050,9 @@ function Shell() {
     [side === 'right' ? 'left' : 'right']: `calc(100% + ${SWIPE_GAP_PX}px)`,
     width: '100%',
     overflow: 'hidden',
+    display: 'grid',
+    gridAutoRows: 'max-content',
+    alignContent: 'end',
   });
   const tabWrap = (k, baseClass) => {
     const isCurrent = tab === k;
