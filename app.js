@@ -1152,18 +1152,6 @@ function _drawTropical(ctx, isDark, state, t, py, w, h) {
   ctx.fillStyle = `${foamColor}0.85)`;
   ctx.fill();
   ctx.restore();
-  // Bubbly speckles trailing behind the foam — drift leftward.
-  ctx.fillStyle = `${foamColor}0.65)`;
-  for (let i = 0; i < 22; i++) {
-    // Negative time term so bubbles slowly drift to the left.
-    let fx = (i * 71 - (t * 1.4 | 0)) % w;
-    if (fx < 0) fx += w;
-    const fy = shoreline + 4 + ((i * 31) % 8);
-    ctx.beginPath();
-    ctx.arc(fx, fy, 1.7, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
   // ── sand ──
   const sandGrad = ctx.createLinearGradient(0, shoreline + wetBand, 0, h);
   if (isDark) {
