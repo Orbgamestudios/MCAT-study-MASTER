@@ -91,7 +91,23 @@ function _initCold(w, h, isDark) {
 
 function _initWarm(w, h) {
   const palette = ['#d4380a','#e8720c','#f0a818','#c83608','#8b2802','#f06010','#e04808','#b83206'];
+  // Trees scattered along the ground, sorted back-to-front by scale.
+  const trees = Array.from({ length: 7 }, () => {
+    const scale = _rnd(0.55, 1.35);
+    return {
+      x: _rnd(-w * 0.05, w * 1.05),
+      scale,
+      // crown radius scaled per tree
+      cr: 38 * scale,
+      // trunk height
+      th: 70 * scale,
+      // foliage hue index (used for slight crown tint variation)
+      hue: Math.floor(_rnd(0, palette.length)),
+      sway: _pi2(),
+    };
+  }).sort((a, b) => a.scale - b.scale);
   return {
+    trees,
     leaves: Array.from({ length: 58 }, () => ({
       x: _rnd(-30, w + 30), y: _rnd(-h * 0.3, h),
       sz: _rnd(5, 13),
@@ -107,7 +123,28 @@ function _initWarm(w, h) {
 }
 
 function _initDuo(w, h) {
+  // Jungle palms — back to front.
+  const trees = Array.from({ length: 6 }, () => {
+    const scale = _rnd(0.5, 1.3);
+    return {
+      x: _rnd(-w * 0.05, w * 1.05),
+      scale,
+      trunkH: 90 * scale,
+      frondLen: 50 * scale,
+      lean: _rnd(-0.15, 0.15),
+      sway: _pi2(),
+    };
+  }).sort((a, b) => a.scale - b.scale);
   return {
+    trees,
+    birds: Array.from({ length: 5 }, () => ({
+      x: _rnd(0, w),
+      y: _rnd(h * 0.05, h * 0.38),
+      sp: _rnd(0.2, 0.55),
+      sz: _rnd(4, 9),
+      ph: _pi2(),
+      fp: _rnd(0.13, 0.22),
+    })),
     rays: Array.from({ length: 7 }, (_, i) => ({
       x: _rnd(w * 0.08, w * 0.92),
       wid: _rnd(18, 60),
@@ -146,6 +183,24 @@ function _initTropical(w, h, isDark) {
       sp: _rnd(0.04, 0.12),
       sz: _rnd(0.9, 2.6),
     })),
+    // Day: birds drifting across the sky.
+    birds: isDark ? [] : Array.from({ length: 6 }, () => ({
+      x: _rnd(0, w),
+      y: _rnd(h * 0.08, h * 0.42),
+      sp: _rnd(0.25, 0.6),
+      sz: _rnd(5, 10),
+      ph: _pi2(),
+      fp: _rnd(0.12, 0.22), // wing flap speed
+    })),
+    // Night: stars overhead.
+    stars: isDark ? Array.from({ length: 110 }, () => ({
+      x: _rnd(0, w), y: _rnd(0, h * 0.56),
+      r: _rnd(0.4, 1.4),
+      op: _rnd(0.4, 0.95),
+      tp: _pi2(),
+    })) : [],
+    // Night: shooting star state (one at a time, spawned periodically).
+    shooter: isDark ? { active: false, x: 0, y: 0, vx: 0, vy: 0, life: 0, max: 0, nextSpawn: _rnd(80, 260) } : null,
   };
 }
 
@@ -272,6 +327,42 @@ function _drawWarm(ctx, isDark, state, t, py, w, h) {
   glow.addColorStop(1,   `rgba(${gcol[0]},${gcol[1]},${gcol[2]},0)`);
   ctx.fillStyle = glow; ctx.fillRect(0, 0, w, h);
 
+  // ── fall trees ──
+  const groundY = h * 0.93;
+  for (const tr of state.trees) {
+    const sway = Math.sin(t * 0.012 + tr.sway) * 1.6;
+    const baseX = tr.x + sway * 0.4;
+    const baseY = groundY + py * 0.45;
+    const topY = baseY - tr.th;
+    // trunk
+    ctx.fillStyle = isDark ? '#180a02' : '#3a1d08';
+    ctx.beginPath();
+    ctx.moveTo(baseX - 3 * tr.scale, baseY);
+    ctx.lineTo(baseX - 2.2 * tr.scale, topY + tr.cr * 0.4);
+    ctx.lineTo(baseX + 2.2 * tr.scale, topY + tr.cr * 0.4);
+    ctx.lineTo(baseX + 3 * tr.scale, baseY);
+    ctx.closePath();
+    ctx.fill();
+    // crown — overlapping blobs in fall colours
+    const crownColors = isDark
+      ? ['rgba(82,30,8,0.78)','rgba(64,20,4,0.72)','rgba(54,16,2,0.68)']
+      : ['rgba(232,114,12,0.88)','rgba(212,56,10,0.82)','rgba(240,168,24,0.78)'];
+    for (let i = 0; i < 5; i++) {
+      const ang = (i / 5) * Math.PI * 2 + tr.sway;
+      const ox = Math.cos(ang) * tr.cr * 0.45;
+      const oy = Math.sin(ang) * tr.cr * 0.35 - tr.cr * 0.1;
+      ctx.fillStyle = crownColors[i % crownColors.length];
+      ctx.beginPath();
+      ctx.arc(baseX + ox + sway * 0.6, topY + oy, tr.cr * 0.65, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // central crown blob
+    ctx.fillStyle = crownColors[0];
+    ctx.beginPath();
+    ctx.arc(baseX + sway * 0.6, topY, tr.cr * 0.8, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
   // ── falling leaves ──
   for (const lf of state.leaves) {
     lf.y += lf.vy;
@@ -320,6 +411,57 @@ function _drawDuo(ctx, isDark, state, t, py, w, h) {
     sky.addColorStop(1,'#031508');
   }
   ctx.fillStyle = sky; ctx.fillRect(0, 0, w, h);
+
+  // ── birds (jungle, both day and night) ──
+  ctx.strokeStyle = isDark ? 'rgba(8,14,8,0.7)' : 'rgba(10,28,8,0.6)';
+  ctx.lineWidth = 1.4;
+  ctx.lineCap = 'round';
+  for (const b of state.birds) {
+    b.x += b.sp;
+    if (b.x > w + 30) { b.x = -30; b.y = _rnd(h * 0.05, h * 0.38); }
+    const flap = Math.sin(t * b.fp + b.ph);
+    const wingDip = flap * b.sz * 0.42;
+    const by = b.y + py * 0.18;
+    ctx.beginPath();
+    ctx.moveTo(b.x - b.sz, by + wingDip * 0.3);
+    ctx.quadraticCurveTo(b.x - b.sz * 0.5, by - b.sz * 0.55 - wingDip, b.x, by);
+    ctx.quadraticCurveTo(b.x + b.sz * 0.5, by - b.sz * 0.55 - wingDip, b.x + b.sz, by + wingDip * 0.3);
+    ctx.stroke();
+  }
+
+  // ── jungle palm trees ──
+  const groundYJ = h * 0.94;
+  for (const tr of state.trees) {
+    const sway = Math.sin(t * 0.013 + tr.sway) * 2;
+    const baseX = tr.x;
+    const baseY = groundYJ + py * 0.5;
+    const topX = baseX + tr.trunkH * tr.lean + sway;
+    const topY = baseY - tr.trunkH;
+    // curved palm trunk
+    ctx.strokeStyle = isDark ? '#020a02' : '#1a3208';
+    ctx.lineWidth = 4 * tr.scale;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(baseX, baseY);
+    ctx.quadraticCurveTo(baseX + (topX - baseX) * 0.4, baseY - tr.trunkH * 0.45, topX, topY);
+    ctx.stroke();
+    // fronds — 7 leaves radiating from top
+    ctx.strokeStyle = isDark ? 'rgba(8,32,8,0.85)' : 'rgba(28,108,32,0.92)';
+    ctx.lineWidth = 3.4 * tr.scale;
+    for (let i = 0; i < 7; i++) {
+      const ang = -Math.PI / 2 + (i - 3) * (Math.PI / 7) + sway * 0.04;
+      const fx = topX + Math.cos(ang) * tr.frondLen;
+      const fy = topY + Math.sin(ang) * tr.frondLen * 0.85;
+      ctx.beginPath();
+      ctx.moveTo(topX, topY);
+      ctx.quadraticCurveTo(
+        topX + Math.cos(ang) * tr.frondLen * 0.55,
+        topY + Math.sin(ang) * tr.frondLen * 0.4,
+        fx, fy
+      );
+      ctx.stroke();
+    }
+  }
 
   if (!isDark) {
     // ── god rays ──
@@ -400,6 +542,76 @@ function _drawTropical(ctx, isDark, state, t, py, w, h) {
     ctx.fillStyle = refG;
     ctx.fillRect(refX - 18, 0, 36, h);
     ctx.restore();
+  }
+
+  if (isDark) {
+    // ── stars ──
+    for (const s of state.stars) {
+      const tw = 0.55 + 0.45 * Math.sin(t * 0.045 + s.tp);
+      ctx.beginPath();
+      ctx.arc(s.x, s.y + py * 0.18, s.r, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(235,242,255,${s.op * tw})`;
+      ctx.fill();
+    }
+    // ── shooting star ──
+    const ss = state.shooter;
+    if (ss) {
+      if (!ss.active) {
+        ss.nextSpawn -= 1;
+        if (ss.nextSpawn <= 0) {
+          ss.active = true;
+          ss.x = _rnd(w * 0.1, w * 0.7);
+          ss.y = _rnd(h * 0.04, h * 0.30);
+          const ang = _rnd(Math.PI * 0.18, Math.PI * 0.32);
+          const spd = _rnd(7, 11);
+          ss.vx = Math.cos(ang) * spd;
+          ss.vy = Math.sin(ang) * spd;
+          ss.max = _rnd(28, 48);
+          ss.life = 0;
+        }
+      } else {
+        ss.x += ss.vx; ss.y += ss.vy;
+        ss.life += 1;
+        const fade = ss.life < 6 ? ss.life / 6 : Math.max(0, 1 - (ss.life - 6) / (ss.max - 6));
+        const tailLen = 70;
+        const tg = ctx.createLinearGradient(ss.x - ss.vx * 8, ss.y - ss.vy * 8, ss.x, ss.y);
+        tg.addColorStop(0, 'rgba(255,255,255,0)');
+        tg.addColorStop(1, `rgba(255,255,255,${0.95 * fade})`);
+        ctx.strokeStyle = tg;
+        ctx.lineWidth = 1.8;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(ss.x - ss.vx * 8, ss.y - ss.vy * 8);
+        ctx.lineTo(ss.x, ss.y);
+        ctx.stroke();
+        // bright head
+        ctx.beginPath();
+        ctx.arc(ss.x, ss.y, 1.6, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(255,255,255,${fade})`;
+        ctx.fill();
+        if (ss.life >= ss.max || ss.x > w + 80 || ss.y > h * 0.55) {
+          ss.active = false;
+          ss.nextSpawn = _rnd(140, 360);
+        }
+      }
+    }
+  } else {
+    // ── birds (day) ──
+    ctx.strokeStyle = 'rgba(28,38,48,0.62)';
+    ctx.lineWidth = 1.4;
+    ctx.lineCap = 'round';
+    for (const b of state.birds) {
+      b.x += b.sp;
+      if (b.x > w + 30) { b.x = -30; b.y = _rnd(h * 0.08, h * 0.42); }
+      const flap = Math.sin(t * b.fp + b.ph);
+      const wingDip = flap * b.sz * 0.42;
+      const by = b.y + py * 0.18;
+      ctx.beginPath();
+      ctx.moveTo(b.x - b.sz, by + wingDip * 0.3);
+      ctx.quadraticCurveTo(b.x - b.sz * 0.5, by - b.sz * 0.55 - wingDip, b.x, by);
+      ctx.quadraticCurveTo(b.x + b.sz * 0.5, by - b.sz * 0.55 - wingDip, b.x + b.sz, by + wingDip * 0.3);
+      ctx.stroke();
+    }
   }
 
   // ── ocean waves ──
