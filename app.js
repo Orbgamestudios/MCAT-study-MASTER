@@ -2524,9 +2524,59 @@ const storage = {
       return raw == null ? fallback : JSON.parse(raw);
     } catch { return fallback; }
   },
-  set(key, value) { localStorage.setItem(key, JSON.stringify(value)); },
+  set(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch {} },
   remove(key) { localStorage.removeItem(key); },
 };
+
+// ---------- error boundary ----------
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { caught: null };
+  }
+  static getDerivedStateFromError(err) {
+    return { caught: err };
+  }
+  componentDidCatch(err, info) {
+    console.error('[ErrorBoundary]', err, info?.componentStack);
+  }
+  reset() { this.setState({ caught: null }); }
+  clearAndReload() {
+    try {
+      ['mcat:questions', 'mcat:extractions', 'mcat:files'].forEach((k) => localStorage.removeItem(k));
+    } catch {}
+    location.reload();
+  }
+  render() {
+    if (this.state.caught) {
+      const msg = this.state.caught?.message || String(this.state.caught);
+      return (
+        <div style={{ padding: '2rem', fontFamily: 'sans-serif', background: '#fff5f5', borderRadius: '12px', margin: '1rem', border: '1px solid #e74c3c' }}>
+          <div style={{ fontWeight: 700, fontSize: '1.1rem', color: '#c0392b', marginBottom: '0.5rem' }}>Something went wrong</div>
+          <div style={{ fontSize: '0.85rem', color: '#555', marginBottom: '1.25rem', wordBreak: 'break-all', fontFamily: 'monospace' }}>{msg}</div>
+          <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+            <button
+              onClick={() => this.reset()}
+              style={{ background: '#555', color: '#fff', border: 'none', borderRadius: '8px', padding: '0.5rem 1.2rem', cursor: 'pointer', fontSize: '0.9rem' }}
+            >
+              Try again
+            </button>
+            <button
+              onClick={() => this.clearAndReload()}
+              style={{ background: '#c0392b', color: '#fff', border: 'none', borderRadius: '8px', padding: '0.5rem 1.2rem', cursor: 'pointer', fontSize: '0.9rem' }}
+            >
+              Clear downloaded data and restart
+            </button>
+          </div>
+          <div style={{ marginTop: '1rem', fontSize: '0.75rem', color: '#888' }}>
+            If the app keeps crashing, click "Clear downloaded data and restart" — it removes cached chapter data and lets you re-download cleanly.
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 // ---------- gemini client ----------
 class GeminiError extends Error {
@@ -4560,10 +4610,10 @@ function buildPool({ files, questions, extractions, attempts }, mode, scope) {
     if (mode === 'mc') {
       // Regular MC + two-part items share the same pool — two-part items keep their
       // own mode so the runner dispatches them to TwoPartQuestion.
-      for (const q of questions[f.file_id].mc) pool.push({ id: q.id, mode: 'mc', q, ...meta });
-      for (const q of (questions[f.file_id].twoPart || [])) pool.push({ id: q.id, mode: 'two_part', q, ...meta });
+      for (const q of (Array.isArray(questions[f.file_id].mc) ? questions[f.file_id].mc : [])) pool.push({ id: q.id, mode: 'mc', q, ...meta });
+      for (const q of (Array.isArray(questions[f.file_id].twoPart) ? questions[f.file_id].twoPart : [])) pool.push({ id: q.id, mode: 'two_part', q, ...meta });
     } else if (mode === 'short') {
-      for (const q of questions[f.file_id].short) pool.push({ id: q.id, mode, q, ...meta });
+      for (const q of (Array.isArray(questions[f.file_id].short) ? questions[f.file_id].short : [])) pool.push({ id: q.id, mode, q, ...meta });
     } else if (mode === 'match') {
       const terms = (extractions[f.file_id].key_terms || []).slice();
       const GROUP = 5;
@@ -5062,7 +5112,7 @@ function RelatedFlashcards({ item }) {
 function MCQuestion({ item, onAnswer, nextSlot, onFlag }) {
   const [picked, setPicked] = useState(null);
   const shuffled = useMemo(() => {
-    const arr = item.q.choices.map((text, origIdx) => ({ text, origIdx }));
+    const arr = (item.q.choices || []).map((text, origIdx) => ({ text, origIdx }));
     return shuffle(arr);
   }, [item.id]);
 
@@ -5700,7 +5750,9 @@ function StudyView() {
   if (phase === 'active') {
     return (
       <div id="study-view-root">
-        <QuizRunner items={items} onExit={end} onPause={handleTimerRef} />
+        <ErrorBoundary key={items[0]?.id}>
+          <QuizRunner items={items} onExit={end} onPause={handleTimerRef} />
+        </ErrorBoundary>
       </div>
     );
   }
@@ -8850,11 +8902,11 @@ function ChapterRow({ chapter, onDownload, onContribute, onAudit, busy, download
   // What can a contributor (someone with a Gemini key but not the PDF) actually fill in?
   // Anything except extraction. Once extraction exists, everything else is up for grabs.
   const missing = [];
-  const s = chapter.stages;
-  if (s.extraction.done) {
-    if (!s.mc.done || s.mc.terms_missing > 0) missing.push({ key: 'mc', label: s.mc.done ? 'fill missing term coverage' : 'MC' });
-    if (!s.two_part.done) missing.push({ key: 'two_part', label: 'two-part' });
-    if (!s.short.done) missing.push({ key: 'short', label: 'short answer' });
+  const s = chapter.stages || {};
+  if (s.extraction?.done) {
+    if (!s.mc?.done || (s.mc?.terms_missing ?? 0) > 0) missing.push({ key: 'mc', label: s.mc?.done ? 'fill missing term coverage' : 'MC' });
+    if (!s.two_part?.done) missing.push({ key: 'two_part', label: 'two-part' });
+    if (!s.short?.done) missing.push({ key: 'short', label: 'short answer' });
   }
 
   return (
@@ -8882,10 +8934,10 @@ function ChapterRow({ chapter, onDownload, onContribute, onAudit, busy, download
           {chapter.filename} · by @{chapter.uploader_username} · {ago}
         </div>
         <div className="flex flex-wrap gap-1.5 mt-1.5">
-          <StageDot stage={chapter.stages.extraction} label="extract" />
-          <StageDot stage={chapter.stages.mc} label="mc" />
-          <StageDot stage={chapter.stages.two_part} label="two-part" />
-          <StageDot stage={chapter.stages.short} label="short" />
+          <StageDot stage={chapter.stages?.extraction} label="extract" />
+          <StageDot stage={chapter.stages?.mc} label="mc" />
+          <StageDot stage={chapter.stages?.two_part} label="two-part" />
+          <StageDot stage={chapter.stages?.short} label="short" />
         </div>
       </div>
       <div className="flex flex-wrap items-center gap-2">
@@ -8948,7 +9000,6 @@ function BankTab() {
   // Subjects collapse by default; user opens what they need.
   const [openSubjects, setOpenSubjects] = useState({});
   const toggleSubject = (s) => setOpenSubjects((p) => ({ ...p, [s]: !p[s] }));
-  const [downloadingAll, setDownloadingAll] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -9006,39 +9057,6 @@ function BankTab() {
     } finally {
       setBusyId(null); setBusyKind(null);
     }
-  };
-
-  const downloadAllMissing = async (chapters) => {
-    if (downloadingAll || !chapters.length) return;
-    setDownloadingAll(true);
-    let ok = 0, fail = 0;
-    for (const ch of chapters) {
-      setStatus({ kind: 'info', msg: `Downloading ${ok + fail + 1}/${chapters.length}: "${ch.title}"…` });
-      try { await downloadOne(ch); ok++; } catch { fail++; }
-    }
-    setDownloadingAll(false);
-    setStatus({ kind: fail === 0 ? 'ok' : 'err', msg: `Downloaded ${ok}/${chapters.length}${fail ? ` (${fail} failed)` : ''}` });
-  };
-
-  // Wipe the local library and replace it with every completed bank chapter.
-  // Double-confirmed because it discards locally-processed work that isn't on
-  // the bank.
-  const replaceLibrary = async (chapters) => {
-    if (downloadingAll) return;
-    if (!confirm(`Replace your local library with ${chapters.length} bank chapter${chapters.length === 1 ? '' : 's'}? This removes any chapter that isn't on the bank.`)) return;
-    if (!confirm('Are you sure? Local PDFs you uploaded but never published will be lost.')) return;
-    setDownloadingAll(true);
-    // Drop every existing file/extraction/question entry first.
-    storage.set(KEYS.extractions, {});
-    storage.set(KEYS.questions, {});
-    setFiles(() => []);
-    let ok = 0, fail = 0;
-    for (const ch of chapters) {
-      setStatus({ kind: 'info', msg: `Downloading ${ok + fail + 1}/${chapters.length}: "${ch.title}"…` });
-      try { await downloadOne(ch); ok++; } catch { fail++; }
-    }
-    setDownloadingAll(false);
-    setStatus({ kind: fail === 0 ? 'ok' : 'err', msg: `Library replaced — ${ok}/${chapters.length} downloaded${fail ? ` (${fail} failed)` : ''}` });
   };
 
   // Run the contributor's Gemini key against the chapter's published extraction
@@ -9253,50 +9271,6 @@ function BankTab() {
           No chapters published yet. Publish your local chapters from the Library tab.
         </div>
       )}
-
-      {/* Library-vs-bank diff: only rendered when the local library
-          doesn't match the bank — either it's missing a completed bank
-          chapter, or it has local-only chapters the bank doesn't carry. */}
-      {(() => {
-        const complete = data.chapters.filter((c) => c.stages?.mc?.done);
-        const bankIds = new Set(complete.map((c) => c.id));
-        const missing = complete.filter((c) => !localChapterIds.has(c.id));
-        const localOnly = files.filter((f) => !f.chapter_id || !bankIds.has(f.chapter_id));
-        if (missing.length === 0 && localOnly.length === 0) return null;
-        return (
-          <div className="bg-[var(--accent-soft)] border border-[var(--accent-border)] rounded-2xl p-4 sm:p-5 space-y-3">
-            <div className="min-w-0">
-              <div className="font-semibold text-[var(--accent-text)]">
-                {missing.length > 0
-                  ? <>Your library is missing {missing.length} chapter{missing.length === 1 ? '' : 's'}</>
-                  : <>Your library has {localOnly.length} chapter{localOnly.length === 1 ? '' : 's'} not on the bank</>}
-              </div>
-              <div className="text-xs text-[var(--text-muted)] mt-0.5">
-                Pull any missing chapter — or replace your library outright with the {complete.length} completed bank chapter{complete.length === 1 ? '' : 's'}.
-              </div>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {missing.length > 0 && (
-                <button
-                  onClick={() => downloadAllMissing(missing)}
-                  disabled={downloadingAll || !!busyId}
-                  className="text-sm px-4 py-2 bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] disabled:opacity-40 rounded-lg font-medium"
-                >
-                  {downloadingAll ? 'Downloading…' : `Download all new (${missing.length})`}
-                </button>
-              )}
-              <button
-                onClick={() => replaceLibrary(complete)}
-                disabled={downloadingAll || !!busyId || complete.length === 0}
-                title="Wipes your current library, then downloads every completed bank chapter."
-                className="text-sm px-4 py-2 border border-[var(--accent-border)] text-[var(--accent-text)] hover:bg-[var(--bg-hover)] disabled:opacity-40 rounded-lg font-medium"
-              >
-                Replace library with bank
-              </button>
-            </div>
-          </div>
-        );
-      })()}
 
       {subjects.map((subject) => {
         const list = filtered(bySubject[subject]);
@@ -9849,9 +9823,15 @@ function Root() {
   return (apiKey || readOnly || session) ? <Shell /> : <ApiKeyGate />;
 }
 
+// Crash diagnostics now live in index.html as a plain <script> so they install
+// BEFORE Babel parses this file. That way iOS Safari (no devtools) still sees a
+// visible error banner even if app.js fails to parse or React fails to mount.
+
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(
-  <AppProvider>
-    <Root />
-  </AppProvider>
+  <ErrorBoundary>
+    <AppProvider>
+      <Root />
+    </AppProvider>
+  </ErrorBoundary>
 );

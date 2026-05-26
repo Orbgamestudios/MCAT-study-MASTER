@@ -456,6 +456,100 @@
 </head>
 <body>
 <div id="root"></div>
-<script type="text/babel" data-presets="react" src="app.js?v=94"></script>
+<script>
+  // Crash diagnostics — installed BEFORE Babel/React so iOS Safari users (no devtools)
+  // get a visible, actionable error message even if app.js fails to parse, React fails
+  // to mount, or an async handler throws. Last error also persists to localStorage so
+  // reloads can replay it.
+  (function () {
+    var LOG_KEY = 'mcat:crashlog';
+    function readLog() {
+      try { return JSON.parse(localStorage.getItem(LOG_KEY)) || []; } catch (e) { return []; }
+    }
+    function writeLog(entries) {
+      try { localStorage.setItem(LOG_KEY, JSON.stringify(entries.slice(-10))); } catch (e) {}
+    }
+    function showBanner(msg, allEntries) {
+      var existing = document.getElementById('_crash_banner');
+      if (existing) existing.remove();
+      var el = document.createElement('div');
+      el.id = '_crash_banner';
+      el.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#c0392b;color:#fff;font:13px/1.4 -apple-system,sans-serif;padding:10px 14px;max-height:60vh;overflow:auto';
+      var html = '<div style="display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap"><strong>App error</strong>';
+      html += '<span style="flex:1;min-width:200px;word-break:break-all;font-family:ui-monospace,monospace;font-size:12px">' + msg.replace(/[<&]/g, function (c) { return c === '<' ? '&lt;' : '&amp;'; }) + '</span>';
+      html += '<button id="_cb_reload" style="background:rgba(255,255,255,.2);border:none;color:#fff;border-radius:5px;padding:4px 10px;font-size:12px">Reload</button>';
+      html += '<button id="_cb_clear" style="background:rgba(255,255,255,.35);border:none;color:#fff;border-radius:5px;padding:4px 10px;font-size:12px">Clear data &amp; reload</button>';
+      html += '<button id="_cb_log" style="background:rgba(255,255,255,.15);border:none;color:#fff;border-radius:5px;padding:4px 10px;font-size:12px">Show log</button>';
+      html += '</div>';
+      html += '<pre id="_cb_logpane" style="display:none;margin-top:10px;padding:8px;background:rgba(0,0,0,.35);border-radius:6px;white-space:pre-wrap;word-break:break-all;font-size:11px;line-height:1.35"></pre>';
+      el.innerHTML = html;
+      (document.body || document.documentElement).appendChild(el);
+      document.getElementById('_cb_reload').onclick = function () { location.reload(); };
+      document.getElementById('_cb_clear').onclick = function () {
+        try {
+          ['mcat:questions', 'mcat:extractions', 'mcat:files', 'mcat:crashlog'].forEach(function (k) { localStorage.removeItem(k); });
+        } catch (e) {}
+        location.reload();
+      };
+      document.getElementById('_cb_log').onclick = function () {
+        var pane = document.getElementById('_cb_logpane');
+        var open = pane.style.display === 'none';
+        pane.style.display = open ? 'block' : 'none';
+        if (open) {
+          pane.textContent = (allEntries || readLog()).map(function (e) {
+            return '[' + new Date(e.t).toLocaleTimeString() + '] ' + e.m + (e.s ? '\n' + e.s : '');
+          }).join('\n\n');
+        }
+      };
+    }
+    function record(msg, stack) {
+      var log = readLog();
+      log.push({ t: Date.now(), m: msg, s: stack || '' });
+      writeLog(log);
+      showBanner(msg, log);
+    }
+    window.addEventListener('error', function (e) {
+      var loc = e.filename ? ' (' + e.filename.split('/').pop() + ':' + e.lineno + ':' + e.colno + ')' : '';
+      var msg = ((e.error && e.error.message) || e.message || 'Unknown error') + loc;
+      var stack = e.error && e.error.stack ? String(e.error.stack) : '';
+      record(msg, stack);
+    });
+    window.addEventListener('unhandledrejection', function (e) {
+      var reason = e.reason;
+      var msg = (reason && reason.message) || String(reason) || 'Unhandled promise rejection';
+      var stack = (reason && reason.stack) ? String(reason.stack) : '';
+      record(msg, stack);
+    });
+    // Watchdog: if React never paints into #root within 8s of DOMContentLoaded,
+    // surface whatever's in the crash log (or a generic "didn't mount" message).
+    window.addEventListener('DOMContentLoaded', function () {
+      setTimeout(function () {
+        var root = document.getElementById('root');
+        if (root && root.childElementCount === 0) {
+          var log = readLog();
+          var last = log.length ? log[log.length - 1] : null;
+          var msg = last ? ('App failed to mount. Last error: ' + last.m) : 'App failed to mount within 8s. Tap "Show log" for any prior errors, or "Clear data & reload".';
+          showBanner(msg, log);
+        }
+      }, 8000);
+    });
+    // Replay the last crash on next load — so if the user reloads after a crash,
+    // they still see what happened.
+    window.addEventListener('DOMContentLoaded', function () {
+      var log = readLog();
+      if (!log.length) return;
+      var last = log[log.length - 1];
+      // Only show stale crash if it's recent (last 10 min) and React hasn't mounted in 1s.
+      if (Date.now() - last.t > 10 * 60 * 1000) return;
+      setTimeout(function () {
+        if (document.getElementById('_crash_banner')) return;
+        var root = document.getElementById('root');
+        if (root && root.childElementCount > 0) return;
+        showBanner('Previous load crashed: ' + last.m, log);
+      }, 1000);
+    });
+  })();
+</script>
+<script type="text/babel" data-presets="react" src="app.js?v=101"></script>
 </body>
 </html>
