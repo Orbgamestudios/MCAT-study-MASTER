@@ -2539,8 +2539,40 @@ const storage = {
       return raw == null ? fallback : JSON.parse(raw);
     } catch { return fallback; }
   },
-  set(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch {} },
+  // Returns true on success, false on failure. When localStorage is full,
+  // we *don't* want to silently drop data — the React in-memory state will
+  // keep working but reload will revert to the last successful snapshot.
+  // We dispatch a window event so the UI can surface the failure.
+  set(key, value) {
+    try {
+      localStorage.setItem(key, JSON.stringify(value));
+      return true;
+    } catch (e) {
+      try {
+        const isQuota = e && (e.name === 'QuotaExceededError' || e.code === 22 || /quota/i.test(String(e.message)));
+        window.dispatchEvent(new CustomEvent('mcat:storage-fail', {
+          detail: { key, quota: !!isQuota, message: e?.message || String(e) },
+        }));
+      } catch {}
+      return false;
+    }
+  },
   remove(key) { localStorage.removeItem(key); },
+  // Sum of all mcat:* keys in bytes. Used by the storage-full warning to
+  // tell the user how full their localStorage actually is.
+  usageBytes() {
+    let total = 0;
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (!k) continue;
+        const v = localStorage.getItem(k) || '';
+        // Rough: 2 bytes per char (UTF-16) + the key itself.
+        total += (k.length + v.length) * 2;
+      }
+    } catch {}
+    return total;
+  },
 };
 
 // ---------- error boundary ----------
@@ -10309,6 +10341,66 @@ function ServerStatsView() {
   );
 }
 
+// Persistent banner that pops up the moment storage.set fails (almost always
+// QuotaExceededError on iOS Safari, where the localStorage limit is ~5 MB).
+// Until the user clears something, every later write keeps failing silently,
+// which is what caused chapters to "go back to partial" after a force-update
+// — the re-download wrote new data to in-memory React state but the
+// localStorage write failed, so reloading reverted to the old snapshot.
+function StorageWarning() {
+  const { clearAttempts } = useApp();
+  const [fail, setFail] = useState(null); // { key, quota, message } | null
+  const [usage, setUsage] = useState(0);
+  useEffect(() => {
+    const handler = (e) => {
+      setFail(e.detail || { message: 'Unknown' });
+      setUsage(storage.usageBytes());
+    };
+    window.addEventListener('mcat:storage-fail', handler);
+    return () => window.removeEventListener('mcat:storage-fail', handler);
+  }, []);
+  if (!fail) return null;
+  const usedMB = (usage / 1024 / 1024).toFixed(1);
+  return (
+    <div
+      className="fixed inset-x-0 z-[55] px-3 py-2 bg-[var(--danger-bg)] border-b border-[var(--danger-border)] text-[var(--danger-text)] flex flex-wrap items-center gap-2 text-xs"
+      style={{ top: 'var(--mcat-header-h, 56px)' }}
+    >
+      <strong className="whitespace-nowrap">
+        {fail.quota ? `Storage full (${usedMB} MB used)` : 'Could not save to storage'}
+      </strong>
+      <span className="flex-1 min-w-0">
+        — your last chapter re-download didn't persist. After clearing, re-download from the Bank tab.
+      </span>
+      <button
+        onClick={() => { if (confirm('Clear all quiz attempts? They are already synced to your account if you are signed in.')) { clearAttempts(); setFail(null); } }}
+        className="shrink-0 px-2 py-1 rounded border border-[var(--danger-border)] hover:bg-[var(--danger-bg-strong)]"
+      >
+        Clear attempts
+      </button>
+      <button
+        onClick={() => {
+          if (!confirm('Drop the crash log + CARS/Connections payload caches? Safe — they are caches, not history.')) return;
+          try { localStorage.removeItem('mcat:crashlog'); } catch {}
+          try { localStorage.removeItem('mcat:carsCache'); } catch {}
+          try { localStorage.removeItem('mcat:connectionsCache'); } catch {}
+          try { localStorage.removeItem('mcat:connExplain'); } catch {}
+          try { localStorage.removeItem('mcat:termDefs'); } catch {}
+          setFail(null);
+        }}
+        className="shrink-0 px-2 py-1 rounded border border-[var(--danger-border)] hover:bg-[var(--danger-bg-strong)]"
+      >
+        Clear caches
+      </button>
+      <button
+        onClick={() => setFail(null)}
+        className="shrink-0 px-2 py-1 rounded hover:bg-[var(--danger-bg-strong)]"
+        aria-label="Dismiss"
+      >×</button>
+    </div>
+  );
+}
+
 function Shell() {
   const { apiKey, setApiKey, attempts, readOnly, files, extractions, questions, session, setSession, pendingSync, syncBusy, api, palette, mode, contributorMode } = useApp();
   const [tab, setTab] = useState('home');
@@ -10453,6 +10545,7 @@ function Shell() {
 
   return (
     <div className="min-h-full flex flex-col">
+      <StorageWarning />
       <header
         ref={headerRef}
         className="fixed top-0 inset-x-0 z-40 border-b border-[var(--border-soft)] bg-[var(--bg)] px-3 sm:px-5 pb-2.5 sm:pb-3 flex flex-wrap items-center gap-y-2 gap-x-3"
