@@ -6435,24 +6435,83 @@ const { _molRegex, _molLookup, _molAcronymExact, _molRepresentative } = (() => {
   };
 })();
 
+// Cheap IUPAC-shape detector — returns true when the surface text looks
+// enough like a systematic chemical name (parent-stem + locants + suffix)
+// that PubChem is likely to resolve it. Catches names like "but-2-enal",
+// "1,3-butanediol", "2,2-dimethylpropane", "4-methylpent-3-en-2-one"
+// without requiring us to enumerate every compound. Rejects ISO dates,
+// version strings, and tokens that don't contain a recognisable alkyl
+// stem.
+const _IUPAC_STEM_RE = /(?:meth|eth|prop|but|pent|hex|hept|oct|non|dec|undec|dodec|cyclopropan|cyclobutan|cyclopentan|cyclohexan|cycloheptan|cyclopropen|cyclobuten|cyclopenten|cyclohexen|benz|phen|tolu|napht|pyrid|pyrimid|pyrrol|furan|thiophen|imidazol|indol|purin|pyran|oxiran)/i;
+const _IUPAC_SUFFIX_RE = /(?:an[eo]?l?|ane|enol|enal|enone|enamine|enamide|enimine|enyl|en|yne|ol|al|one|amine|amide|amido|nitrile|imine|oate|oxide|oxazole|azide|adienol|adienal|adienone|adienoate|adiene|atriene|diol|triol|dione|trione|dial|dioic acid|oic acid|carboxylic acid|carbohydrate)$/i;
+
+function _looksIUPAC(token) {
+  if (!token) return false;
+  const trimmed = token.trim();
+  if (trimmed.length < 5) return false;
+  if (!/^[a-z0-9,()\- ]+$/i.test(trimmed)) return false;
+  if (!/[a-z]/i.test(trimmed)) return false;
+  if (!/\d/.test(trimmed)) return false;            // require at least one locant
+  if (!/-/.test(trimmed)) return false;             // require at least one hyphen
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return false;     // ISO date
+  if (/^v?\d+(\.\d+){1,3}-/.test(trimmed)) return false;     // version-prefixed
+  if (!_IUPAC_STEM_RE.test(trimmed)) return false;           // needs an alkyl/aryl/het stem
+  if (!_IUPAC_SUFFIX_RE.test(trimmed)) return false;         // needs a chemistry suffix
+  return true;
+}
+
+// Scan free-form text for IUPAC-shaped tokens. Returns
+// [{ start, end, value }] sorted by start position. Handles "...oic acid"
+// and "...carboxylic acid" multi-word forms by attaching the trailing
+// " acid" to the token before validation.
+function _findIUPACMatches(text) {
+  const matches = [];
+  const isCh = (c) => /[a-z0-9,\-]/i.test(c);
+  let i = 0;
+  while (i < text.length) {
+    if (!isCh(text[i])) { i++; continue; }
+    let j = i;
+    while (j < text.length && isCh(text[j])) j++;
+    let start = i;
+    let end = j;
+    // Strip leading/trailing punctuation runs.
+    while (start < end && /[,\-]/.test(text[start])) start++;
+    while (end > start && /[,\-]/.test(text[end - 1])) end--;
+    if (end > start) {
+      let value = text.slice(start, end);
+      let fullEnd = end;
+      const tail = text.slice(end).match(/^\s+acid\b/i);
+      if (tail) {
+        value = text.slice(start, end + tail[0].length);
+        fullEnd = end + tail[0].length;
+      }
+      if (_looksIUPAC(value)) {
+        matches.push({ start, end: fullEnd, value });
+      }
+    }
+    i = j;
+  }
+  return matches;
+}
+
 // Find every molecule mention in `text`. Returns an array of segments where
 // {type:'text'} segments are plain strings and {type:'mol'} segments carry
 // both the displayed surface form (case preserved) and the canonical PubChem
-// lookup name. Adjacent non-match text is glued back together.
+// lookup name. Adjacent non-match text is glued back together. Two passes:
+//   1. Explicit dictionary (common names, acronyms, functional groups).
+//   2. IUPAC-shape detection — sends the matched token straight to PubChem.
+// On overlap the explicit match wins (e.g. "ethanol" stays linked as the
+// canonical entry rather than re-parsed as an IUPAC name).
 function parseMoleculesInText(text) {
   if (typeof text !== 'string' || !text) return [{ type: 'text', value: text || '' }];
-  const out = [];
-  let last = 0;
-  // Reset lastIndex because we share the regex across calls.
+
+  // ---- Pass 1: explicit dictionary matches ----
+  const explicit = [];
   _molRegex.lastIndex = 0;
   let mm;
   while ((mm = _molRegex.exec(text)) !== null) {
     const surface = mm[0];
     const idx = mm.index;
-    // Look up canonical. Try the exact (case-preserved) surface first to
-    // catch acronyms; fall back to lowercased lookup. If we end up with an
-    // acronym hit but the surface isn't the exact acronym (e.g. matched
-    // "atp" inside text), skip the link.
     let canonical = null;
     if (_molLookup.has(surface)) {
       canonical = _molLookup.get(surface);
@@ -6461,13 +6520,7 @@ function parseMoleculesInText(text) {
     } else {
       const lc = surface.toLowerCase();
       if (_molLookup.has(lc)) {
-        // Reject acronym matches whose case doesn't match the dictionary.
-        // (e.g. dictionary has "ATP" exact-case; matching "atp" via the i
-        // flag would normalize to "atp", which isn't in the lookup at that
-        // case, so it'd hit lc-lookup with the wrong canonical — guard against
-        // that by checking acronymExact.has on the canonical's surface.)
         const cand = _molLookup.get(lc);
-        // If the canonical is an acronym, only accept the exact form.
         if (_molAcronymExact.has(cand) && cand !== surface) {
           canonical = null;
         } else {
@@ -6476,9 +6529,24 @@ function parseMoleculesInText(text) {
       }
     }
     if (!canonical) continue;
-    if (idx > last) out.push({ type: 'text', value: text.slice(last, idx) });
-    out.push({ type: 'mol', value: surface, canonical });
-    last = idx + surface.length;
+    explicit.push({ start: idx, end: idx + surface.length, value: surface, canonical });
+  }
+
+  // ---- Pass 2: IUPAC-shape matches (deferred to PubChem) ----
+  const iupac = _findIUPACMatches(text)
+    .map((m) => ({ ...m, canonical: m.value.toLowerCase() }))
+    // Drop IUPAC matches whose span overlaps an explicit match (explicit wins).
+    .filter((m) => !explicit.some((e) => m.start < e.end && e.start < m.end));
+
+  // ---- Merge + emit segments ----
+  const all = explicit.concat(iupac).sort((a, b) => a.start - b.start);
+  const out = [];
+  let last = 0;
+  for (const m of all) {
+    if (m.start < last) continue; // skip overlapping (shouldn't happen after the filter, defensive)
+    if (m.start > last) out.push({ type: 'text', value: text.slice(last, m.start) });
+    out.push({ type: 'mol', value: m.value, canonical: m.canonical });
+    last = m.end;
   }
   if (last < text.length) out.push({ type: 'text', value: text.slice(last) });
   if (!out.length) out.push({ type: 'text', value: text });
