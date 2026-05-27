@@ -7643,6 +7643,30 @@ function McatPredictionCard() {
                   <span className="text-xs font-medium text-[var(--text-muted)] ml-1">± {fmt(s.stdev)}</span>
                 </div>
                 <div className="text-[10px] text-[var(--text-faint)] mt-0.5">n={s.n}</div>
+                {(() => {
+                  // How much more accuracy (in this section's weighted mix)
+                  // do you need to bump the displayed integer score by one?
+                  // SECTION_RANGE points map onto [0, 100%] accuracy, so each
+                  // point costs 1/14 = ~7.1% of accuracy.
+                  if (s.score >= SECTION_MAX) {
+                    return <div className="text-[10px] text-[var(--success-text)] mt-0.5">max score</div>;
+                  }
+                  const displayed = Math.round(s.score);
+                  const nextInt = displayed + 1;
+                  if (nextInt > SECTION_MAX) {
+                    return <div className="text-[10px] text-[var(--success-text)] mt-0.5">max score</div>;
+                  }
+                  // Gap from the *exact* posterior score to the next integer.
+                  // The displayed value is rounded, so "next" can be just
+                  // 0.001 away — that's fine, it tells you you're a hair
+                  // from rounding up.
+                  const gapAccuracy = (nextInt - s.score) / SECTION_RANGE * 100;
+                  return (
+                    <div className="text-[10px] text-[var(--accent-text)] mt-0.5">
+                      +{gapAccuracy.toFixed(1)}% → {nextInt}
+                    </div>
+                  );
+                })()}
               </>
             ) : s.imputed ? (
               <>
