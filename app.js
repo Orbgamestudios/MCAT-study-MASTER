@@ -110,6 +110,13 @@ function _initCold(w, h, isDark) {
       op: _rnd(0.3, 0.9),
       tp: _pi2(), // twinkle phase
     })) : [],
+    // Distant snow-capped range. Two parallax layers — a hazy back ridge
+    // and a sharper front ridge. Each gets a seeded phase so the silhouette
+    // is consistent across redraws.
+    mountains: {
+      back: { seed: _rnd(0, 1000), baseRel: 0.78, maxH: 110 },
+      front: { seed: _rnd(0, 1000), baseRel: 0.83, maxH: 78 },
+    },
   };
 }
 
@@ -143,54 +150,70 @@ function _initWarm(w, h) {
       col: palette[Math.floor(Math.random() * palette.length)],
       type: Math.random() < 0.5 ? 0 : 1, // 0=oval 1=maple
     })),
+    // Autumn-tinted mountain range behind the trees.
+    mountains: {
+      back: { seed: _rnd(0, 1000), baseRel: 0.84, maxH: 130 },
+      front: { seed: _rnd(0, 1000), baseRel: 0.89, maxH: 90 },
+    },
   };
 }
 
 function _initDuo(w, h) {
-  // Jungle palms — back to front.
-  const trees = Array.from({ length: 12 }, () => {
-    const scale = _rnd(0.85, 2.1);
-    return {
-      x: _rnd(-w * 0.05, w * 1.05),
-      scale,
-      trunkH: 140 * scale,
-      frondLen: 80 * scale,
-      lean: _rnd(-0.15, 0.15),
-      sway: _pi2(),
-    };
-  }).sort((a, b) => a.scale - b.scale);
+  // Rio de Janeiro skyline: two Sugarloaf-shaped granite domes flanking
+  // Corcovado in the centre with Christ the Redeemer perched on top.
+  // Layout proportions are relative to canvas size so it scales sensibly.
+  //
+  //  far hills  — hazy back ridge, sets the horizon
+  //  domes      — three granite domes; the centre one carries the statue
+  //  water      — Guanabara Bay at the bottom ~22% of the canvas
+  //
+  // The exact geometry is fixed at init (no procedural seed per frame) so
+  // the skyline is consistent across redraws — only birds, water shimmer,
+  // and rain animate.
+  const horizonY = h * 0.62;
+  const waterTop = h * 0.78;
+  const domes = [
+    // Smaller side dome, far left
+    { cx: w * 0.18, baseY: waterTop, halfW: w * 0.13, peakY: h * 0.50 },
+    // Corcovado — the tallest, centre, statue on top
+    { cx: w * 0.52, baseY: waterTop, halfW: w * 0.18, peakY: h * 0.32, isCorcovado: true },
+    // Sugarloaf — distinctive narrow tall dome, right
+    { cx: w * 0.82, baseY: waterTop, halfW: w * 0.09, peakY: h * 0.46 },
+  ];
   return {
-    trees,
+    horizonY,
+    waterTop,
+    domes,
+    // Soft far hills behind the domes.
+    farHills: { seed: _rnd(0, 1000), baseRel: 0.66, maxH: h * 0.08 },
+    // Frigate birds gliding above the bay.
     birds: Array.from({ length: 5 }, () => ({
       x: _rnd(0, w),
-      y: _rnd(h * 0.05, h * 0.38),
+      y: _rnd(h * 0.15, h * 0.50),
       sp: _rnd(0.2, 0.55),
       sz: _rnd(4, 9),
       ph: _pi2(),
       fp: _rnd(0.13, 0.22),
     })),
-    rays: Array.from({ length: 7 }, (_, i) => ({
+    // Faint sun rays — kept from the old jungle scene because they read
+    // well over the bay water.
+    rays: Array.from({ length: 5 }, () => ({
       x: _rnd(w * 0.08, w * 0.92),
-      wid: _rnd(18, 60),
-      alp: _rnd(0.04, 0.11),
+      wid: _rnd(20, 70),
+      alp: _rnd(0.04, 0.10),
       sp: _rnd(0.003, 0.008),
       ph: _pi2(),
     })),
-    motes: Array.from({ length: 40 }, () => ({
-      x: _rnd(0, w), y: _rnd(0, h),
-      r: _rnd(0.5, 1.8),
-      vy: _rnd(0.08, 0.28),
-      drift: _rnd(0.08, 0.35),
-      dp: _pi2(),
-      alp: _rnd(0.3, 0.75),
+    // Water shimmer rows — horizontal highlight lines on Guanabara Bay.
+    shimmer: Array.from({ length: 10 }, () => ({
+      yRel: _rnd(0, 1),
+      sp: _rnd(0.004, 0.011),
+      ph: _pi2(),
+      len: _rnd(0.3, 0.7),
+      alp: _rnd(0.06, 0.18),
     })),
-    // Rain: a pool of drops + a fade controller. intensity ramps between 0
-    // and 1 over a few seconds whenever target flips, giving a smooth onset
-    // and clearing. target flips at randomized intervals.
+    // Rain — same controller as before.
     rain: (() => {
-      // 20% chance to be raining at app open; otherwise start dry. Whichever
-      // state we open in gets a sensible time-until-flip drawn from the same
-      // distributions the runtime controller uses below.
       const startRaining = Math.random() < 0.20;
       return {
         drops: Array.from({ length: 220 }, () => ({
@@ -198,15 +221,14 @@ function _initDuo(w, h) {
           y: _rnd(-h, h),
           len: _rnd(8, 18),
           vy: _rnd(8, 14),
-          vx: _rnd(-2.4, -1.2), // wind angle (rain falls slightly left)
+          vx: _rnd(-2.4, -1.2),
           alp: _rnd(0.35, 0.7),
         })),
         intensity: startRaining ? 1 : 0,
         target: startRaining ? 1 : 0,
-        // Frames until next state flip. ~30 fps so 30 = 1s.
         nextFlip: startRaining
-          ? Math.floor(30 * _rnd(120, 350))   // mid-storm
-          : Math.floor(30 * _rnd(105, 330)),  // dry-start
+          ? Math.floor(30 * _rnd(120, 350))
+          : Math.floor(30 * _rnd(105, 330)),
       };
     })(),
   };
@@ -476,6 +498,57 @@ function _initMadison(w, h, isDark) {
   };
 }
 
+// Sum-of-sines pseudo-noise — deterministic given (x, seed) so a ridge
+// silhouette is stable across frames. Returns a 0..1 height factor.
+function _ridgeHeight(x, seed) {
+  return (
+    0.50 * (0.5 + 0.5 * Math.sin(x * 0.0042 + seed)) +
+    0.30 * (0.5 + 0.5 * Math.sin(x * 0.0119 + seed * 2.3)) +
+    0.20 * (0.5 + 0.5 * Math.sin(x * 0.0271 + seed * 4.7))
+  );
+}
+
+// Draw a continuous mountain ridge across the full width. The polygon
+// runs along the top profile, then closes down to a fill baseline so
+// everything below the ridge is solid (mountains sit in front of sky and
+// behind foreground props).
+function _drawRidge(ctx, w, baseY, maxH, seed, fillStyle, opts = {}) {
+  const step = opts.step || 6;
+  const py = opts.py || 0;
+  ctx.fillStyle = fillStyle;
+  ctx.beginPath();
+  ctx.moveTo(-4, baseY + py + 40);
+  for (let x = -4; x <= w + 4; x += step) {
+    const y = baseY + py - maxH * _ridgeHeight(x, seed);
+    ctx.lineTo(x, y);
+  }
+  ctx.lineTo(w + 4, baseY + py + 40);
+  ctx.closePath();
+  ctx.fill();
+  // Optional snow cap: stroke the ridge in white wherever it's above a
+  // height threshold. Cheap, sells the "snowy peaks" silhouette.
+  if (opts.snowAlpha && opts.snowAlpha > 0) {
+    ctx.strokeStyle = `rgba(255,255,255,${opts.snowAlpha})`;
+    ctx.lineWidth = opts.snowWidth || 2;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    let drawing = false;
+    for (let x = -4; x <= w + 4; x += step) {
+      const f = _ridgeHeight(x, seed);
+      const y = baseY + py - maxH * f;
+      if (f > (opts.snowThreshold || 0.55)) {
+        if (!drawing) { ctx.moveTo(x, y); drawing = true; }
+        else ctx.lineTo(x, y);
+      } else if (drawing) {
+        ctx.stroke();
+        ctx.beginPath();
+        drawing = false;
+      }
+    }
+    if (drawing) ctx.stroke();
+  }
+}
+
 // ── per-theme draw calls ──────────────────────────────────────────────────────
 function _drawCold(ctx, isDark, state, t, py, w, h) {
   // ── sky gradient ──
@@ -552,8 +625,27 @@ function _drawCold(ctx, isDark, state, t, py, w, h) {
       }
     }
     ctx.restore();
-    // ── snow ground blend ──
-    const gnd = ctx.createLinearGradient(0, h*0.76, 0, h);
+  }
+
+  // ── distant mountain range (between sky/clouds and the snow ground) ──
+  if (state.mountains) {
+    const py4 = py * 0.4;
+    if (isDark) {
+      _drawRidge(ctx, w, h * state.mountains.back.baseRel, state.mountains.back.maxH, state.mountains.back.seed,
+        'rgba(18,28,52,0.85)', { py: py4, snowAlpha: 0.32, snowThreshold: 0.55, snowWidth: 1.6 });
+      _drawRidge(ctx, w, h * state.mountains.front.baseRel, state.mountains.front.maxH, state.mountains.front.seed,
+        'rgba(8,16,32,0.95)', { py: py4 * 1.4, snowAlpha: 0.45, snowThreshold: 0.5, snowWidth: 2 });
+    } else {
+      _drawRidge(ctx, w, h * state.mountains.back.baseRel, state.mountains.back.maxH, state.mountains.back.seed,
+        'rgba(120,150,190,0.62)', { py: py4, snowAlpha: 0.7, snowThreshold: 0.55, snowWidth: 2 });
+      _drawRidge(ctx, w, h * state.mountains.front.baseRel, state.mountains.front.maxH, state.mountains.front.seed,
+        'rgba(72,104,156,0.92)', { py: py4 * 1.4, snowAlpha: 0.85, snowThreshold: 0.45, snowWidth: 2.4 });
+    }
+  }
+
+  if (!isDark) {
+    // ── snow ground blend (sits over the front mountain bases) ──
+    const gnd = ctx.createLinearGradient(0, h*0.84, 0, h);
     gnd.addColorStop(0,'rgba(255,255,255,0)');
     gnd.addColorStop(0.22,'rgba(248,252,255,0.82)');
     gnd.addColorStop(1,'#ffffff');
@@ -601,6 +693,22 @@ function _drawWarm(ctx, isDark, state, t, py, w, h) {
   glow.addColorStop(0.42, `rgba(${gcol[0]},${gcol[1]},${gcol[2]},${gcol[3]*0.3})`);
   glow.addColorStop(1,   `rgba(${gcol[0]},${gcol[1]},${gcol[2]},0)`);
   ctx.fillStyle = glow; ctx.fillRect(0, 0, w, h);
+
+  // ── autumn mountain range behind the trees ──
+  if (state.mountains) {
+    const py4 = py * 0.4;
+    if (isDark) {
+      _drawRidge(ctx, w, h * state.mountains.back.baseRel, state.mountains.back.maxH, state.mountains.back.seed,
+        'rgba(46,18,8,0.78)', { py: py4 });
+      _drawRidge(ctx, w, h * state.mountains.front.baseRel, state.mountains.front.maxH, state.mountains.front.seed,
+        'rgba(22,8,2,0.92)', { py: py4 * 1.4 });
+    } else {
+      _drawRidge(ctx, w, h * state.mountains.back.baseRel, state.mountains.back.maxH, state.mountains.back.seed,
+        'rgba(132,62,32,0.62)', { py: py4 });
+      _drawRidge(ctx, w, h * state.mountains.front.baseRel, state.mountains.front.maxH, state.mountains.front.seed,
+        'rgba(84,32,12,0.92)', { py: py4 * 1.4 });
+    }
+  }
 
   // ── fall trees ──
   const groundY = h * 0.93;
@@ -675,28 +783,190 @@ function _drawWarm(ctx, isDark, state, t, py, w, h) {
   }
 }
 
+// One Sugarloaf-shaped granite dome: smooth elliptical-ish silhouette
+// (steeper near the peak, flares wider toward the base) so it reads as the
+// rounded gneiss outcrops that line Guanabara Bay. Filled with a vertical
+// gradient that adds a bit of dimensional shading.
+function _drawDome(ctx, dome, isDark, py) {
+  const { cx, baseY, halfW, peakY } = dome;
+  const baseShift = py * 0.45;
+  const peakShift = py * 0.3;
+  const yBase = baseY + baseShift;
+  const yPeak = peakY + peakShift;
+  const height = yBase - yPeak;
+  // Build the silhouette as a series of points sweeping from left base,
+  // up over the peak, and down to right base. Profile uses cos so the
+  // silhouette is dome-shaped (steeper near top, flaring at base).
+  const segs = 28;
+  const pts = [];
+  for (let i = 0; i <= segs; i++) {
+    const t = i / segs;        // 0 .. 1 along the silhouette
+    const ang = t * Math.PI;   // 0 (left base) .. π (right base)
+    const sx = cx + Math.cos(Math.PI - ang) * halfW;
+    // Profile factor: 1 at peak, 0 at base; raise to 0.65 so the top
+    // is broader (Sugarloaf-y) rather than a sharp point.
+    const prof = Math.pow(Math.sin(ang), 0.65);
+    const sy = yBase - prof * height;
+    pts.push([sx, sy]);
+  }
+  // Fill with a top-to-bottom gradient.
+  const g = ctx.createLinearGradient(cx, yPeak, cx, yBase);
+  if (isDark) {
+    g.addColorStop(0, '#1c2530'); g.addColorStop(0.55, '#10161e'); g.addColorStop(1, '#070a0e');
+  } else {
+    g.addColorStop(0, '#7c8898'); g.addColorStop(0.45, '#525e6e'); g.addColorStop(1, '#2e3744');
+  }
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.moveTo(pts[0][0], pts[0][1]);
+  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+  ctx.closePath();
+  ctx.fill();
+  // Subtle ridge highlight along the right side to suggest sunlight.
+  if (!isDark) {
+    ctx.strokeStyle = 'rgba(255,255,255,0.10)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    for (let i = Math.floor(segs / 2); i < pts.length - 1; i++) {
+      if (i === Math.floor(segs / 2)) ctx.moveTo(pts[i][0], pts[i][1]);
+      else ctx.lineTo(pts[i][0], pts[i][1]);
+    }
+    ctx.stroke();
+  }
+  return { yPeak, yBase };
+}
+
+// Christ the Redeemer silhouette: pedestal, body, outstretched arms, head.
+// Scaled relative to `s` (statue total height). Drawn in pale stone-white
+// in day mode and a paler ghost shade at night so it still reads.
+function _drawRedeemer(ctx, cx, peakY, s, isDark) {
+  const w = s * 0.95;      // arm span
+  const bodyW = s * 0.18;
+  const bodyH = s * 0.62;
+  const pedW = s * 0.34;
+  const pedH = s * 0.14;
+  const armH = s * 0.10;
+  const headR = s * 0.075;
+  const color = isDark ? 'rgba(232,228,218,0.78)' : '#efeae0';
+  const shade = isDark ? 'rgba(180,176,168,0.55)' : 'rgba(168,158,140,0.7)';
+  // Pedestal sits at the peak, statue stacks upward from there.
+  const pedTop = peakY - pedH;
+  const bodyTop = pedTop - bodyH;
+  const armCenterY = bodyTop + bodyH * 0.18;
+  const headCenterY = bodyTop - headR * 1.05;
+  // Pedestal (stepped).
+  ctx.fillStyle = shade;
+  ctx.fillRect(cx - pedW / 2, peakY - pedH, pedW, pedH);
+  ctx.fillStyle = color;
+  ctx.fillRect(cx - pedW * 0.4, peakY - pedH - pedH * 0.35, pedW * 0.8, pedH * 0.35);
+  // Body.
+  ctx.fillStyle = color;
+  ctx.fillRect(cx - bodyW / 2, bodyTop, bodyW, bodyH);
+  // Arms (single horizontal bar — silhouette reads better than two limbs).
+  ctx.fillRect(cx - w / 2, armCenterY - armH / 2, w, armH);
+  // Head.
+  ctx.beginPath();
+  ctx.arc(cx, headCenterY, headR, 0, Math.PI * 2);
+  ctx.fill();
+  // Halo / soft glow in day mode to lift the statue off the sky.
+  if (!isDark) {
+    const gg = ctx.createRadialGradient(cx, headCenterY, 0, cx, headCenterY, s * 0.9);
+    gg.addColorStop(0, 'rgba(255,255,255,0.18)');
+    gg.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = gg;
+    ctx.beginPath();
+    ctx.arc(cx, headCenterY, s * 0.9, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
 function _drawDuo(ctx, isDark, state, t, py, w, h) {
-  // ── jungle gradient ──
+  // ── sky over Guanabara Bay ──
   const sky = ctx.createLinearGradient(0, 0, 0, h);
   if (isDark) {
-    sky.addColorStop(0,'#020f02'); sky.addColorStop(0.18,'#031902');
-    sky.addColorStop(0.40,'#042204'); sky.addColorStop(0.58,'#031802');
-    sky.addColorStop(0.78,'#020e02'); sky.addColorStop(1,'#010901');
+    sky.addColorStop(0,    '#04102a'); sky.addColorStop(0.25, '#06183a');
+    sky.addColorStop(0.55, '#0a2050'); sky.addColorStop(0.80, '#08184a');
+    sky.addColorStop(1,    '#020a1c');
   } else {
-    sky.addColorStop(0,'#8edc62'); sky.addColorStop(0.11,'#52c42a');
-    sky.addColorStop(0.28,'#2a940e'); sky.addColorStop(0.46,'#146b0a');
-    sky.addColorStop(0.64,'#094c0c'); sky.addColorStop(0.82,'#042a0a');
-    sky.addColorStop(1,'#031508');
+    sky.addColorStop(0,    '#5fb8e8'); sky.addColorStop(0.18, '#7ec8f0');
+    sky.addColorStop(0.45, '#c8e8f8'); sky.addColorStop(0.62, '#f4eed2');
+    sky.addColorStop(0.78, '#88c2d4'); sky.addColorStop(1,    '#3b6c7e');
   }
   ctx.fillStyle = sky; ctx.fillRect(0, 0, w, h);
 
-  // ── birds (jungle, both day and night) ──
-  ctx.strokeStyle = isDark ? 'rgba(8,14,8,0.7)' : 'rgba(10,28,8,0.6)';
+  // ── sun / moon ──
+  const sx = w * 0.78, sy = h * 0.18 + py * 0.25;
+  if (isDark) {
+    ctx.fillStyle = 'rgba(248,244,232,0.92)';
+    ctx.beginPath(); ctx.arc(sx, sy, 22, 0, Math.PI * 2); ctx.fill();
+    const mg = ctx.createRadialGradient(sx, sy, 0, sx, sy, w * 0.18);
+    mg.addColorStop(0, 'rgba(248,244,232,0.32)');
+    mg.addColorStop(1, 'rgba(248,244,232,0)');
+    ctx.fillStyle = mg; ctx.beginPath(); ctx.arc(sx, sy, w * 0.18, 0, Math.PI * 2); ctx.fill();
+  } else {
+    const sg = ctx.createRadialGradient(sx, sy, 0, sx, sy, w * 0.30);
+    sg.addColorStop(0,    'rgba(255,245,210,0.95)');
+    sg.addColorStop(0.18, 'rgba(255,228,150,0.55)');
+    sg.addColorStop(0.55, 'rgba(255,205,110,0.18)');
+    sg.addColorStop(1,    'rgba(255,180,80,0)');
+    ctx.fillStyle = sg; ctx.fillRect(0, 0, w, h);
+  }
+
+  // ── soft far hills behind the domes ──
+  const fh = state.farHills;
+  _drawRidge(ctx, w, h * fh.baseRel, fh.maxH, fh.seed,
+    isDark ? 'rgba(12,22,42,0.85)' : 'rgba(96,134,164,0.72)',
+    { py: py * 0.25 });
+
+  // ── domes (Sugarloaf + Corcovado + side dome) ──
+  // Draw back-to-front by peak height (shorter peaks behind), so the
+  // tallest (Corcovado) sits visually in front when overlapping.
+  const domesSorted = state.domes.slice().sort((a, b) => b.peakY - a.peakY);
+  let corcoMeta = null;
+  for (const d of domesSorted) {
+    const meta = _drawDome(ctx, d, isDark, py);
+    if (d.isCorcovado) corcoMeta = { d, ...meta };
+  }
+
+  // ── Christ the Redeemer on Corcovado ──
+  if (corcoMeta) {
+    const statueH = (corcoMeta.yBase - corcoMeta.yPeak) * 0.36;
+    _drawRedeemer(ctx, corcoMeta.d.cx, corcoMeta.yPeak, statueH, isDark);
+  }
+
+  // ── water: Guanabara Bay ──
+  const wt = state.waterTop + py * 0.55;
+  const wg = ctx.createLinearGradient(0, wt, 0, h);
+  if (isDark) {
+    wg.addColorStop(0, '#0a1a2e'); wg.addColorStop(0.45, '#08182c'); wg.addColorStop(1, '#020a18');
+  } else {
+    wg.addColorStop(0, '#3a7896'); wg.addColorStop(0.45, '#2c5e7c'); wg.addColorStop(1, '#0e3650');
+  }
+  ctx.fillStyle = wg;
+  ctx.fillRect(0, wt, w, h - wt);
+
+  // Water shimmer — horizontal highlights that ripple slowly.
+  ctx.lineWidth = 1.2;
+  for (const s of state.shimmer) {
+    const baseY = wt + (h - wt) * s.yRel;
+    const ph = t * s.sp + s.ph;
+    const startX = w * (0.5 + 0.5 * Math.sin(ph));
+    const length = w * s.len;
+    const alp = s.alp * (0.6 + 0.4 * Math.sin(ph * 1.6));
+    ctx.strokeStyle = isDark ? `rgba(120,160,200,${alp * 0.5})` : `rgba(255,255,255,${alp})`;
+    ctx.beginPath();
+    ctx.moveTo(startX - length / 2, baseY);
+    ctx.lineTo(startX + length / 2, baseY);
+    ctx.stroke();
+  }
+
+  // ── birds gliding above the bay ──
+  ctx.strokeStyle = isDark ? 'rgba(220,220,225,0.55)' : 'rgba(20,30,40,0.55)';
   ctx.lineWidth = 1.4;
   ctx.lineCap = 'round';
   for (const b of state.birds) {
     b.x += b.sp;
-    if (b.x > w + 30) { b.x = -30; b.y = _rnd(h * 0.05, h * 0.38); }
+    if (b.x > w + 30) { b.x = -30; b.y = _rnd(h * 0.15, h * 0.50); }
     const flap = Math.sin(t * b.fp + b.ph);
     const wingDip = flap * b.sz * 0.42;
     const by = b.y + py * 0.18;
@@ -707,55 +977,21 @@ function _drawDuo(ctx, isDark, state, t, py, w, h) {
     ctx.stroke();
   }
 
-  // ── jungle palm trees ──
-  const groundYJ = h * 0.94;
-  for (const tr of state.trees) {
-    const sway = Math.sin(t * 0.013 + tr.sway) * 2;
-    const baseX = tr.x;
-    const baseY = groundYJ + py * 0.5;
-    const topX = baseX + tr.trunkH * tr.lean + sway;
-    const topY = baseY - tr.trunkH;
-    // curved palm trunk
-    ctx.strokeStyle = isDark ? '#020a02' : '#1a3208';
-    ctx.lineWidth = 4 * tr.scale;
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.moveTo(baseX, baseY);
-    ctx.quadraticCurveTo(baseX + (topX - baseX) * 0.4, baseY - tr.trunkH * 0.45, topX, topY);
-    ctx.stroke();
-    // fronds — 7 leaves radiating from top
-    ctx.strokeStyle = isDark ? 'rgba(8,32,8,0.85)' : 'rgba(28,108,32,0.92)';
-    ctx.lineWidth = 3.4 * tr.scale;
-    for (let i = 0; i < 7; i++) {
-      const ang = -Math.PI / 2 + (i - 3) * (Math.PI / 7) + sway * 0.04;
-      const fx = topX + Math.cos(ang) * tr.frondLen;
-      const fy = topY + Math.sin(ang) * tr.frondLen * 0.85;
-      ctx.beginPath();
-      ctx.moveTo(topX, topY);
-      ctx.quadraticCurveTo(
-        topX + Math.cos(ang) * tr.frondLen * 0.55,
-        topY + Math.sin(ang) * tr.frondLen * 0.4,
-        fx, fy
-      );
-      ctx.stroke();
-    }
-  }
-
   if (!isDark) {
-    // ── god rays ──
+    // ── soft sun rays over the water ──
     ctx.save(); ctx.globalCompositeOperation = 'lighter';
     for (const ray of state.rays) {
       const alp = ray.alp * (0.75 + 0.25 * Math.sin(t * ray.sp + ray.ph));
-      const rg = ctx.createLinearGradient(ray.x, 0, ray.x + ray.wid * 0.28, h * 0.72);
-      rg.addColorStop(0, `rgba(195,255,145,${alp})`);
-      rg.addColorStop(0.55, `rgba(145,255,95,${alp*0.45})`);
-      rg.addColorStop(1, 'rgba(80,200,40,0)');
+      const rg = ctx.createLinearGradient(ray.x, 0, ray.x + ray.wid * 0.28, h * 0.78);
+      rg.addColorStop(0,    `rgba(255,250,220,${alp})`);
+      rg.addColorStop(0.55, `rgba(255,232,170,${alp * 0.45})`);
+      rg.addColorStop(1,    'rgba(255,210,140,0)');
       ctx.fillStyle = rg;
       ctx.beginPath();
-      ctx.moveTo(ray.x - ray.wid*0.28, 0);
-      ctx.lineTo(ray.x + ray.wid*0.28, 0);
-      ctx.lineTo(ray.x + ray.wid*1.55, h*0.72);
-      ctx.lineTo(ray.x - ray.wid*0.75, h*0.72);
+      ctx.moveTo(ray.x - ray.wid * 0.28, 0);
+      ctx.lineTo(ray.x + ray.wid * 0.28, 0);
+      ctx.lineTo(ray.x + ray.wid * 1.55, h * 0.78);
+      ctx.lineTo(ray.x - ray.wid * 0.75, h * 0.78);
       ctx.closePath(); ctx.fill();
     }
     ctx.restore();
@@ -763,19 +999,6 @@ function _drawDuo(ctx, isDark, state, t, py, w, h) {
 
   // ── wind ──
   _stepWind(state, -2.4, 2.4, [25, 70]);
-
-  // ── floating motes ──
-  for (const m of state.motes) {
-    m.y -= m.vy;
-    m.x += Math.sin(t * 0.016 + m.dp) * m.drift + state.wind.current * 0.7;
-    if (m.y < -5) { m.y = h + 5; m.x = Math.random() * w; }
-    const alp = m.alp * (0.45 + 0.55 * Math.abs(Math.sin(t * 0.025 + m.dp)));
-    ctx.beginPath(); ctx.arc(m.x, m.y, m.r, 0, Math.PI * 2);
-    ctx.fillStyle = isDark
-      ? `rgba(90,215,75,${alp * 0.58})`
-      : `rgba(215,255,175,${alp})`;
-    ctx.fill();
-  }
 
   // ── rain (random downpours with smooth fade in/out) ──
   // Storms last 10× as long as they used to (2–~6 min each) with longer dry
@@ -8669,7 +8892,7 @@ function SettingsPanel({ onClose }) {
   const paletteOpts = [
     ['cold', '❄️', 'Cold'],
     ['warm', '🍂', 'Warm'],
-    ['duo', '🦉', 'Duo'],
+    ['duo', '🗿', 'Rio'],
     ['tropical', '🌴', 'Tropical'],
     ['madison', '🏛️', 'Madison'],
   ];
@@ -8721,10 +8944,10 @@ function SettingsPanel({ onClose }) {
           <label className="flex items-center justify-between gap-3 bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg px-3 py-2.5 cursor-pointer">
             <div className="text-sm min-w-0">
               <div className="text-[var(--text)]">
-                {palette === 'cold' ? '❄️' : palette === 'warm' ? '🍂' : palette === 'duo' ? '🌿' : '🌴'} Dynamic background
+                {palette === 'cold' ? '❄️' : palette === 'warm' ? '🍂' : palette === 'duo' ? '⛰️' : '🌴'} Dynamic background
               </div>
               <div className="text-[11px] text-[var(--text-faint)] mt-0.5">
-                {palette === 'cold' ? 'Winter snow & aurora background.' : palette === 'warm' ? 'Fall trees background.' : palette === 'duo' ? 'Jungle background.' : 'Tropical beach background.'}{' '}
+                {palette === 'cold' ? 'Winter snow + mountain range background.' : palette === 'warm' ? 'Fall trees + mountain range background.' : palette === 'duo' ? 'Rio de Janeiro with Christ the Redeemer.' : 'Tropical beach background.'}{' '}
                 Follows your light/dark mode.
               </div>
             </div>
