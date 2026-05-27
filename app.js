@@ -6420,6 +6420,243 @@ function looksLikeMolecule(text) {
   return null;
 }
 
+// ---------- quiz helpers: calculator + periodic table ----------
+
+// Safe-ish expression evaluator. Input is allowed to contain digits, the
+// four arithmetic ops, parentheses, decimal points, and the symbols below
+// (rewritten to JS Math equivalents). Anything else returns NaN.
+function _calcEvaluate(expr) {
+  if (!expr || !expr.trim()) return '';
+  let s = String(expr)
+    .replace(/×/g, '*').replace(/÷/g, '/')
+    .replace(/−/g, '-') // unicode minus
+    .replace(/π/g, '(Math.PI)')
+    .replace(/(?<![A-Za-z])e(?![A-Za-z0-9])/g, '(Math.E)')
+    .replace(/√\s*\(/g, 'Math.sqrt(')
+    .replace(/√\s*(\d+(?:\.\d+)?)/g, 'Math.sqrt($1)')
+    .replace(/(\d+(?:\.\d+)?|\))\s*\^\s*(\d+(?:\.\d+)?|\([^)]+\))/g, 'Math.pow($1,$2)')
+    .replace(/\blog\(/g, 'Math.log10(')
+    .replace(/\bln\(/g, 'Math.log(')
+    .replace(/\bsin\(/g, 'Math.sin(')
+    .replace(/\bcos\(/g, 'Math.cos(')
+    .replace(/\btan\(/g, 'Math.tan(')
+    .replace(/(\d+(?:\.\d+)?)\s*%/g, '($1/100)');
+  // Whitelist: digits, dot, ops, parens, comma (for Math.pow args), spaces,
+  // and the identifiers Math.PI/E/sqrt/pow/log/log10/sin/cos/tan.
+  if (!/^[0-9+\-*/().,\s]|Math\.(PI|E|sqrt|pow|log|log10|sin|cos|tan)/.test(s)) return NaN;
+  const stripped = s.replace(/Math\.(PI|E|sqrt|pow|log10|log|sin|cos|tan)/g, '');
+  if (/[^0-9+\-*/().,\s]/.test(stripped)) return NaN;
+  try {
+    // eslint-disable-next-line no-new-func
+    const v = new Function('return (' + s + ')')();
+    if (typeof v !== 'number' || !Number.isFinite(v)) return NaN;
+    return v;
+  } catch { return NaN; }
+}
+
+function CalculatorModal({ onClose }) {
+  const [expr, setExpr] = useState('');
+  const result = useMemo(() => {
+    if (!expr.trim()) return '';
+    const v = _calcEvaluate(expr);
+    if (Number.isNaN(v)) return '';
+    // Trim long floats — show up to 10 significant digits.
+    if (Number.isInteger(v)) return String(v);
+    const fixed = Number(v.toPrecision(10));
+    return String(fixed);
+  }, [expr]);
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => { document.body.style.overflow = prev; window.removeEventListener('keydown', onKey); };
+  }, [onClose]);
+  const push = (s) => setExpr((p) => p + s);
+  const back = () => setExpr((p) => p.slice(0, -1));
+  const ac   = () => setExpr('');
+  const equals = () => { if (result !== '') setExpr(result); };
+  // Five rows × four cols, plus a top row of scientific ops.
+  const sci = [
+    ['(', () => push('(')], [')', () => push(')')],
+    ['π', () => push('π')], ['e', () => push('e')],
+    ['√', () => push('√(')], ['x²', () => push('^2')], ['xʸ', () => push('^')],
+    ['log', () => push('log(')], ['ln', () => push('ln(')], ['%', () => push('%')],
+  ];
+  const grid = [
+    ['AC', ac, 'op'], ['⌫', back, 'op'], ['÷', () => push('÷'), 'op'], ['×', () => push('×'), 'op'],
+    ['7', () => push('7')], ['8', () => push('8')], ['9', () => push('9')], ['−', () => push('-'), 'op'],
+    ['4', () => push('4')], ['5', () => push('5')], ['6', () => push('6')], ['+', () => push('+'), 'op'],
+    ['1', () => push('1')], ['2', () => push('2')], ['3', () => push('3')], ['=', equals, 'eq'],
+    ['0', () => push('0')], ['.', () => push('.')],
+  ];
+  return (
+    <div className="fixed inset-0 z-[60] bg-black/55 backdrop-blur-sm flex items-end sm:items-center justify-center p-2 sm:p-4" onClick={onClose}>
+      <div
+        className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 w-full max-w-sm space-y-3"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between gap-3">
+          <div className="text-[10px] uppercase tracking-wide text-[var(--text-muted)]">Calculator</div>
+          <button onClick={onClose} className="text-2xl leading-none text-[var(--text-muted)] hover:text-[var(--text-strong)]" aria-label="Close">×</button>
+        </div>
+        <div className="bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg px-3 py-3">
+          <div className="text-right text-sm text-[var(--text-faint)] font-mono break-all min-h-[1.25rem]">{expr || ' '}</div>
+          <div className="text-right text-2xl font-semibold text-[var(--text-strong)] font-mono break-all min-h-[2rem]">{result || (expr ? '…' : '0')}</div>
+        </div>
+        <div className="grid grid-cols-5 gap-1.5">
+          {sci.map(([label, fn]) => (
+            <button
+              key={label}
+              onClick={fn}
+              className="text-xs px-2 py-2 border border-[var(--border)] rounded text-[var(--text-muted)] hover:bg-[var(--bg-hover)]"
+            >{label}</button>
+          ))}
+        </div>
+        <div className="grid grid-cols-4 gap-1.5">
+          {grid.map(([label, fn, kind], i) => {
+            const isOp = kind === 'op';
+            const isEq = kind === 'eq';
+            const wide = label === '0';
+            return (
+              <button
+                key={i}
+                onClick={fn}
+                className={`text-base font-medium py-3 rounded transition-colors ${wide ? 'col-span-2' : ''} ${
+                  isEq ? 'bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)]'
+                  : isOp ? 'bg-[var(--accent-soft)] text-[var(--accent-text)] hover:bg-[var(--bg-hover)]'
+                  : 'bg-[var(--bg-elev)] border border-[var(--border)] text-[var(--text)] hover:bg-[var(--bg-hover)]'
+                }`}
+              >{label}</button>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// All 118 elements with their (col, row) position in the standard
+// extended periodic-table layout. Lanthanides go in row 8 (cols 3-17),
+// actinides in row 9. Category codes: am alkali metal, ae alkaline
+// earth, tm transition, pt post-transition, ml metalloid, nm nonmetal,
+// ha halogen, ng noble gas, ln lanthanide, ac actinide.
+const PERIODIC_TABLE = (
+  // sym, name, atomicNumber, atomicMass, col, row, category
+  'H,Hydrogen,1,1.008,1,1,nm|He,Helium,2,4.003,18,1,ng|' +
+  'Li,Lithium,3,6.94,1,2,am|Be,Beryllium,4,9.012,2,2,ae|B,Boron,5,10.81,13,2,ml|C,Carbon,6,12.01,14,2,nm|N,Nitrogen,7,14.01,15,2,nm|O,Oxygen,8,16.00,16,2,nm|F,Fluorine,9,19.00,17,2,ha|Ne,Neon,10,20.18,18,2,ng|' +
+  'Na,Sodium,11,22.99,1,3,am|Mg,Magnesium,12,24.31,2,3,ae|Al,Aluminum,13,26.98,13,3,pt|Si,Silicon,14,28.09,14,3,ml|P,Phosphorus,15,30.97,15,3,nm|S,Sulfur,16,32.06,16,3,nm|Cl,Chlorine,17,35.45,17,3,ha|Ar,Argon,18,39.95,18,3,ng|' +
+  'K,Potassium,19,39.10,1,4,am|Ca,Calcium,20,40.08,2,4,ae|Sc,Scandium,21,44.96,3,4,tm|Ti,Titanium,22,47.87,4,4,tm|V,Vanadium,23,50.94,5,4,tm|Cr,Chromium,24,52.00,6,4,tm|Mn,Manganese,25,54.94,7,4,tm|Fe,Iron,26,55.85,8,4,tm|Co,Cobalt,27,58.93,9,4,tm|Ni,Nickel,28,58.69,10,4,tm|Cu,Copper,29,63.55,11,4,tm|Zn,Zinc,30,65.38,12,4,tm|Ga,Gallium,31,69.72,13,4,pt|Ge,Germanium,32,72.63,14,4,ml|As,Arsenic,33,74.92,15,4,ml|Se,Selenium,34,78.97,16,4,nm|Br,Bromine,35,79.90,17,4,ha|Kr,Krypton,36,83.80,18,4,ng|' +
+  'Rb,Rubidium,37,85.47,1,5,am|Sr,Strontium,38,87.62,2,5,ae|Y,Yttrium,39,88.91,3,5,tm|Zr,Zirconium,40,91.22,4,5,tm|Nb,Niobium,41,92.91,5,5,tm|Mo,Molybdenum,42,95.95,6,5,tm|Tc,Technetium,43,98,7,5,tm|Ru,Ruthenium,44,101.1,8,5,tm|Rh,Rhodium,45,102.9,9,5,tm|Pd,Palladium,46,106.4,10,5,tm|Ag,Silver,47,107.9,11,5,tm|Cd,Cadmium,48,112.4,12,5,tm|In,Indium,49,114.8,13,5,pt|Sn,Tin,50,118.7,14,5,pt|Sb,Antimony,51,121.8,15,5,ml|Te,Tellurium,52,127.6,16,5,ml|I,Iodine,53,126.9,17,5,ha|Xe,Xenon,54,131.3,18,5,ng|' +
+  'Cs,Caesium,55,132.9,1,6,am|Ba,Barium,56,137.3,2,6,ae|La,Lanthanum,57,138.9,3,8,ln|Ce,Cerium,58,140.1,4,8,ln|Pr,Praseodymium,59,140.9,5,8,ln|Nd,Neodymium,60,144.2,6,8,ln|Pm,Promethium,61,145,7,8,ln|Sm,Samarium,62,150.4,8,8,ln|Eu,Europium,63,152.0,9,8,ln|Gd,Gadolinium,64,157.2,10,8,ln|Tb,Terbium,65,158.9,11,8,ln|Dy,Dysprosium,66,162.5,12,8,ln|Ho,Holmium,67,164.9,13,8,ln|Er,Erbium,68,167.3,14,8,ln|Tm,Thulium,69,168.9,15,8,ln|Yb,Ytterbium,70,173.0,16,8,ln|Lu,Lutetium,71,175.0,17,8,ln|Hf,Hafnium,72,178.5,4,6,tm|Ta,Tantalum,73,180.9,5,6,tm|W,Tungsten,74,183.8,6,6,tm|Re,Rhenium,75,186.2,7,6,tm|Os,Osmium,76,190.2,8,6,tm|Ir,Iridium,77,192.2,9,6,tm|Pt,Platinum,78,195.1,10,6,tm|Au,Gold,79,197.0,11,6,tm|Hg,Mercury,80,200.6,12,6,tm|Tl,Thallium,81,204.4,13,6,pt|Pb,Lead,82,207.2,14,6,pt|Bi,Bismuth,83,209.0,15,6,pt|Po,Polonium,84,209,16,6,ml|At,Astatine,85,210,17,6,ha|Rn,Radon,86,222,18,6,ng|' +
+  'Fr,Francium,87,223,1,7,am|Ra,Radium,88,226,2,7,ae|Ac,Actinium,89,227,3,9,ac|Th,Thorium,90,232.0,4,9,ac|Pa,Protactinium,91,231.0,5,9,ac|U,Uranium,92,238.0,6,9,ac|Np,Neptunium,93,237,7,9,ac|Pu,Plutonium,94,244,8,9,ac|Am,Americium,95,243,9,9,ac|Cm,Curium,96,247,10,9,ac|Bk,Berkelium,97,247,11,9,ac|Cf,Californium,98,251,12,9,ac|Es,Einsteinium,99,252,13,9,ac|Fm,Fermium,100,257,14,9,ac|Md,Mendelevium,101,258,15,9,ac|No,Nobelium,102,259,16,9,ac|Lr,Lawrencium,103,266,17,9,ac|Rf,Rutherfordium,104,267,4,7,tm|Db,Dubnium,105,268,5,7,tm|Sg,Seaborgium,106,269,6,7,tm|Bh,Bohrium,107,270,7,7,tm|Hs,Hassium,108,277,8,7,tm|Mt,Meitnerium,109,278,9,7,tm|Ds,Darmstadtium,110,281,10,7,tm|Rg,Roentgenium,111,282,11,7,tm|Cn,Copernicium,112,285,12,7,tm|Nh,Nihonium,113,286,13,7,pt|Fl,Flerovium,114,289,14,7,pt|Mc,Moscovium,115,290,15,7,pt|Lv,Livermorium,116,293,16,7,pt|Ts,Tennessine,117,294,17,7,ha|Og,Oganesson,118,294,18,7,ng'
+).split('|').map((row) => {
+  const p = row.split(',');
+  return { sym: p[0], name: p[1], num: +p[2], mass: +p[3], col: +p[4], row: +p[5], cat: p[6] };
+});
+
+const PERIODIC_CATEGORIES = {
+  am: { label: 'Alkali metal',       bg: '#f4c64a', fg: '#3a2a05' },
+  ae: { label: 'Alkaline earth',     bg: '#f6dd6e', fg: '#3a2e05' },
+  tm: { label: 'Transition metal',   bg: '#f0a888', fg: '#3a1a05' },
+  pt: { label: 'Post-transition',    bg: '#b8c5d4', fg: '#1a232c' },
+  ml: { label: 'Metalloid',          bg: '#b4dca2', fg: '#0e2a08' },
+  nm: { label: 'Nonmetal',           bg: '#7dd0c4', fg: '#062624' },
+  ha: { label: 'Halogen',            bg: '#9bb6f1', fg: '#0a1838' },
+  ng: { label: 'Noble gas',          bg: '#c89af0', fg: '#1f0838' },
+  ln: { label: 'Lanthanide',         bg: '#f0a6d1', fg: '#380a26' },
+  ac: { label: 'Actinide',           bg: '#f08a8a', fg: '#380a0a' },
+};
+
+function PeriodicTableModal({ onClose }) {
+  const [selected, setSelected] = useState(null);
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKey = (e) => { if (e.key === 'Escape') { if (selected) setSelected(null); else onClose(); } };
+    window.addEventListener('keydown', onKey);
+    return () => { document.body.style.overflow = prev; window.removeEventListener('keydown', onKey); };
+  }, [onClose, selected]);
+  return (
+    <div className="fixed inset-0 z-[60] bg-black/65 backdrop-blur-sm flex items-center justify-center p-2 sm:p-3" onClick={onClose}>
+      <div
+        className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-3 sm:p-4 w-full max-w-5xl max-h-[92vh] overflow-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between gap-3 mb-3 sticky top-0 bg-[var(--bg-card)] pb-2 -mt-1 pt-1">
+          <div>
+            <div className="text-[10px] uppercase tracking-wide text-[var(--text-muted)]">Periodic table</div>
+            <div className="text-sm font-semibold text-[var(--text-strong)]">{selected ? `${selected.name} (${selected.sym})` : 'Tap an element for details'}</div>
+          </div>
+          <button onClick={onClose} className="text-2xl leading-none text-[var(--text-muted)] hover:text-[var(--text-strong)]" aria-label="Close">×</button>
+        </div>
+        {/* Element grid. 18 columns. Two rows below the main grid for
+            lanthanides and actinides. */}
+        <div
+          className="grid gap-[2px]"
+          style={{
+            gridTemplateColumns: 'repeat(18, minmax(0, 1fr))',
+            gridAutoRows: 'minmax(0, 1fr)',
+            aspectRatio: '18 / 11',
+            minWidth: '600px',
+          }}
+        >
+          {PERIODIC_TABLE.map((el) => {
+            const cat = PERIODIC_CATEGORIES[el.cat] || { bg: '#888', fg: '#fff' };
+            return (
+              <button
+                key={el.num}
+                onClick={() => setSelected(el)}
+                style={{
+                  gridColumnStart: el.col,
+                  gridRowStart: el.row,
+                  background: cat.bg,
+                  color: cat.fg,
+                }}
+                className="flex flex-col items-stretch justify-between rounded-[3px] p-0.5 text-left leading-none hover:brightness-110 focus:outline-none focus:ring-2 focus:ring-[var(--accent-border)]"
+                title={`${el.name} · #${el.num} · ${el.mass}`}
+              >
+                <div className="text-[7px] sm:text-[9px] opacity-80">{el.num}</div>
+                <div className="text-[10px] sm:text-sm font-bold text-center">{el.sym}</div>
+                <div className="text-[6px] sm:text-[7px] opacity-70 text-center">{el.mass}</div>
+              </button>
+            );
+          })}
+        </div>
+        {/* Details + category legend. */}
+        <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg p-3 text-xs">
+            {selected ? (
+              <>
+                <div className="text-[var(--text-faint)] uppercase tracking-wide text-[10px]">{PERIODIC_CATEGORIES[selected.cat]?.label || ''}</div>
+                <div className="font-semibold text-base text-[var(--text-strong)] mt-0.5">{selected.name} — {selected.sym}</div>
+                <div className="text-[var(--text-muted)] mt-1.5 space-y-0.5">
+                  <div>Atomic number: <span className="font-mono text-[var(--text)]">{selected.num}</span></div>
+                  <div>Atomic mass: <span className="font-mono text-[var(--text)]">{selected.mass}</span></div>
+                  <div>Position: period {selected.row > 7 ? (selected.cat === 'ln' ? 6 : 7) : selected.row}, group {selected.row > 7 ? '—' : selected.col}</div>
+                </div>
+              </>
+            ) : (
+              <div className="text-[var(--text-muted)]">Tap any element to see its name, atomic number, and atomic mass.</div>
+            )}
+          </div>
+          <div className="bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg p-3">
+            <div className="text-[10px] uppercase tracking-wide text-[var(--text-muted)] mb-1.5">Categories</div>
+            <div className="grid grid-cols-2 gap-x-2 gap-y-1">
+              {Object.entries(PERIODIC_CATEGORIES).map(([k, c]) => (
+                <div key={k} className="flex items-center gap-2 text-[11px]">
+                  <span className="inline-block w-3 h-3 rounded" style={{ background: c.bg }} />
+                  <span className="text-[var(--text-muted)] truncate">{c.label}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Click-to-flip flashcard. Front = term, back = definition. Both faces are
 // stacked in the same grid cell so the card auto-sizes to whichever face is
 // taller — no internal scrollbar, no clipped definitions.
@@ -6977,6 +7214,8 @@ function QuizRunner({ items, onExit, onPause }) {
   }, [onPause]);
 
   const [flagging, setFlagging] = useState(false);
+  const [showCalc, setShowCalc] = useState(false);
+  const [showTable, setShowTable] = useState(false);
 
   const item = items[index];
   const isLast = index === items.length - 1;
@@ -7012,7 +7251,19 @@ function QuizRunner({ items, onExit, onPause }) {
           <span className="text-[var(--text-strong)]">{item.chapter}</span>
           <span className="ml-2">· {index + 1}/{items.length}</span>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-1.5 shrink-0">
+          <button
+            onClick={() => setShowCalc(true)}
+            title="Open calculator"
+            aria-label="Open calculator"
+            className="text-sm px-2 py-1 border border-[var(--border)] rounded text-[var(--text-muted)] hover:text-[var(--text-strong)] hover:bg-[var(--bg-hover)]"
+          >🧮</button>
+          <button
+            onClick={() => setShowTable(true)}
+            title="Open periodic table"
+            aria-label="Open periodic table"
+            className="text-sm px-2 py-1 border border-[var(--border)] rounded text-[var(--text-muted)] hover:text-[var(--text-strong)] hover:bg-[var(--bg-hover)]"
+          >⚛️</button>
           <span className="text-xs font-mono text-[var(--text-muted)]">{timer.display}</span>
           <button
             onClick={() => exitQuiz(results, timer.display)}
@@ -7050,6 +7301,8 @@ function QuizRunner({ items, onExit, onPause }) {
         })()}
       </div>
       {flagging && <FlagQuestionModal item={item} onClose={() => setFlagging(false)} />}
+      {showCalc && <CalculatorModal onClose={() => setShowCalc(false)} />}
+      {showTable && <PeriodicTableModal onClose={() => setShowTable(false)} />}
     </div>
   );
 }
@@ -7355,6 +7608,24 @@ function CarsRunner({ date, payload, onClose, alreadyDone }) {
   const [phase, setPhase] = useState(alreadyDone ? 'review' : 'attempt');
   const finalizedRef = useRef(false);
   const scrollRef = useRef(null);
+  // Elapsed-time timer. Ticks only during the 'attempt' phase, freezes
+  // the moment the user submits, and resets back to 0 if they retry.
+  const [elapsedMs, setElapsedMs] = useState(0);
+  const startRef = useRef(null);
+  useEffect(() => {
+    if (phase !== 'attempt') { startRef.current = null; return; }
+    if (startRef.current == null) startRef.current = Date.now() - elapsedMs;
+    const id = setInterval(() => {
+      setElapsedMs(Date.now() - startRef.current);
+    }, 500);
+    return () => clearInterval(id);
+  }, [phase]); // eslint-disable-line
+  const timerDisplay = (() => {
+    const s = Math.floor(elapsedMs / 1000);
+    const m = Math.floor(s / 60);
+    const r = s % 60;
+    return `${m}:${String(r).padStart(2, '0')}`;
+  })();
 
   const answeredCount = Object.keys(picks).length;
   const allAnswered = answeredCount === questions.length && questions.length > 0;
@@ -7400,7 +7671,13 @@ function CarsRunner({ date, payload, onClose, alreadyDone }) {
     }
   };
 
-  const retry = () => { setPhase('attempt'); scrollTop(); };
+  const retry = () => {
+    // Reset the elapsed timer so the second attempt starts fresh.
+    setElapsedMs(0);
+    startRef.current = null;
+    setPhase('attempt');
+    scrollTop();
+  };
 
   const goReview = () => { setPhase('review'); scrollTop(); };
 
@@ -7430,7 +7707,18 @@ function CarsRunner({ date, payload, onClose, alreadyDone }) {
             <h2 className="font-semibold text-[var(--text-strong)] truncate">{payload.title || payload.discipline || 'CARS passage'}</h2>
           </div>
           <div className="flex items-center gap-2 shrink-0">
-            {phase === 'attempt' && <span className="text-xs font-mono text-[var(--text-muted)]">{answeredCount}/{questions.length}</span>}
+            {phase === 'attempt' && (
+              <>
+                <span
+                  className="text-xs font-mono text-[var(--text-muted)] tabular-nums"
+                  title="Time spent on this passage"
+                >⏱ {timerDisplay}</span>
+                <span className="text-xs font-mono text-[var(--text-muted)]">{answeredCount}/{questions.length}</span>
+              </>
+            )}
+            {phase === 'graded' && (
+              <span className="text-xs font-mono text-[var(--text-muted)] tabular-nums" title="Time spent">⏱ {timerDisplay}</span>
+            )}
             {phase === 'review' && <span className="text-xs font-mono text-[var(--text-muted)]">{score}/{questions.length}</span>}
             <button onClick={onClose} className="text-xs px-3 py-1.5 border border-[var(--border)] rounded hover:bg-[var(--bg-hover)]">Close</button>
           </div>
