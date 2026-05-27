@@ -4479,8 +4479,10 @@ function AppProvider({ children }) {
 
   const addAttempt = useCallback((a) => {
     // client_id is a stable, client-generated UUID per attempt. The server
-    // INSERTs OR IGNOREs on (user_id, client_id), so a retried sync after a
-    // network blip can't double-count this attempt.
+    // INSERTs OR REPLACEs on (user_id, client_id), so a retried sync after
+    // a network blip can't double-count, and an explicit re-send of the
+    // same client_id with a corrected `correct` flag overwrites the prior
+    // row (used by the short-answer Override button).
     const cid =
       (typeof crypto !== 'undefined' && crypto.randomUUID)
         ? crypto.randomUUID()
@@ -4488,6 +4490,25 @@ function AppProvider({ children }) {
     const stamped = { ...a, ts: Date.now(), client_id: a.client_id || cid };
     setAttemptsState((prev) => {
       const next = [...prev, stamped];
+      storage.set(KEYS.attempts, next);
+      return next;
+    });
+  }, []);
+
+  // Patch the most recent attempt for a given question_id. Used by the
+  // short-answer Override flow when the user disagrees with the Gemini
+  // grade. Marks the row un-synced so it re-flushes to the server, which
+  // will UPSERT on (user_id, client_id) and overwrite the prior `correct`.
+  const updateLastAttempt = useCallback((question_id, patch) => {
+    if (!question_id || !patch) return;
+    setAttemptsState((prev) => {
+      let idx = -1;
+      for (let i = prev.length - 1; i >= 0; i--) {
+        if (prev[i].question_id === question_id) { idx = i; break; }
+      }
+      if (idx === -1) return prev;
+      const next = prev.slice();
+      next[idx] = { ...next[idx], ...patch, synced: false };
       storage.set(KEYS.attempts, next);
       return next;
     });
@@ -4762,7 +4783,7 @@ function AppProvider({ children }) {
       files, setFiles,
       extractions, setExtraction,
       questions, setQuestionsFor,
-      attempts, addAttempt, clearAttempts, eraseStatsFor, pullAttempts,
+      attempts, addAttempt, updateLastAttempt, clearAttempts, eraseStatsFor, pullAttempts,
       staticBank, useStaticBank,
       readOnly, setReadOnly,
       palette, mode, setPalette, setMode,
@@ -4777,7 +4798,7 @@ function AppProvider({ children }) {
       tropicalBg, setTropicalBg,
     }),
     [apiKey, setApiKey, files, setFiles, extractions, setExtraction, questions, setQuestionsFor,
-     attempts, addAttempt, clearAttempts, eraseStatsFor, pullAttempts, staticBank, useStaticBank, readOnly,
+     attempts, addAttempt, updateLastAttempt, clearAttempts, eraseStatsFor, pullAttempts, staticBank, useStaticBank, readOnly,
      palette, mode, setPalette, setMode,
      github, setGithub, pushBank, pushStatus,
      session, setSession, api, pendingSync, flushSync, syncBusy, syncError, client,
@@ -6322,37 +6343,64 @@ const MOLECULES = [
   { name: 'iodine', variants: ['I2'] },
   { name: 'fluorine', variants: ['F2'] },
 
-  // Functional groups. PubChem resolves most of these directly (alcohol,
-  // amine, ester, aldehyde, ether, thiol, imine, epoxide, phenyl,
-  // phosphate, sulfate, hydroxyl, methyl, ethyl). For the ones that 404
-  // (carboxylic acid, ketone, amide, nitrile, carbonyl) we supply a
-  // representative molecule for the structure image. The modal shows
-  // "Representative: <molecule>" so the user knows it's an illustrative
-  // example, not a single specific compound.
-  { name: 'alcohol',            variants: ['alcohols'] },
-  { name: 'amine',              variants: ['amines'] },
-  { name: 'amide',              variants: ['amides'], representative: 'acetamide' },
-  { name: 'aldehyde',           variants: ['aldehydes'] },
-  { name: 'ketone',             variants: ['ketones'], representative: 'acetone' },
-  { name: 'carboxylic acid',    variants: ['carboxylic acids'], representative: 'formic acid' },
-  { name: 'ester',              variants: ['esters'] },
-  { name: 'ether',              variants: ['ethers'] },
-  { name: 'thiol',              variants: ['thiols'] },
-  { name: 'nitrile',            variants: ['nitriles'], representative: 'acetonitrile' },
-  { name: 'imine',              variants: ['imines'] },
-  { name: 'epoxide',            variants: ['epoxides'] },
-  { name: 'carbonyl',           variants: ['carbonyl group'], representative: 'formaldehyde' },
-  { name: 'hydroxyl',           variants: ['hydroxyl group'] },
-  { name: 'methyl',             variants: ['methyl group'] },
-  { name: 'ethyl',              variants: ['ethyl group'] },
-  { name: 'phenyl',             variants: ['phenyl group'] },
-  { name: 'phosphate',          variants: ['phosphates', 'phosphate group'] },
-  { name: 'sulfate',            variants: ['sulfates', 'sulfate group'] },
-  { name: 'anhydride',          variants: ['anhydrides'], representative: 'acetic anhydride' },
-  { name: 'acyl chloride',      variants: ['acid chloride', 'acid chlorides'], representative: 'acetyl chloride' },
-  { name: 'alkyl halide',       variants: ['alkyl halides', 'haloalkane'], representative: 'chloromethane' },
-  { name: 'amino group',        representative: 'methylamine' },
-  { name: 'carboxyl group',     representative: 'formic acid' },
+  // Functional groups. Every entry now has an explicit representative
+  // compound — the small, recognisable molecule that best illustrates the
+  // group. Without these, PubChem often returns whatever obscure entry
+  // happens to match the bare name (e.g. "phosphate" returns the lone PO4
+  // ion, "methyl" returns the methyl radical, "alcohol" returns "ethyl
+  // alcohol" as an alcoholic-beverage entry). The modal shows
+  // "Representative: <compound>" so the user knows it's an illustrative
+  // structure, not a single specific molecule.
+  { name: 'alcohol',            variants: ['alcohols'],                            representative: 'ethanol' },
+  { name: 'amine',              variants: ['amines', 'primary amine'],             representative: 'methylamine' },
+  { name: 'amide',              variants: ['amides'],                              representative: 'acetamide' },
+  { name: 'aldehyde',           variants: ['aldehydes'],                           representative: 'acetaldehyde' },
+  { name: 'ketone',             variants: ['ketones'],                             representative: 'acetone' },
+  { name: 'carboxylic acid',    variants: ['carboxylic acids'],                    representative: 'acetic acid' },
+  { name: 'ester',              variants: ['esters'],                              representative: 'methyl acetate' },
+  { name: 'ether',              variants: ['ethers'],                              representative: 'diethyl ether' },
+  { name: 'thiol',              variants: ['thiols'],                              representative: 'ethanethiol' },
+  { name: 'sulfide',            variants: ['sulfides', 'thioether'],               representative: 'dimethyl sulfide' },
+  { name: 'disulfide',          variants: ['disulfides'],                          representative: 'dimethyl disulfide' },
+  { name: 'nitrile',            variants: ['nitriles'],                            representative: 'acetonitrile' },
+  { name: 'imine',              variants: ['imines', 'Schiff base'],               representative: 'N-methylmethanimine' },
+  { name: 'epoxide',            variants: ['epoxides'],                            representative: 'ethylene oxide' },
+  { name: 'enol',               variants: ['enols'],                               representative: 'vinyl alcohol' },
+  { name: 'enolate',            variants: ['enolates'],                            representative: 'acetone' },
+  { name: 'acetal',             variants: ['acetals'],                             representative: '1,1-dimethoxyethane' },
+  { name: 'hemiacetal',         variants: ['hemiacetals'],                         representative: '1-methoxyethanol' },
+  { name: 'carbonyl',           variants: ['carbonyl group', 'carbonyls'],         representative: 'acetone' },
+  { name: 'hydroxyl',           variants: ['hydroxyl group', 'hydroxy group'],     representative: 'ethanol' },
+  { name: 'methyl',             variants: ['methyl group'],                        representative: 'methane' },
+  { name: 'methylene',          variants: ['methylene group'],                     representative: 'propane' },
+  { name: 'ethyl',              variants: ['ethyl group'],                         representative: 'ethane' },
+  { name: 'isopropyl',          variants: ['isopropyl group'],                     representative: '2-bromopropane' },
+  { name: 'tert-butyl',         variants: ['tert-butyl group', 't-butyl'],         representative: 'tert-butyl alcohol' },
+  { name: 'phenyl',             variants: ['phenyl group'],                        representative: 'benzene' },
+  { name: 'benzyl',             variants: ['benzyl group'],                        representative: 'toluene' },
+  { name: 'vinyl',              variants: ['vinyl group'],                         representative: 'ethene' },
+  { name: 'allyl',              variants: ['allyl group'],                         representative: 'propene' },
+  { name: 'phosphate',          variants: ['phosphates', 'phosphate group'],       representative: 'phosphoric acid' },
+  { name: 'sulfate',            variants: ['sulfates', 'sulfate group'],           representative: 'sulfuric acid' },
+  { name: 'sulfonate',          variants: ['sulfonates', 'sulfonate group'],       representative: 'methanesulfonic acid' },
+  { name: 'sulfonyl',           variants: ['sulfonyl group'],                      representative: 'methanesulfonic acid' },
+  { name: 'nitro',              variants: ['nitro group'],                         representative: 'nitromethane' },
+  { name: 'nitroso',            variants: ['nitroso group'],                       representative: 'nitrosobenzene' },
+  { name: 'azide',              variants: ['azides', 'azido group'],               representative: 'methyl azide' },
+  { name: 'cyano',              variants: ['cyano group'],                         representative: 'acetonitrile' },
+  { name: 'isocyanide',         variants: ['isonitrile'],                          representative: 'methyl isocyanide' },
+  { name: 'isocyanate',         variants: ['isocyanates'],                         representative: 'methyl isocyanate' },
+  { name: 'cyanate',            variants: ['cyanate ion'],                         representative: 'methyl cyanate' },
+  { name: 'thiocyanate',        variants: ['thiocyanates'],                        representative: 'methyl thiocyanate' },
+  { name: 'anhydride',          variants: ['anhydrides', 'acid anhydride'],        representative: 'acetic anhydride' },
+  { name: 'acyl chloride',      variants: ['acid chloride', 'acid chlorides'],     representative: 'acetyl chloride' },
+  { name: 'alkyl halide',       variants: ['alkyl halides', 'haloalkane', 'haloalkanes'], representative: 'bromomethane' },
+  { name: 'aryl halide',        variants: ['aryl halides'],                        representative: 'chlorobenzene' },
+  { name: 'amino group',                                                           representative: 'methylamine' },
+  { name: 'carboxyl group',     variants: ['COOH group'],                          representative: 'acetic acid' },
+  { name: 'phosphodiester',     variants: ['phosphodiester bond'],                 representative: 'dimethyl phosphate' },
+  { name: 'peptide bond',       variants: ['amide bond'],                          representative: 'N-methylacetamide' },
+  { name: 'peroxide',           variants: ['peroxides'],                           representative: 'hydrogen peroxide' },
 ];
 
 // Build the lookup table + matcher pattern once at module load.
@@ -7004,7 +7052,7 @@ function MCQuestion({ item, onAnswer, nextSlot, onFlag }) {
 }
 
 // ---------- quiz: short answer ----------
-function ShortAnswerQuestion({ item, onAnswer, nextSlot }) {
+function ShortAnswerQuestion({ item, onAnswer, onAnswerOverride, nextSlot }) {
   const { client, apiKey } = useApp();
   const [text, setText] = useState('');
   const [revealed, setRevealed] = useState(false);
@@ -7052,24 +7100,22 @@ function ShortAnswerQuestion({ item, onAnswer, nextSlot }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auto]);
 
-  const flipVerdict = () => {
-    if (!graded) return;
-    // Re-grade with the inverted verdict. We don't actually re-call onAnswer
-    // because addAttempt was already fired with the original; instead we
-    // emit a corrective event. The simplest UX is to just visually swap
-    // the badge and let stats keep the auto value — but the user expects
-    // their override to count, so we flip the recorded attempt by calling
-    // onAnswer again with the opposite. The parent QuizRunner guards
-    // against double-scoring with its own `answered` flag, so we patch
-    // the attempt via a dedicated event the parent doesn't yet listen
-    // for. Pragmatic compromise: just toggle the visual; the user's
-    // stats reflect the auto-grade. Note this in the UI so it's honest.
-    setManualOverride((v) => !v);
-  };
   const [manualOverride, setManualOverride] = useState(false);
   const verdictPasses = auto && typeof auto.passes === 'boolean'
     ? (manualOverride ? !auto.passes : !!auto.passes)
     : null;
+
+  const flipVerdict = () => {
+    if (!graded || !auto || typeof auto.passes !== 'boolean') return;
+    // Flip the displayed verdict AND patch the recorded attempt so stats
+    // and server-side sync reflect the override. The parent's update
+    // hook re-marks the row un-synced; the server upserts on
+    // (user_id, client_id) and overwrites the prior `correct` value.
+    const newOverride = !manualOverride;
+    setManualOverride(newOverride);
+    const newPasses = newOverride ? !auto.passes : !!auto.passes;
+    onAnswerOverride?.({ correct: newPasses });
+  };
 
   return (
     <div className="question-card space-y-4">
@@ -7116,7 +7162,7 @@ function ShortAnswerQuestion({ item, onAnswer, nextSlot }) {
                     <button
                       onClick={flipVerdict}
                       className="ml-auto text-[11px] px-2 py-0.5 border border-[var(--border)] rounded text-[var(--text-muted)] hover:text-[var(--text-strong)] hover:bg-[var(--bg-hover)]"
-                      title="Disagree with the auto-grade? Flip the verdict shown here (stats reflect the original auto-grade)."
+                      title="Disagree with the auto-grade? Flip the verdict — your stats and account sync update too."
                     >
                       Override
                     </button>
@@ -7484,7 +7530,7 @@ function useQuizTimer() {
 
 // ---------- quiz: runner ----------
 function QuizRunner({ items, onExit, onPause }) {
-  const { addAttempt, flushSync } = useApp();
+  const { addAttempt, updateLastAttempt, flushSync } = useApp();
   // Force-sync win/loss data to the server whenever a quiz ends.
   const exitQuiz = (r, time) => { try { flushSync(); } catch {} onExit(r, time); };
   const [index, setIndex] = useState(0);
@@ -7520,6 +7566,25 @@ function QuizRunner({ items, onExit, onPause }) {
       user_answer,
     });
     setResults((r) => [...r, { item, correct, user_answer }]);
+  };
+
+  // Short-answer Override pathway. Patches the most recent attempt for
+  // this question_id so account-side stats reflect the corrected verdict,
+  // and updates the in-memory results array so this quiz's summary screen
+  // matches. The server upserts on (user_id, client_id).
+  const handleAnswerOverride = ({ correct }) => {
+    if (!answered) return;
+    updateLastAttempt(item.id, { correct: !!correct });
+    setResults((prev) => {
+      const next = prev.slice();
+      for (let i = next.length - 1; i >= 0; i--) {
+        if (next[i].item?.id === item.id) {
+          next[i] = { ...next[i], correct: !!correct };
+          break;
+        }
+      }
+      return next;
+    });
   };
 
   const next = () => {
@@ -7581,7 +7646,7 @@ function QuizRunner({ items, onExit, onPause }) {
           const props = { key: item.id, item, onAnswer: handleAnswer, nextSlot: nextBtn, onFlag };
           if (item.mode === 'mc') return <MCQuestion {...props} />;
           if (item.mode === 'two_part') return <TwoPartQuestion {...props} />;
-          if (item.mode === 'short') return <ShortAnswerQuestion {...props} />;
+          if (item.mode === 'short') return <ShortAnswerQuestion {...props} onAnswerOverride={handleAnswerOverride} />;
           if (item.mode === 'match') return <MatchingQuestion {...props} />;
           return null;
         })()}
