@@ -8893,10 +8893,136 @@ function SettingsPanel({ onClose }) {
         </label>
       </div>
 
+      <StorageUsageSection />
+
       <EraseQuizStatsSection />
 
     </div>
   );
+}
+
+// Compact storage-usage report. Shows total localStorage bytes used by the
+// app, a per-category breakdown (chapters / attempts / caches / other), and
+// a "refresh" button that recomputes after the user clears something. The
+// LZ-compression we ship typically lands the chapter blob at ~25% of the
+// original JSON; this is also where the user can verify the migration ran.
+function StorageUsageSection() {
+  const [snap, setSnap] = useState(() => computeStorageSnapshot());
+
+  const fmtBytes = (n) => {
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+    return `${(n / 1024 / 1024).toFixed(2)} MB`;
+  };
+
+  // iOS Safari and most desktop browsers expose ~5 MB per origin.
+  const cap = 5 * 1024 * 1024;
+  const pct = Math.min(100, Math.round((snap.total / cap) * 100));
+  const pctColor = pct >= 90
+    ? 'var(--danger-border)'
+    : pct >= 70
+    ? 'var(--warning-text-strong)'
+    : 'var(--accent)';
+
+  const rows = [
+    { key: 'chapters', label: 'Chapters (extractions + questions)' },
+    { key: 'attempts', label: 'Question attempts' },
+    { key: 'caches', label: 'CARS / Connections / Gemini caches' },
+    { key: 'crashlog', label: 'Crash log' },
+    { key: 'other', label: 'Settings, session, misc.' },
+  ];
+
+  const clearCaches = () => {
+    if (!confirm('Clear the CARS / Connections / Gemini explainer caches and the crash log? Safe — they rebuild on demand.')) return;
+    for (const k of ['mcat:carsCache', 'mcat:connectionsCache', 'mcat:connExplain', 'mcat:termDefs', 'mcat:crashlog']) {
+      try { localStorage.removeItem(k); } catch {}
+    }
+    setSnap(computeStorageSnapshot());
+  };
+
+  return (
+    <div>
+      <div className="text-xs uppercase tracking-wide text-[var(--text-muted)] mb-2">Storage</div>
+      <div className="bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg p-3 space-y-2.5">
+        <div>
+          <div className="flex items-baseline justify-between gap-2 text-sm">
+            <span className="text-[var(--text)]">{fmtBytes(snap.total)} used</span>
+            <span className="text-xs text-[var(--text-muted)]">of ~{fmtBytes(cap)} ({pct}%)</span>
+          </div>
+          <div className="h-1.5 bg-[var(--bg-elev)] rounded-full overflow-hidden mt-1">
+            <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, background: pctColor }} />
+          </div>
+          {snap.compressed > 0 && (
+            <div className="text-[11px] text-[var(--text-faint)] mt-1">
+              {snap.compressed} entr{snap.compressed === 1 ? 'y' : 'ies'} compressed · raw size would be ~{fmtBytes(snap.rawEstimate)}
+            </div>
+          )}
+        </div>
+        <div className="border-t border-[var(--border-soft)] pt-2 space-y-1">
+          {rows.map((r) => (
+            <div key={r.key} className="flex items-baseline justify-between gap-2 text-[11px]">
+              <span className="text-[var(--text-muted)] truncate">{r.label}</span>
+              <span className="font-mono text-[var(--text-faint)] shrink-0">{fmtBytes(snap.byCategory[r.key] || 0)}</span>
+            </div>
+          ))}
+        </div>
+        <div className="flex flex-wrap gap-2 pt-1">
+          <button
+            onClick={() => setSnap(computeStorageSnapshot())}
+            className="text-[11px] px-2.5 py-1 border border-[var(--border)] text-[var(--text-muted)] hover:text-[var(--text-strong)] rounded"
+          >
+            Refresh
+          </button>
+          <button
+            onClick={clearCaches}
+            className="text-[11px] px-2.5 py-1 border border-[var(--warning-text-strong)] text-[var(--warning-text-strong)] hover:bg-[var(--warning-bg)] rounded"
+          >
+            Clear caches
+          </button>
+        </div>
+        <div className="text-[11px] text-[var(--text-faint)] leading-snug pt-1">
+          Chapters and attempts persist across sessions. Caches rebuild on demand. The ~5 MB cap is enforced by your browser, not the app.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Walk localStorage once and total up byte usage per category. Bytes are
+// approximated as 2 × (key.length + value.length) since localStorage is
+// UTF-16 internally. Compressed entries are counted at their stored size,
+// not their decompressed size — that's the number that actually counts
+// against the quota.
+function computeStorageSnapshot() {
+  const byCategory = { chapters: 0, attempts: 0, caches: 0, crashlog: 0, other: 0 };
+  let total = 0, compressed = 0, rawEstimate = 0;
+  const CACHE_KEYS = new Set(['mcat:carsCache', 'mcat:connectionsCache', 'mcat:connExplain', 'mcat:termDefs', 'mcat:bankSeen', 'mcat:carsResults', 'mcat:connectionsResults']);
+  const CHAPTER_KEYS = new Set(['mcat:files', 'mcat:extractions', 'mcat:questions']);
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k) continue;
+      const v = localStorage.getItem(k) || '';
+      const bytes = (k.length + v.length) * 2;
+      total += bytes;
+      // Approximate raw (pre-compression) size by detecting the marker.
+      if (v.startsWith('LZv1')) {
+        compressed++;
+        // LZ-string compressToUTF16 packs 15 bits per UTF-16 char. The
+        // compressed payload (minus the 4-char marker + trailing space)
+        // has roughly 4× expansion to JSON characters in our tests.
+        rawEstimate += (v.length - 4) * 4 * 2;
+      } else {
+        rawEstimate += bytes;
+      }
+      if (CHAPTER_KEYS.has(k))      byCategory.chapters += bytes;
+      else if (k === 'mcat:attempts') byCategory.attempts += bytes;
+      else if (k === 'mcat:crashlog') byCategory.crashlog += bytes;
+      else if (CACHE_KEYS.has(k))   byCategory.caches += bytes;
+      else                           byCategory.other += bytes;
+    }
+  } catch {}
+  return { total, byCategory, compressed, rawEstimate };
 }
 
 // Lets a signed-in user erase the question history tied to their account one
