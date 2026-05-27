@@ -112,10 +112,11 @@ function _initCold(w, h, isDark) {
     })) : [],
     // Distant snow-capped range. Two parallax layers — a hazy back ridge
     // and a sharper front ridge. Each gets a seeded phase so the silhouette
-    // is consistent across redraws.
+    // is consistent across redraws. Heights and base lines tuned for a
+    // taller, more imposing alpine skyline.
     mountains: {
-      back: { seed: _rnd(0, 1000), baseRel: 0.78, maxH: 110 },
-      front: { seed: _rnd(0, 1000), baseRel: 0.83, maxH: 78 },
+      back:  { seed: _rnd(0, 1000), baseRel: 0.74, maxH: 210 },
+      front: { seed: _rnd(0, 1000), baseRel: 0.80, maxH: 150 },
     },
   };
 }
@@ -150,10 +151,11 @@ function _initWarm(w, h) {
       col: palette[Math.floor(Math.random() * palette.length)],
       type: Math.random() < 0.5 ? 0 : 1, // 0=oval 1=maple
     })),
-    // Autumn-tinted mountain range behind the trees.
+    // Autumn-tinted mountain range behind the trees. Sharper, taller
+    // peaks for a more rugged appalachian-fall silhouette.
     mountains: {
-      back: { seed: _rnd(0, 1000), baseRel: 0.84, maxH: 130 },
-      front: { seed: _rnd(0, 1000), baseRel: 0.89, maxH: 90 },
+      back:  { seed: _rnd(0, 1000), baseRel: 0.78, maxH: 230 },
+      front: { seed: _rnd(0, 1000), baseRel: 0.84, maxH: 160 },
     },
   };
 }
@@ -180,10 +182,32 @@ function _initDuo(w, h) {
     // Sugarloaf — distinctive narrow tall dome, right
     { cx: w * 0.82, baseY: waterTop, halfW: w * 0.09, peakY: h * 0.46 },
   ];
+  // Jungle foliage silhouettes lining Guanabara Bay between and around
+  // the granite domes. Each clump is a small radial blob with a few darker
+  // sub-blobs and a thin trunk, drawn just above the water line. Positions
+  // are seeded at init so the foliage layout is stable across frames.
+  const foliage = [];
+  const FOLIAGE_COUNT = 28;
+  for (let i = 0; i < FOLIAGE_COUNT; i++) {
+    const fx = _rnd(0, w);
+    // Skip clumps that fall on top of the central Corcovado peak so the
+    // statue doesn't get buried in green.
+    const onCorco = Math.abs(fx - w * 0.52) < w * 0.10;
+    if (onCorco && Math.random() < 0.75) continue;
+    foliage.push({
+      x: fx,
+      y: waterTop - _rnd(0, 14),
+      scale: _rnd(0.7, 1.6),
+      kind: Math.random() < 0.4 ? 'palm' : 'bush',
+      sway: _pi2(),
+      hueTilt: _rnd(-12, 12),
+    });
+  }
   return {
     horizonY,
     waterTop,
     domes,
+    foliage,
     // Soft far hills behind the domes.
     farHills: { seed: _rnd(0, 1000), baseRel: 0.66, maxH: h * 0.08 },
     // Frigate birds gliding above the bay.
@@ -212,6 +236,18 @@ function _initDuo(w, h) {
       len: _rnd(0.3, 0.7),
       alp: _rnd(0.06, 0.18),
     })),
+    // Night-only star field over Rio — denser than the cold theme's
+    // because the sky here covers more vertical real estate.
+    stars: Array.from({ length: 110 }, () => ({
+      x: _rnd(0, w),
+      y: _rnd(0, h * 0.58),
+      r: _rnd(0.5, 1.6),
+      op: _rnd(0.3, 0.95),
+      tp: _pi2(),
+    })),
+    // Rare shooting star slot. Same controller shape as the Madison
+    // night-sky shooter for consistency.
+    shooter: { active: false, x: 0, y: 0, vx: 0, vy: 0, life: 0, max: 0, nextSpawn: _rnd(120, 320) },
     // Rain — same controller as before.
     rain: (() => {
       const startRaining = Math.random() < 0.20;
@@ -508,18 +544,33 @@ function _ridgeHeight(x, seed) {
   );
 }
 
+// Triangle-wave variant: linear up-then-down sawtooths instead of smooth
+// sines, summed at three octaves. Produces sharp, angular peaks (no
+// rounded domes) suitable for jagged alpine ridges.
+function _ridgeHeightAngular(x, seed) {
+  const tri = (p) => { const f = p - Math.floor(p); return 1 - Math.abs(2 * f - 1); };
+  return (
+    0.62 * tri(x * 0.0024 + seed * 0.11) +
+    0.26 * tri(x * 0.0078 + seed * 0.31) +
+    0.12 * tri(x * 0.0203 + seed * 0.71)
+  );
+}
+
 // Draw a continuous mountain ridge across the full width. The polygon
 // runs along the top profile, then closes down to a fill baseline so
 // everything below the ridge is solid (mountains sit in front of sky and
-// behind foreground props).
+// behind foreground props). `opts.style: 'angular'` flips the noise from
+// rounded sines to triangle waves for sharp alpine peaks.
 function _drawRidge(ctx, w, baseY, maxH, seed, fillStyle, opts = {}) {
-  const step = opts.step || 6;
+  // Smaller step + angular noise = crisper peak corners.
+  const step = opts.step || (opts.style === 'angular' ? 3 : 6);
   const py = opts.py || 0;
+  const heightFn = opts.style === 'angular' ? _ridgeHeightAngular : _ridgeHeight;
   ctx.fillStyle = fillStyle;
   ctx.beginPath();
   ctx.moveTo(-4, baseY + py + 40);
   for (let x = -4; x <= w + 4; x += step) {
-    const y = baseY + py - maxH * _ridgeHeight(x, seed);
+    const y = baseY + py - maxH * heightFn(x, seed);
     ctx.lineTo(x, y);
   }
   ctx.lineTo(w + 4, baseY + py + 40);
@@ -534,7 +585,7 @@ function _drawRidge(ctx, w, baseY, maxH, seed, fillStyle, opts = {}) {
     ctx.beginPath();
     let drawing = false;
     for (let x = -4; x <= w + 4; x += step) {
-      const f = _ridgeHeight(x, seed);
+      const f = heightFn(x, seed);
       const y = baseY + py - maxH * f;
       if (f > (opts.snowThreshold || 0.55)) {
         if (!drawing) { ctx.moveTo(x, y); drawing = true; }
@@ -632,14 +683,14 @@ function _drawCold(ctx, isDark, state, t, py, w, h) {
     const py4 = py * 0.4;
     if (isDark) {
       _drawRidge(ctx, w, h * state.mountains.back.baseRel, state.mountains.back.maxH, state.mountains.back.seed,
-        'rgba(18,28,52,0.85)', { py: py4, snowAlpha: 0.32, snowThreshold: 0.55, snowWidth: 1.6 });
+        'rgba(18,28,52,0.85)', { py: py4, style: 'angular', snowAlpha: 0.32, snowThreshold: 0.55, snowWidth: 1.6 });
       _drawRidge(ctx, w, h * state.mountains.front.baseRel, state.mountains.front.maxH, state.mountains.front.seed,
-        'rgba(8,16,32,0.95)', { py: py4 * 1.4, snowAlpha: 0.45, snowThreshold: 0.5, snowWidth: 2 });
+        'rgba(8,16,32,0.95)', { py: py4 * 1.4, style: 'angular', snowAlpha: 0.45, snowThreshold: 0.5, snowWidth: 2 });
     } else {
       _drawRidge(ctx, w, h * state.mountains.back.baseRel, state.mountains.back.maxH, state.mountains.back.seed,
-        'rgba(120,150,190,0.62)', { py: py4, snowAlpha: 0.7, snowThreshold: 0.55, snowWidth: 2 });
+        'rgba(120,150,190,0.62)', { py: py4, style: 'angular', snowAlpha: 0.7, snowThreshold: 0.55, snowWidth: 2 });
       _drawRidge(ctx, w, h * state.mountains.front.baseRel, state.mountains.front.maxH, state.mountains.front.seed,
-        'rgba(72,104,156,0.92)', { py: py4 * 1.4, snowAlpha: 0.85, snowThreshold: 0.45, snowWidth: 2.4 });
+        'rgba(72,104,156,0.92)', { py: py4 * 1.4, style: 'angular', snowAlpha: 0.85, snowThreshold: 0.45, snowWidth: 2.4 });
     }
   }
 
@@ -699,14 +750,14 @@ function _drawWarm(ctx, isDark, state, t, py, w, h) {
     const py4 = py * 0.4;
     if (isDark) {
       _drawRidge(ctx, w, h * state.mountains.back.baseRel, state.mountains.back.maxH, state.mountains.back.seed,
-        'rgba(46,18,8,0.78)', { py: py4 });
+        'rgba(46,18,8,0.78)', { py: py4, style: 'angular' });
       _drawRidge(ctx, w, h * state.mountains.front.baseRel, state.mountains.front.maxH, state.mountains.front.seed,
-        'rgba(22,8,2,0.92)', { py: py4 * 1.4 });
+        'rgba(22,8,2,0.92)', { py: py4 * 1.4, style: 'angular' });
     } else {
       _drawRidge(ctx, w, h * state.mountains.back.baseRel, state.mountains.back.maxH, state.mountains.back.seed,
-        'rgba(132,62,32,0.62)', { py: py4 });
+        'rgba(132,62,32,0.62)', { py: py4, style: 'angular' });
       _drawRidge(ctx, w, h * state.mountains.front.baseRel, state.mountains.front.maxH, state.mountains.front.seed,
-        'rgba(84,32,12,0.92)', { py: py4 * 1.4 });
+        'rgba(84,32,12,0.92)', { py: py4 * 1.4, style: 'angular' });
     }
   }
 
@@ -880,6 +931,66 @@ function _drawRedeemer(ctx, cx, peakY, s, isDark) {
   }
 }
 
+// One foliage clump (jungle blob or stylised palm) silhouetted against
+// the dome / bay backdrop. Foliage sits just above the bay water line.
+function _drawFoliage(ctx, f, isDark, py, t) {
+  const sway = Math.sin(t * 0.012 + f.sway) * 1.4;
+  const cx = f.x + sway * 0.35;
+  const cy = f.y + py * 0.42;
+  const s = f.scale;
+  // Color: night = near-black with a hint of teal, day = mid-jungle green
+  // shifted slightly per clump for variety.
+  const tilt = f.hueTilt;
+  const baseR = isDark ? 6  : Math.max(0, 28 + tilt * 0.4);
+  const baseG = isDark ? 18 : Math.max(0, 88 + tilt * 0.8);
+  const baseB = isDark ? 12 : Math.max(0, 36 + tilt * 0.3);
+  const fill  = `rgba(${baseR | 0},${baseG | 0},${baseB | 0},0.92)`;
+  const trunk = isDark ? 'rgba(8,16,8,0.9)' : 'rgba(36,22,8,0.9)';
+  if (f.kind === 'palm') {
+    // Curved trunk + a half-fan of fronds at the top.
+    const trunkH = 26 * s;
+    const topX = cx + sway * 0.6;
+    const topY = cy - trunkH;
+    ctx.strokeStyle = trunk;
+    ctx.lineWidth = Math.max(1.2, 2 * s);
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.quadraticCurveTo(cx + sway * 0.6, cy - trunkH * 0.5, topX, topY);
+    ctx.stroke();
+    ctx.strokeStyle = fill;
+    ctx.lineWidth = Math.max(1.4, 2.4 * s);
+    const frondLen = 16 * s;
+    for (let i = 0; i < 6; i++) {
+      const ang = -Math.PI / 2 + (i - 2.5) * (Math.PI / 6) + sway * 0.05;
+      ctx.beginPath();
+      ctx.moveTo(topX, topY);
+      ctx.quadraticCurveTo(
+        topX + Math.cos(ang) * frondLen * 0.55,
+        topY + Math.sin(ang) * frondLen * 0.35,
+        topX + Math.cos(ang) * frondLen,
+        topY + Math.sin(ang) * frondLen * 0.85
+      );
+      ctx.stroke();
+    }
+  } else {
+    // Dense bush: a stack of overlapping circles.
+    const blobs = [
+      { dx: 0,           dy: -8 * s,  r: 12 * s },
+      { dx: -8 * s,      dy: -4 * s,  r: 10 * s },
+      { dx:  8 * s,      dy: -4 * s,  r: 10 * s },
+      { dx: -3 * s,      dy: -14 * s, r: 8 * s  },
+      { dx:  5 * s,      dy: -12 * s, r: 8 * s  },
+    ];
+    ctx.fillStyle = fill;
+    for (const b of blobs) {
+      ctx.beginPath();
+      ctx.arc(cx + b.dx, cy + b.dy, b.r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+}
+
 function _drawDuo(ctx, isDark, state, t, py, w, h) {
   // ── sky over Guanabara Bay ──
   const sky = ctx.createLinearGradient(0, 0, 0, h);
@@ -893,6 +1004,55 @@ function _drawDuo(ctx, isDark, state, t, py, w, h) {
     sky.addColorStop(0.78, '#88c2d4'); sky.addColorStop(1,    '#3b6c7e');
   }
   ctx.fillStyle = sky; ctx.fillRect(0, 0, w, h);
+
+  // ── stars + shooting star (night only) ──
+  if (isDark && state.stars) {
+    for (const s of state.stars) {
+      const tw = 0.55 + 0.45 * Math.sin(t * 0.045 + s.tp);
+      ctx.beginPath();
+      ctx.arc(s.x, s.y + py * 0.18, s.r, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(235,242,255,${s.op * tw})`;
+      ctx.fill();
+    }
+    const ss = state.shooter;
+    if (ss) {
+      if (!ss.active) {
+        ss.nextSpawn -= 1;
+        if (ss.nextSpawn <= 0) {
+          ss.active = true;
+          ss.x = _rnd(w * 0.08, w * 0.75);
+          ss.y = _rnd(h * 0.04, h * 0.45);
+          const ang = _rnd(Math.PI * 0.16, Math.PI * 0.34);
+          const spd = _rnd(7, 11);
+          ss.vx = Math.cos(ang) * spd;
+          ss.vy = Math.sin(ang) * spd;
+          ss.max = _rnd(28, 48);
+          ss.life = 0;
+        }
+      } else {
+        ss.x += ss.vx; ss.y += ss.vy; ss.life += 1;
+        const fade = ss.life < 6 ? ss.life / 6 : Math.max(0, 1 - (ss.life - 6) / (ss.max - 6));
+        const tg = ctx.createLinearGradient(ss.x - ss.vx * 8, ss.y - ss.vy * 8, ss.x, ss.y);
+        tg.addColorStop(0, 'rgba(255,255,255,0)');
+        tg.addColorStop(1, `rgba(255,255,255,${0.95 * fade})`);
+        ctx.strokeStyle = tg;
+        ctx.lineWidth = 1.8;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(ss.x - ss.vx * 8, ss.y - ss.vy * 8);
+        ctx.lineTo(ss.x, ss.y);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(ss.x, ss.y, 1.6, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(255,255,255,${fade})`;
+        ctx.fill();
+        if (ss.life >= ss.max || ss.x > w + 80 || ss.y > h * 0.7) {
+          ss.active = false;
+          ss.nextSpawn = _rnd(180, 420);
+        }
+      }
+    }
+  }
 
   // ── sun / moon ──
   const sx = w * 0.78, sy = h * 0.18 + py * 0.25;
@@ -930,8 +1090,18 @@ function _drawDuo(ctx, isDark, state, t, py, w, h) {
 
   // ── Christ the Redeemer on Corcovado ──
   if (corcoMeta) {
-    const statueH = (corcoMeta.yBase - corcoMeta.yPeak) * 0.36;
+    // Statue height as a fraction of the dome height. ~0.22 keeps it
+    // visible without dominating the silhouette.
+    const statueH = (corcoMeta.yBase - corcoMeta.yPeak) * 0.22;
     _drawRedeemer(ctx, corcoMeta.d.cx, corcoMeta.yPeak, statueH, isDark);
+  }
+
+  // ── jungle foliage along the bay shore ──
+  if (state.foliage) {
+    // Sort by x so overlapping clumps draw left-to-right consistently.
+    for (const f of state.foliage) {
+      _drawFoliage(ctx, f, isDark, py, t);
+    }
   }
 
   // ── water: Guanabara Bay ──
