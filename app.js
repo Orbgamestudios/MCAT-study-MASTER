@@ -6100,14 +6100,48 @@ const MOLECULES = [
   { name: 'bromine', variants: ['Br2'] },
   { name: 'iodine', variants: ['I2'] },
   { name: 'fluorine', variants: ['F2'] },
+
+  // Functional groups. PubChem resolves most of these directly (alcohol,
+  // amine, ester, aldehyde, ether, thiol, imine, epoxide, phenyl,
+  // phosphate, sulfate, hydroxyl, methyl, ethyl). For the ones that 404
+  // (carboxylic acid, ketone, amide, nitrile, carbonyl) we supply a
+  // representative molecule for the structure image. The modal shows
+  // "Representative: <molecule>" so the user knows it's an illustrative
+  // example, not a single specific compound.
+  { name: 'alcohol',            variants: ['alcohols'] },
+  { name: 'amine',              variants: ['amines'] },
+  { name: 'amide',              variants: ['amides'], representative: 'acetamide' },
+  { name: 'aldehyde',           variants: ['aldehydes'] },
+  { name: 'ketone',             variants: ['ketones'], representative: 'acetone' },
+  { name: 'carboxylic acid',    variants: ['carboxylic acids'], representative: 'formic acid' },
+  { name: 'ester',              variants: ['esters'] },
+  { name: 'ether',              variants: ['ethers'] },
+  { name: 'thiol',              variants: ['thiols'] },
+  { name: 'nitrile',            variants: ['nitriles'], representative: 'acetonitrile' },
+  { name: 'imine',              variants: ['imines'] },
+  { name: 'epoxide',            variants: ['epoxides'] },
+  { name: 'carbonyl',           variants: ['carbonyl group'], representative: 'formaldehyde' },
+  { name: 'hydroxyl',           variants: ['hydroxyl group'] },
+  { name: 'methyl',             variants: ['methyl group'] },
+  { name: 'ethyl',              variants: ['ethyl group'] },
+  { name: 'phenyl',             variants: ['phenyl group'] },
+  { name: 'phosphate',          variants: ['phosphates', 'phosphate group'] },
+  { name: 'sulfate',            variants: ['sulfates', 'sulfate group'] },
+  { name: 'anhydride',          variants: ['anhydrides'], representative: 'acetic anhydride' },
+  { name: 'acyl chloride',      variants: ['acid chloride', 'acid chlorides'], representative: 'acetyl chloride' },
+  { name: 'alkyl halide',       variants: ['alkyl halides', 'haloalkane'], representative: 'chloromethane' },
+  { name: 'amino group',        representative: 'methylamine' },
+  { name: 'carboxyl group',     representative: 'formic acid' },
 ];
 
 // Build the lookup table + matcher pattern once at module load.
-const { _molRegex, _molLookup, _molAcronymExact } = (() => {
-  const lookup = new Map();    // normalized key → canonical PubChem name
-  const acronymExact = new Set(); // case-sensitive surface form for acronyms
+const { _molRegex, _molLookup, _molAcronymExact, _molRepresentative } = (() => {
+  const lookup = new Map();          // normalized key → canonical PubChem name
+  const acronymExact = new Set();    // case-sensitive surface form for acronyms
+  const representatives = new Map(); // canonical name → representative compound for PubChem
   const allSurface = [];
   for (const m of MOLECULES) {
+    if (m.representative) representatives.set(m.name, m.representative);
     const allNames = [m.name, ...(m.variants || [])];
     for (const surface of allNames) {
       allSurface.push(surface);
@@ -6124,7 +6158,12 @@ const { _molRegex, _molLookup, _molAcronymExact } = (() => {
   const pattern = '\\b(?:' + allSurface.map(escapeRegex).join('|') + ')\\b';
   // 'g' for repeated matches, 'i' for case-insensitive — acronyms are
   // post-filtered to their exact form below.
-  return { _molRegex: new RegExp(pattern, 'gi'), _molLookup: lookup, _molAcronymExact: acronymExact };
+  return {
+    _molRegex: new RegExp(pattern, 'gi'),
+    _molLookup: lookup,
+    _molAcronymExact: acronymExact,
+    _molRepresentative: representatives,
+  };
 })();
 
 // Find every molecule mention in `text`. Returns an array of segments where
@@ -6203,9 +6242,15 @@ function MoleculeModal({ name, onClose }) {
     document.body.style.overflow = 'hidden';
     return () => { document.body.style.overflow = prev; };
   }, []);
-  const enc = encodeURIComponent(name);
+  // Functional groups like "carboxylic acid" and "ketone" don't resolve
+  // to a single PubChem compound — we substitute a representative molecule
+  // (formic acid, acetone, etc.) for the structure image and surface the
+  // swap in a subtitle so the user knows it's an illustrative example.
+  const pubchemName = _molRepresentative.get(name) || name;
+  const isRepresentative = pubchemName !== name;
+  const enc = encodeURIComponent(pubchemName);
   const imgUrl = `https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/${enc}/PNG?image_size=large`;
-  const pubchemPage = `https://pubchem.ncbi.nlm.nih.gov/#query=${enc}`;
+  const pubchemPage = `https://pubchem.ncbi.nlm.nih.gov/#query=${encodeURIComponent(name)}`;
   return (
     <div
       className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-sm flex items-center justify-center p-3"
@@ -6217,8 +6262,15 @@ function MoleculeModal({ name, onClose }) {
       >
         <div className="flex items-center justify-between gap-3 mb-3">
           <div className="min-w-0">
-            <div className="text-[10px] uppercase tracking-wide text-[var(--text-muted)]">Molecule</div>
+            <div className="text-[10px] uppercase tracking-wide text-[var(--text-muted)]">
+              {isRepresentative ? 'Functional group' : 'Molecule'}
+            </div>
             <div className="text-base sm:text-lg font-semibold text-[var(--text-strong)] truncate" title={name}>{name}</div>
+            {isRepresentative && (
+              <div className="text-[11px] text-[var(--text-faint)] mt-0.5">
+                Representative compound shown: <span className="text-[var(--text-muted)]">{pubchemName}</span>
+              </div>
+            )}
           </div>
           <button
             onClick={onClose}
@@ -6230,7 +6282,7 @@ function MoleculeModal({ name, onClose }) {
           <div className="bg-white rounded-lg p-3 flex items-center justify-center">
             <img
               src={imgUrl}
-              alt={`Structure of ${name}`}
+              alt={`Structure of ${pubchemName}`}
               onError={() => setErrored(true)}
               className="max-w-full h-auto"
               style={{ maxHeight: '60vh' }}
@@ -6238,7 +6290,7 @@ function MoleculeModal({ name, onClose }) {
           </div>
         ) : (
           <div className="text-sm text-[var(--text-muted)] bg-[var(--bg-elev-soft)] border border-dashed border-[var(--border-soft)] rounded-lg px-3 py-4 text-center">
-            Couldn't load a structure image for "{name}" from PubChem.
+            Couldn't load a structure image for "{pubchemName}" from PubChem.
           </div>
         )}
         <div className="mt-3 flex items-center justify-between gap-3">
@@ -6282,9 +6334,15 @@ function MoleculeText({ text, className }) {
             key={i}
             role="button"
             tabIndex={0}
+            // onPointerDown opens the popup before the parent button's
+            // click can fire — iOS Safari swallows click events on children
+            // of <button disabled>, but the pointerdown still arrives. We
+            // also keep onClick for non-touch devices.
+            onPointerDown={(e) => { e.stopPropagation(); e.preventDefault(); open(p.canonical); }}
             onClick={(e) => { e.stopPropagation(); e.preventDefault(); open(p.canonical); }}
             onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); open(p.canonical); } }}
             className="text-[var(--accent-text)] underline decoration-dotted decoration-[var(--accent-border)] underline-offset-2 cursor-pointer hover:bg-[var(--accent-soft)] rounded px-0.5"
+            style={{ pointerEvents: 'auto' }}
             title={`View 2D structure of ${p.canonical}`}
           >
             {p.value}
@@ -6430,9 +6488,12 @@ function MCQuestion({ item, onAnswer, nextSlot, onFlag }) {
             else if (isPicked) cls = 'border-[var(--danger-border)] bg-[var(--danger-bg-strong)]';
             else cls = 'border-[var(--border-soft)] opacity-60';
           }
-          // Once the user has picked, choices are no longer click targets for
-          // selection — switch on molecule links so they can review structures.
-          const linkChoices = picked !== null;
+          // Molecule names are ALWAYS rendered as clickable links inside
+          // choice buttons — the molecule span stops propagation so taps on
+          // it open the structure popup, while taps on any other part of
+          // the button (the A./B. letter, surrounding words) still pick the
+          // choice. For choices that are nothing but a single molecule
+          // name, the letter prefix is the pick target.
           return (
             <button
               key={i}
@@ -6442,7 +6503,7 @@ function MCQuestion({ item, onAnswer, nextSlot, onFlag }) {
               className={`w-full text-left border rounded-lg px-3 py-2.5 text-sm transition-colors ${cls}`}
             >
               <span className="text-[var(--text-faint)] mr-2">{String.fromCharCode(65 + i)}.</span>
-              {linkChoices ? <MoleculeText text={entry.text} /> : entry.text}
+              <MoleculeText text={entry.text} />
             </button>
           );
         })}
@@ -6638,7 +6699,8 @@ function SinglePart({ part, onAnswer, nextSlot, continueLabel }) {
             else if (isPicked) cls = 'border-[var(--danger-border)] bg-[var(--danger-bg-strong)]';
             else cls = 'border-[var(--border-soft)] opacity-60';
           }
-          const linkChoices = picked !== null;
+          // Same molecule-always-linked pattern as MCQuestion — molecule
+          // span clicks stop propagation, rest of the button still picks.
           return (
             <button
               key={i}
@@ -6648,7 +6710,7 @@ function SinglePart({ part, onAnswer, nextSlot, continueLabel }) {
               className={`w-full text-left border rounded-lg px-3 py-2.5 text-sm transition-colors ${cls}`}
             >
               <span className="text-[var(--text-faint)] mr-2">{String.fromCharCode(65 + i)}.</span>
-              {linkChoices ? <MoleculeText text={entry.text} /> : entry.text}
+              <MoleculeText text={entry.text} />
             </button>
           );
         })}
