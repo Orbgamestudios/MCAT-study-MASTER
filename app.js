@@ -6580,51 +6580,63 @@ function PeriodicTableModal({ onClose }) {
   return (
     <div className="fixed inset-0 z-[60] bg-black/65 backdrop-blur-sm flex items-center justify-center p-2 sm:p-3" onClick={onClose}>
       <div
-        className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-3 sm:p-4 w-full max-w-5xl max-h-[92vh] overflow-auto"
+        // Flex column with a fixed max height. Header + details + legend
+        // stay pinned; only the periodic-table grid in the middle scrolls
+        // horizontally — so on phones you can swipe left/right across the
+        // full 18-column table without the selected-element panel
+        // disappearing off-screen.
+        className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-3 sm:p-4 w-full max-w-5xl max-h-[92vh] flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between gap-3 mb-3 sticky top-0 bg-[var(--bg-card)] pb-2 -mt-1 pt-1">
+        <div className="flex items-center justify-between gap-3 mb-3 shrink-0">
           <div>
             <div className="text-[10px] uppercase tracking-wide text-[var(--text-muted)]">Periodic table</div>
             <div className="text-sm font-semibold text-[var(--text-strong)]">{selected ? `${selected.name} (${selected.sym})` : 'Tap an element for details'}</div>
           </div>
           <button onClick={onClose} className="text-2xl leading-none text-[var(--text-muted)] hover:text-[var(--text-strong)]" aria-label="Close">×</button>
         </div>
-        {/* Element grid. 18 columns. Two rows below the main grid for
-            lanthanides and actinides. */}
-        <div
-          className="grid gap-[2px]"
-          style={{
-            gridTemplateColumns: 'repeat(18, minmax(0, 1fr))',
-            gridAutoRows: 'minmax(0, 1fr)',
-            aspectRatio: '18 / 11',
-            minWidth: '600px',
-          }}
-        >
-          {PERIODIC_TABLE.map((el) => {
-            const cat = PERIODIC_CATEGORIES[el.cat] || { bg: '#888', fg: '#fff' };
-            return (
-              <button
-                key={el.num}
-                onClick={() => setSelected(el)}
-                style={{
-                  gridColumnStart: el.col,
-                  gridRowStart: el.row,
-                  background: cat.bg,
-                  color: cat.fg,
-                }}
-                className="flex flex-col items-stretch justify-between rounded-[3px] p-0.5 text-left leading-none hover:brightness-110 focus:outline-none focus:ring-2 focus:ring-[var(--accent-border)]"
-                title={`${el.name} · #${el.num} · ${el.mass}`}
-              >
-                <div className="text-[7px] sm:text-[9px] opacity-80">{el.num}</div>
-                <div className="text-[10px] sm:text-sm font-bold text-center">{el.sym}</div>
-                <div className="text-[6px] sm:text-[7px] opacity-70 text-center">{el.mass}</div>
-              </button>
-            );
-          })}
+
+        {/* Scrollable element grid. The grid has a comfortable min width so
+            each cell stays legible; on narrow viewports the user swipes the
+            inner container horizontally. The wrapping div is overflow-x:auto
+            and shrinks vertically to the grid's natural height. */}
+        <div className="overflow-x-auto overflow-y-hidden shrink-0 -mx-1 px-1 pb-2">
+          <div
+            className="grid gap-[2px]"
+            style={{
+              gridTemplateColumns: 'repeat(18, minmax(34px, 1fr))',
+              gridAutoRows: 'minmax(0, 1fr)',
+              aspectRatio: '18 / 11',
+              minWidth: '720px',
+            }}
+          >
+            {PERIODIC_TABLE.map((el) => {
+              const cat = PERIODIC_CATEGORIES[el.cat] || { bg: '#888', fg: '#fff' };
+              return (
+                <button
+                  key={el.num}
+                  onClick={() => setSelected(el)}
+                  style={{
+                    gridColumnStart: el.col,
+                    gridRowStart: el.row,
+                    background: cat.bg,
+                    color: cat.fg,
+                  }}
+                  className="flex flex-col items-stretch justify-between rounded-[3px] p-0.5 text-left leading-none hover:brightness-110 focus:outline-none focus:ring-2 focus:ring-[var(--accent-border)]"
+                  title={`${el.name} · #${el.num} · ${el.mass}`}
+                >
+                  <div className="text-[8px] sm:text-[10px] opacity-80">{el.num}</div>
+                  <div className="text-[12px] sm:text-base font-bold text-center">{el.sym}</div>
+                  <div className="text-[7px] sm:text-[8px] opacity-70 text-center">{el.mass}</div>
+                </button>
+              );
+            })}
+          </div>
         </div>
-        {/* Details + category legend. */}
-        <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+
+        {/* Fixed bottom panel: selected-element details + category legend.
+            Sits below the scrollable grid and stays put as the user pans. */}
+        <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3 shrink-0 overflow-y-auto">
           <div className="bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg p-3 text-xs">
             {selected ? (
               <>
@@ -6645,7 +6657,7 @@ function PeriodicTableModal({ onClose }) {
             <div className="grid grid-cols-2 gap-x-2 gap-y-1">
               {Object.entries(PERIODIC_CATEGORIES).map(([k, c]) => (
                 <div key={k} className="flex items-center gap-2 text-[11px]">
-                  <span className="inline-block w-3 h-3 rounded" style={{ background: c.bg }} />
+                  <span className="inline-block w-3 h-3 rounded shrink-0" style={{ background: c.bg }} />
                   <span className="text-[var(--text-muted)] truncate">{c.label}</span>
                 </div>
               ))}
