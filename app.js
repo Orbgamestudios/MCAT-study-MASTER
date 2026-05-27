@@ -4429,6 +4429,21 @@ function FileRow({ file, extraction, qbank, busyStage, onProcess, onRemove, read
   const termsCount = extraction?.key_terms?.length || 0;
   const termCovered = qbank?.mc ? new Set(qbank.mc.filter((q) => q.from === 'term').map((q) => q.term)) : new Set();
   const termsNeeded = (extraction?.key_terms || []).filter((t) => !termCovered.has(t.term)).length;
+
+  // Size to display in the row. Bank-pushed chapters were created with
+  // size_bytes=0 (the chapter shell POST didn't include the original PDF
+  // size), so falling back to the size of the actual stored data — the
+  // extraction + question JSON — gives a meaningful number for every
+  // chapter regardless of source.
+  const displaySize = useMemo(() => {
+    if (file.size_bytes && file.size_bytes > 0) return file.size_bytes;
+    try {
+      let bytes = 0;
+      if (extraction) bytes += JSON.stringify(extraction).length;
+      if (qbank) bytes += JSON.stringify(qbank).length;
+      return bytes;
+    } catch { return 0; }
+  }, [file.size_bytes, extraction, qbank]);
   // Require non-empty arrays — an empty twoPart/mc/short means generation silently returned
   // nothing (rate limit, malformed response), and the chapter still needs that stage.
   const fullyProcessed = !!(extraction && mcCount > 0 && shortCount > 0 && twoPartCount > 0 && termsNeeded === 0);
@@ -4457,7 +4472,7 @@ function FileRow({ file, extraction, qbank, busyStage, onProcess, onRemove, read
             </span>
           </div>
           <div className="text-xs text-[var(--text-faint)] mt-0.5 break-words">
-            {file.filename} · {fmtBytes(file.size_bytes)}
+            {file.filename} · {fmtBytes(displaySize)}
             {qbank?.mc && (
               <span className="ml-2 text-[var(--text-muted)]">
                 · {mcCount} MC · {shortCount} short · {twoPartCount} two-part · {termsCount} terms
