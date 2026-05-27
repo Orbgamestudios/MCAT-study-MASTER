@@ -8639,7 +8639,7 @@ function StatsView() {
 
 // ---------- settings ----------
 function SettingsPanel({ onClose }) {
-  const { palette, mode, setPalette, setMode, apiKey, setApiKey, client, session, pendingSync, syncBusy, syncError, flushSync, reauditEnabled, setReauditEnabled, volume, setVolume, autoDownloadChapters, setAutoDownloadChapters, autoDownloadAll, setAutoDownloadAll, contributorMode, setContributorMode, tropicalBg, setTropicalBg, files } = useApp();
+  const { palette, mode, setPalette, setMode, apiKey, setApiKey, client, session, pendingSync, syncBusy, syncError, flushSync, volume, setVolume, autoDownloadChapters, setAutoDownloadChapters, autoDownloadAll, setAutoDownloadAll, contributorMode, setContributorMode, tropicalBg, setTropicalBg, files } = useApp();
   const hasDownloadedChapters = files.some((f) => f.chapter_id);
   const [keyVal, setKeyVal] = useState(apiKey || '');
   const [keyShow, setKeyShow] = useState(false);
@@ -8827,22 +8827,6 @@ function SettingsPanel({ onClose }) {
           />
           <div className="text-[11px] text-[var(--text-faint)] mt-1">Affects answer sounds, HUD ticks, and quiz-start chime.</div>
         </div>
-      </div>
-
-      <div>
-        <div className="text-xs uppercase tracking-wide text-[var(--text-muted)] mb-2">Audit</div>
-        <label className="flex items-center justify-between gap-3 bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg px-3 py-2.5 cursor-pointer">
-          <div className="text-sm min-w-0">
-            <div className="text-[var(--text)]">Allow re-auditing</div>
-            <div className="text-[11px] text-[var(--text-faint)] mt-0.5">Show the Audit button on chapters that have already been audited.</div>
-          </div>
-          <input
-            type="checkbox"
-            checked={reauditEnabled}
-            onChange={(e) => setReauditEnabled(e.target.checked)}
-            className="w-4 h-4 shrink-0"
-          />
-        </label>
       </div>
 
       <div>
@@ -10114,7 +10098,7 @@ function StageDot({ stage, label }) {
   );
 }
 
-function ChapterRow({ chapter, onDownload, onContribute, onAudit, busy, downloaded, canContribute, reauditEnabled }) {
+function ChapterRow({ chapter, onDownload, onContribute, onAudit, busy, downloaded, canContribute, contributorMode }) {
   const ago = (() => {
     const ms = Date.now() - chapter.updated_at;
     const m = Math.round(ms / 60000);
@@ -10190,17 +10174,23 @@ function ChapterRow({ chapter, onDownload, onContribute, onAudit, busy, download
             </span>
           )
         )}
-        {chapter.stages.mc.done && canContribute && (!chapter.audited_at || reauditEnabled) && (
+        {/* Audit is a contributor-only action — it re-checks correct_index
+            against the explanation with Gemini, which costs the contributor's
+            API key. Re-auditing is always allowed for contributors; the old
+            "Allow re-auditing" Settings toggle was redundant. */}
+        {chapter.stages?.mc?.done && canContribute && contributorMode && (
           <button
             onClick={onAudit}
             disabled={!!busy}
-            title={chapter.audited_at ? `Already audited by @${chapter.audited_by}. Re-audit enabled in Settings.` : 'Check that correct_index is right for every MC question'}
+            title={chapter.audited_at
+              ? `Already audited by @${chapter.audited_by}. Click to re-audit.`
+              : 'Check that correct_index is right for every MC question'}
             className="text-xs px-3 py-1.5 border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--bg-hover)] disabled:opacity-40 rounded whitespace-nowrap"
           >
             {chapter.audited_at ? 'Re-audit' : 'Audit'}
           </button>
         )}
-        {chapter.audited_at && !reauditEnabled && (
+        {chapter.audited_at && (
           <span className="text-[10px] uppercase tracking-wide text-[var(--success-text)]" title={`Audited by @${chapter.audited_by}`}>
             ✓ audited
           </span>
@@ -10211,7 +10201,7 @@ function ChapterRow({ chapter, onDownload, onContribute, onAudit, busy, download
 }
 
 function BankTab() {
-  const { api, session, apiKey, client, setFiles, setExtraction, setQuestionsFor, files, reauditEnabled } = useApp();
+  const { api, session, apiKey, client, setFiles, setExtraction, setQuestionsFor, files, contributorMode } = useApp();
   const [data, setData] = useState(null);
   const [err, setErr] = useState('');
   const [auditChapter, setAuditChapter] = useState(null);
@@ -10536,7 +10526,7 @@ function BankTab() {
                     busy={busyId === ch.id ? busyKind : null}
                     downloaded={localChapterIds.has(ch.id)}
                     canContribute={!!session && !!apiKey}
-                    reauditEnabled={reauditEnabled}
+                    contributorMode={contributorMode}
                   />
                 ))}
               </ul>
