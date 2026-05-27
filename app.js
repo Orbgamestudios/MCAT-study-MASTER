@@ -9114,10 +9114,14 @@ function SettingsPanel({ onClose }) {
           <label className="flex items-center justify-between gap-3 bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg px-3 py-2.5 cursor-pointer">
             <div className="text-sm min-w-0">
               <div className="text-[var(--text)]">
-                {palette === 'cold' ? '❄️' : palette === 'warm' ? '🍂' : palette === 'duo' ? '⛰️' : '🌴'} Dynamic background
+                {palette === 'cold' ? '❄️' : palette === 'warm' ? '🍂' : palette === 'duo' ? '⛰️' : palette === 'madison' ? '🏛️' : '🌴'} Dynamic background
               </div>
               <div className="text-[11px] text-[var(--text-faint)] mt-0.5">
-                {palette === 'cold' ? 'Winter snow + mountain range background.' : palette === 'warm' ? 'Fall trees + mountain range background.' : palette === 'duo' ? 'Rio de Janeiro with Christ the Redeemer.' : 'Tropical beach background.'}{' '}
+                {palette === 'cold' ? 'Winter snow + mountain range background.'
+                  : palette === 'warm' ? 'Fall trees + mountain range background.'
+                  : palette === 'duo' ? 'Rio de Janeiro with Christ the Redeemer.'
+                  : palette === 'madison' ? 'Madison, WI skyline at night with the Capitol dome over Lake Monona — lit windows, occasional shooting stars, cars on Lakeshore Drive, and slow drifting clouds.'
+                  : 'Tropical beach with palm trees, breaking waves, and a crab that wanders past once in a while.'}{' '}
                 Follows your light/dark mode.
               </div>
             </div>
