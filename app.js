@@ -187,20 +187,28 @@ function _initDuo(w, h) {
     // Rain: a pool of drops + a fade controller. intensity ramps between 0
     // and 1 over a few seconds whenever target flips, giving a smooth onset
     // and clearing. target flips at randomized intervals.
-    rain: {
-      drops: Array.from({ length: 220 }, () => ({
-        x: _rnd(-40, w + 40),
-        y: _rnd(-h, h),
-        len: _rnd(8, 18),
-        vy: _rnd(8, 14),
-        vx: _rnd(-2.4, -1.2), // wind angle (rain falls slightly left)
-        alp: _rnd(0.35, 0.7),
-      })),
-      intensity: 0,         // 0..1, current visible intensity
-      target: 0,            // 0 or 1, what intensity is easing toward
-      // Frames until next state flip. ~30 fps so 30 = 1s. Start dry for a bit.
-      nextFlip: 30 * _rnd(20, 60),
-    },
+    rain: (() => {
+      // 20% chance to be raining at app open; otherwise start dry. Whichever
+      // state we open in gets a sensible time-until-flip drawn from the same
+      // distributions the runtime controller uses below.
+      const startRaining = Math.random() < 0.20;
+      return {
+        drops: Array.from({ length: 220 }, () => ({
+          x: _rnd(-40, w + 40),
+          y: _rnd(-h, h),
+          len: _rnd(8, 18),
+          vy: _rnd(8, 14),
+          vx: _rnd(-2.4, -1.2), // wind angle (rain falls slightly left)
+          alp: _rnd(0.35, 0.7),
+        })),
+        intensity: startRaining ? 1 : 0,
+        target: startRaining ? 1 : 0,
+        // Frames until next state flip. ~30 fps so 30 = 1s.
+        nextFlip: startRaining
+          ? Math.floor(30 * _rnd(120, 350))   // mid-storm
+          : Math.floor(30 * _rnd(105, 330)),  // dry-start
+      };
+    })(),
   };
 }
 
@@ -385,20 +393,26 @@ function _initMadison(w, h, isDark) {
     })) : [],
     shooter: isDark ? { active: false, x: 0, y: 0, vx: 0, vy: 0, life: 0, max: 0, nextSpawn: _rnd(120, 320) } : null,
     // Day: rain pool (always allocated; used only when intensity > 0).
-    rain: {
-      drops: Array.from({ length: 240 }, () => ({
-        x: _rnd(-40, w + 40),
-        y: _rnd(-h, h),
-        len: _rnd(8, 18),
-        vy: _rnd(8, 14),
-        vx: _rnd(-2.4, -1.2),
-        alp: _rnd(0.35, 0.7),
-      })),
-      intensity: 0,
-      target: 0,
-      // Long dry stretch at the start so the user sees a sunny city first.
-      nextFlip: Math.floor(30 * _rnd(60, 180)),
-    },
+    rain: (() => {
+      // 20% chance the Madison scene opens mid-storm; same distributions as
+      // the runtime controller below for nextFlip.
+      const startRaining = !isDark && Math.random() < 0.20;
+      return {
+        drops: Array.from({ length: 240 }, () => ({
+          x: _rnd(-40, w + 40),
+          y: _rnd(-h, h),
+          len: _rnd(8, 18),
+          vy: _rnd(8, 14),
+          vx: _rnd(-2.4, -1.2),
+          alp: _rnd(0.35, 0.7),
+        })),
+        intensity: startRaining ? 1 : 0,
+        target: startRaining ? 1 : 0,
+        nextFlip: startRaining
+          ? Math.floor(30 * _rnd(100, 250))   // mid-storm
+          : Math.floor(30 * _rnd(135, 450)),  // dry-start
+      };
+    })(),
     // Fluffy day clouds — drift in whatever direction the wind is blowing.
     clouds: Array.from({ length: 4 }, () => ({
       x: _rnd(-w * 0.3, w * 1.2),
@@ -764,14 +778,15 @@ function _drawDuo(ctx, isDark, state, t, py, w, h) {
   }
 
   // ── rain (random downpours with smooth fade in/out) ──
+  // Storms last 10× as long as they used to (2–~6 min each) with longer dry
+  // stretches between them. Tuning request from cgsli.
   const rain = state.rain;
   rain.nextFlip -= 1;
   if (rain.nextFlip <= 0) {
     rain.target = rain.target === 0 ? 1 : 0;
-    // Wet spells are shorter than dry spells so it isn't raining most of the time.
     rain.nextFlip = rain.target === 1
-      ? Math.floor(30 * _rnd(12, 35))   // 12–35s wet
-      : Math.floor(30 * _rnd(35, 110)); // 35–110s dry
+      ? Math.floor(30 * _rnd(120, 350))  // 2–~6 min wet
+      : Math.floor(30 * _rnd(105, 330)); // ~2–5.5 min dry
   }
   // Ease intensity toward target. ~3 s in / 4 s out at 30 fps.
   if (rain.intensity !== rain.target) {
@@ -1309,16 +1324,16 @@ function _drawMadison(ctx, isDark, state, t, py, w, h) {
   // ── wind: smooth, retargets every few seconds. drives rain tilt. ──
   _stepWind(state, -3.4, 3.4, [25, 65]);
 
-  // Rain controller: rare and short. Most of the day is sunny.
+  // Rain controller: storms last 10× as long as they used to (~1.5–4 min) with
+  // longer dry gaps between them. Night stays clear.
   const rain = state.rain;
   if (!isDark) {
     rain.nextFlip -= 1;
     if (rain.nextFlip <= 0) {
       rain.target = rain.target === 0 ? 1 : 0;
-      // Wet stretches are short (10-25 s); dry stretches are long (45-150 s).
       rain.nextFlip = rain.target === 1
-        ? Math.floor(30 * _rnd(10, 25))
-        : Math.floor(30 * _rnd(45, 150));
+        ? Math.floor(30 * _rnd(100, 250))   // ~1.5–4 min wet
+        : Math.floor(30 * _rnd(135, 450));  // ~2.25–7.5 min dry
     }
     if (rain.intensity !== rain.target) {
       const step = rain.target > rain.intensity ? 1 / 90 : -1 / 120;
