@@ -5133,7 +5133,7 @@ function PublishToBankButton({ file, extraction, qbank }) {
   );
 }
 
-function FileRow({ file, extraction, qbank, busyStage, onProcess, onRemove, readOnly }) {
+function FileRow({ file, extraction, qbank, busyStage, onProcess, onRemove, readOnly, flagCount = 0 }) {
   const [open, setOpen] = useState(false);
   const mcCount = qbank?.mc?.length || 0;
   const shortCount = qbank?.short?.length || 0;
@@ -5182,6 +5182,14 @@ function FileRow({ file, extraction, qbank, busyStage, onProcess, onRemove, read
             <span className={`text-[10px] uppercase tracking-wide px-2 py-0.5 rounded shrink-0 ${badge.cls}`}>
               {badge.label}
             </span>
+            {flagCount > 0 && (
+              <span
+                className="text-[10px] uppercase tracking-wide px-2 py-0.5 rounded shrink-0 bg-[var(--warning-bg)] text-[var(--warning-text-strong)] border border-[var(--warning-text-strong)]"
+                title={`${flagCount} flagged question${flagCount === 1 ? '' : 's'} on this chapter awaiting review`}
+              >
+                🚩 {flagCount} flagged
+              </span>
+            )}
           </div>
           <div className="text-xs text-[var(--text-faint)] mt-0.5 break-words">
             {file.filename} · {fmtBytes(displaySize)}
@@ -5278,6 +5286,21 @@ function FileRowMenu({ hasExtraction, isOpen, toggleOpen, publishSlot, onRemove 
 }
 
 // ---------- file list ----------
+// Read the flag queue and count pending flags per file_id. Used by the
+// Library to surface a 🚩 badge on chapters that still have unresolved
+// flagged questions.
+function _readPendingFlagCountsByFile() {
+  const q = storage.get(KEYS.flagQueue, []) || [];
+  const map = {};
+  for (const f of q) {
+    if (!f || f.status === 'done') continue;
+    const fid = f.file_id;
+    if (!fid) continue;
+    map[fid] = (map[fid] || 0) + 1;
+  }
+  return map;
+}
+
 function FileList() {
   const {
     files, setFiles, client,
@@ -5287,6 +5310,21 @@ function FileList() {
   } = useApp();
   const [busy, setBusy] = useState({}); // { [file_id]: 'extracting' | 'generating MC' | 'generating short' }
 
+  // Live-tracked pending-flag count keyed by file_id. Refreshed whenever
+  // the flag queue changes (after a flag is submitted from a quiz, after
+  // FlagFixesPanel runs the pipeline, etc.) so the Library badges update
+  // without a reload.
+  const [flagCounts, setFlagCounts] = useState(_readPendingFlagCountsByFile);
+  useEffect(() => {
+    const sync = () => setFlagCounts(_readPendingFlagCountsByFile());
+    window.addEventListener('mcat:flagQueueChange', sync);
+    window.addEventListener('storage', sync); // cross-tab safety
+    return () => {
+      window.removeEventListener('mcat:flagQueueChange', sync);
+      window.removeEventListener('storage', sync);
+    };
+  }, []);
+
   const grouped = useMemo(() => {
     const g = {};
     for (const f of files) {
@@ -5294,10 +5332,18 @@ function FileList() {
       g[f.subject].push(f);
     }
     for (const k of Object.keys(g)) {
-      g[k].sort((a, b) => a.chapter.localeCompare(b.chapter, undefined, { numeric: true }));
+      // Flagged chapters bubble to the top of each subject (most flags
+      // first), then everything else falls back to natural chapter-number
+      // ordering. This makes recently-flagged chapters trivial to find.
+      g[k].sort((a, b) => {
+        const fa = flagCounts[a.file_id] || 0;
+        const fb = flagCounts[b.file_id] || 0;
+        if (fa !== fb) return fb - fa;
+        return a.chapter.localeCompare(b.chapter, undefined, { numeric: true });
+      });
     }
     return g;
-  }, [files]);
+  }, [files, flagCounts]);
 
   const markFile = useCallback((fileId, patch) => {
     setFiles((prev) => prev.map((f) => f.file_id === fileId ? { ...f, ...patch } : f));
@@ -5429,6 +5475,7 @@ function FileList() {
                   onProcess={() => processOne(f)}
                   onRemove={() => removeFile(f)}
                   readOnly={readOnly}
+                  flagCount={flagCounts[f.file_id] || 0}
                 />
               ))}
             </ul>
@@ -5762,6 +5809,10 @@ function FlagQuestionModal({ item, onClose }) {
         status: 'pending',
       });
       storage.set(KEYS.flagQueue, queue);
+      // Notify the Library tab so a 🚩 badge can appear on the chapter
+      // immediately, without a reload. Same event the FlagFixesPanel
+      // dispatches after a queue mutation.
+      try { window.dispatchEvent(new Event('mcat:flagQueueChange')); } catch {}
       setStatus({ kind: 'ok', msg: 'Flagged. We\'ll fix it on the next pipeline run.' });
       setTimeout(onClose, 900);
     } catch (e) {
@@ -9723,6 +9774,9 @@ function FlagFixesPanel() {
   const saveQueue = (next) => {
     storage.set(KEYS.flagQueue, next);
     setQueue(next);
+    // Library subscribes to this — when a flag is resolved or re-queued,
+    // the 🚩 badge count on the affected chapter should update live.
+    try { window.dispatchEvent(new Event('mcat:flagQueueChange')); } catch {}
   };
 
   const removeFlag = (id) => {
