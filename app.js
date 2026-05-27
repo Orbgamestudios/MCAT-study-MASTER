@@ -11837,7 +11837,10 @@ function Shell() {
                 </div>
               )}
               <FileList />
-              {contributorMode && <FlagFixesPanel />}
+              {/* FlagFixesPanel is always visible (regardless of contributorMode)
+                  so any user who flags a question can run the fix pipeline
+                  on their own queue with their own Gemini key. */}
+              <FlagFixesPanel />
             </div>
           )}
           {tabIs('home') && (
