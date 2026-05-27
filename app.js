@@ -5167,16 +5167,429 @@ function relatedTermsForItem(item, extractions) {
   return matches;
 }
 
+// ---------- molecule viewer (PubChem-backed) ----------
+// Curated dictionary of common MCAT-relevant compounds. Each entry's `name`
+// is the canonical string passed to PubChem (https://pubchem.ncbi.nlm.nih.gov
+// /rest/pug/compound/name/<name>/PNG). `variants` are alternate spellings or
+// trivial/IUPAC pairs that should all open the same PubChem image.
+// `acronym: true` forces case-sensitive uppercase matching so we don't link
+// "atp" inside random words; otherwise matching is case-insensitive.
+const MOLECULES = [
+  // Inorganic / small molecules
+  { name: 'water', variants: ['H2O'] },
+  { name: 'ammonia', variants: ['NH3'] },
+  { name: 'hydrogen peroxide', variants: ['H2O2'] },
+  { name: 'ozone' },
+  { name: 'carbon dioxide', variants: ['CO2'] },
+  { name: 'carbon monoxide', variants: ['CO'], acronym: true },
+  { name: 'nitric oxide', variants: ['NO'], acronym: true },
+  { name: 'nitrous oxide', variants: ['N2O'] },
+  { name: 'sulfur dioxide', variants: ['SO2'] },
+  { name: 'hydrogen sulfide', variants: ['H2S'] },
+  { name: 'hydrochloric acid', variants: ['HCl'] },
+  { name: 'sulfuric acid', variants: ['H2SO4'] },
+  { name: 'nitric acid', variants: ['HNO3'] },
+  { name: 'phosphoric acid', variants: ['H3PO4'] },
+  { name: 'carbonic acid', variants: ['H2CO3'] },
+  { name: 'sodium hydroxide', variants: ['NaOH'] },
+  { name: 'potassium hydroxide', variants: ['KOH'] },
+  { name: 'sodium chloride', variants: ['NaCl'] },
+  { name: 'sodium bicarbonate', variants: ['NaHCO3'] },
+  { name: 'calcium carbonate', variants: ['CaCO3'] },
+
+  // Alkanes
+  { name: 'methane' }, { name: 'ethane' }, { name: 'propane' },
+  { name: 'butane' }, { name: 'pentane' }, { name: 'hexane' },
+  { name: 'heptane' }, { name: 'octane' }, { name: 'nonane' }, { name: 'decane' },
+  { name: 'cyclopropane' }, { name: 'cyclobutane' }, { name: 'cyclopentane' }, { name: 'cyclohexane' },
+
+  // Alkenes / alkynes
+  { name: 'ethene', variants: ['ethylene'] },
+  { name: 'propene', variants: ['propylene'] },
+  { name: '1-butene' }, { name: '2-butene' },
+  { name: 'ethyne', variants: ['acetylene'] },
+  { name: 'propyne' }, { name: 'butadiene' }, { name: '1,3-butadiene' },
+  { name: 'isoprene' },
+
+  // Aromatics
+  { name: 'benzene' }, { name: 'toluene' }, { name: 'xylene' },
+  { name: 'phenol' }, { name: 'aniline' }, { name: 'styrene' },
+  { name: 'naphthalene' }, { name: 'anthracene' }, { name: 'biphenyl' },
+  { name: 'pyridine' }, { name: 'pyrimidine' }, { name: 'pyrrole' },
+  { name: 'furan' }, { name: 'thiophene' }, { name: 'imidazole' },
+  { name: 'indole' }, { name: 'purine' }, { name: 'quinoline' },
+  { name: 'anisole' }, { name: 'benzyl alcohol' },
+
+  // Alcohols
+  { name: 'methanol', variants: ['methyl alcohol'] },
+  { name: 'ethanol', variants: ['ethyl alcohol'] },
+  { name: '1-propanol' }, { name: '2-propanol', variants: ['isopropanol', 'isopropyl alcohol'] },
+  { name: '1-butanol' }, { name: '2-butanol' }, { name: 'tert-butanol', variants: ['tert-butyl alcohol'] },
+  { name: 'ethylene glycol' }, { name: 'glycerol', variants: ['glycerin', 'glycerine'] },
+  { name: 'phenol' },
+
+  // Ethers
+  { name: 'dimethyl ether' }, { name: 'diethyl ether', variants: ['ether'] },
+  { name: 'tetrahydrofuran', variants: ['THF'] },
+  { name: 'dioxane' },
+
+  // Aldehydes / ketones
+  { name: 'formaldehyde', variants: ['methanal'] },
+  { name: 'acetaldehyde', variants: ['ethanal'] },
+  { name: 'propanal', variants: ['propionaldehyde'] },
+  { name: 'butanal', variants: ['butyraldehyde'] },
+  { name: 'benzaldehyde' },
+  { name: 'acetone', variants: ['propanone', '2-propanone'] },
+  { name: 'butanone', variants: ['2-butanone', 'methyl ethyl ketone', 'MEK'], acronym: false },
+  { name: 'cyclohexanone' },
+
+  // Carboxylic acids
+  { name: 'formic acid', variants: ['methanoic acid'] },
+  { name: 'acetic acid', variants: ['ethanoic acid', 'vinegar'] },
+  { name: 'propanoic acid', variants: ['propionic acid'] },
+  { name: 'butyric acid', variants: ['butanoic acid'] },
+  { name: 'valeric acid', variants: ['pentanoic acid'] },
+  { name: 'oxalic acid' }, { name: 'malonic acid' }, { name: 'succinic acid' },
+  { name: 'fumaric acid' }, { name: 'maleic acid' },
+  { name: 'citric acid' }, { name: 'lactic acid' }, { name: 'pyruvic acid' },
+  { name: 'benzoic acid' }, { name: 'salicylic acid' },
+  { name: 'palmitic acid' }, { name: 'stearic acid' }, { name: 'oleic acid' },
+  { name: 'linoleic acid' }, { name: 'linolenic acid' }, { name: 'arachidonic acid' },
+  { name: 'tartaric acid' }, { name: 'malic acid' },
+
+  // Esters / amides
+  { name: 'methyl acetate' }, { name: 'ethyl acetate' }, { name: 'methyl benzoate' },
+  { name: 'acetamide' }, { name: 'formamide' }, { name: 'urea' },
+
+  // Amines
+  { name: 'methylamine' }, { name: 'ethylamine' }, { name: 'dimethylamine' },
+  { name: 'trimethylamine' }, { name: 'aniline' },
+  { name: 'ethanolamine' }, { name: 'choline' },
+
+  // Carbohydrates
+  { name: 'glucose', variants: ['D-glucose', 'dextrose'] },
+  { name: 'fructose', variants: ['D-fructose', 'levulose'] },
+  { name: 'galactose', variants: ['D-galactose'] },
+  { name: 'mannose' }, { name: 'ribose', variants: ['D-ribose'] },
+  { name: 'deoxyribose', variants: ['2-deoxyribose'] },
+  { name: 'sucrose' }, { name: 'lactose' }, { name: 'maltose' },
+  { name: 'glycogen' }, { name: 'starch' }, { name: 'cellulose' },
+  { name: 'amylose' }, { name: 'amylopectin' },
+
+  // Amino acids
+  { name: 'glycine' }, { name: 'alanine' }, { name: 'valine' },
+  { name: 'leucine' }, { name: 'isoleucine' }, { name: 'proline' },
+  { name: 'phenylalanine' }, { name: 'tryptophan' }, { name: 'methionine' },
+  { name: 'serine' }, { name: 'threonine' }, { name: 'cysteine' },
+  { name: 'tyrosine' }, { name: 'asparagine' }, { name: 'glutamine' },
+  { name: 'lysine' }, { name: 'arginine' }, { name: 'histidine' },
+  { name: 'aspartic acid', variants: ['aspartate'] },
+  { name: 'glutamic acid', variants: ['glutamate'] },
+
+  // Nucleotides / bases (acronyms — case-sensitive)
+  { name: 'ATP', acronym: true }, { name: 'ADP', acronym: true }, { name: 'AMP', acronym: true },
+  { name: 'GTP', acronym: true }, { name: 'GDP', acronym: true }, { name: 'GMP', acronym: true },
+  { name: 'CTP', acronym: true }, { name: 'UTP', acronym: true }, { name: 'TTP', acronym: true },
+  { name: 'cAMP', acronym: true }, { name: 'cGMP', acronym: true },
+  { name: 'NAD', acronym: true }, { name: 'NADH', acronym: true },
+  { name: 'NADP', acronym: true }, { name: 'NADPH', acronym: true },
+  { name: 'FAD', acronym: true }, { name: 'FADH2', acronym: true },
+  { name: 'CoA', variants: ['coenzyme A'], acronym: true },
+  { name: 'acetyl-CoA' },
+  { name: 'adenine' }, { name: 'guanine' }, { name: 'cytosine' },
+  { name: 'thymine' }, { name: 'uracil' }, { name: 'hypoxanthine' }, { name: 'xanthine' },
+
+  // Biochem intermediates / metabolism
+  { name: 'pyruvate', variants: ['pyruvic acid'] },
+  { name: 'oxaloacetate' }, { name: 'citrate' }, { name: 'isocitrate' },
+  { name: 'alpha-ketoglutarate', variants: ['α-ketoglutarate', '2-oxoglutarate'] },
+  { name: 'succinyl-CoA' }, { name: 'succinate' }, { name: 'fumarate' }, { name: 'malate' },
+  { name: 'glucose-6-phosphate' }, { name: 'fructose-6-phosphate' },
+  { name: 'fructose-1,6-bisphosphate' }, { name: 'glyceraldehyde-3-phosphate', variants: ['G3P'] },
+  { name: 'dihydroxyacetone phosphate', variants: ['DHAP'] },
+  { name: '1,3-bisphosphoglycerate' }, { name: '3-phosphoglycerate' }, { name: '2-phosphoglycerate' },
+  { name: 'phosphoenolpyruvate', variants: ['PEP'] },
+  { name: 'acetoacetate' }, { name: 'beta-hydroxybutyrate', variants: ['β-hydroxybutyrate'] },
+
+  // Lipids / steroids
+  { name: 'cholesterol' }, { name: 'testosterone' }, { name: 'estradiol' },
+  { name: 'progesterone' }, { name: 'cortisol' }, { name: 'aldosterone' },
+  { name: 'vitamin D' }, { name: 'cholecalciferol' }, { name: 'calcitriol' },
+  { name: 'sphingosine' }, { name: 'ceramide' }, { name: 'phosphatidylcholine', variants: ['lecithin'] },
+  { name: 'phosphatidylserine' }, { name: 'phosphatidylethanolamine' },
+  { name: 'triglyceride', variants: ['triacylglycerol'] },
+
+  // Vitamins / cofactors
+  { name: 'ascorbic acid', variants: ['vitamin C'] },
+  { name: 'retinol', variants: ['vitamin A'] },
+  { name: 'thiamine', variants: ['vitamin B1', 'thiamin'] },
+  { name: 'riboflavin', variants: ['vitamin B2'] },
+  { name: 'niacin', variants: ['nicotinic acid', 'vitamin B3'] },
+  { name: 'pantothenic acid', variants: ['vitamin B5'] },
+  { name: 'pyridoxine', variants: ['vitamin B6'] },
+  { name: 'biotin', variants: ['vitamin B7'] },
+  { name: 'folic acid', variants: ['folate', 'vitamin B9'] },
+  { name: 'cobalamin', variants: ['vitamin B12'] },
+  { name: 'tocopherol', variants: ['vitamin E'] },
+  { name: 'phylloquinone', variants: ['vitamin K'] },
+  { name: 'heme' }, { name: 'porphyrin' }, { name: 'chlorophyll' },
+
+  // Neurotransmitters / signaling
+  { name: 'dopamine' }, { name: 'serotonin', variants: ['5-hydroxytryptamine', '5-HT'] },
+  { name: 'epinephrine', variants: ['adrenaline'] },
+  { name: 'norepinephrine', variants: ['noradrenaline'] },
+  { name: 'acetylcholine' }, { name: 'GABA', acronym: true },
+  { name: 'glycine' }, { name: 'histamine' }, { name: 'melatonin' },
+  { name: 'glutamate' },
+
+  // Common drugs / misc
+  { name: 'aspirin', variants: ['acetylsalicylic acid'] },
+  { name: 'ibuprofen' }, { name: 'acetaminophen', variants: ['paracetamol', 'tylenol'] },
+  { name: 'caffeine' }, { name: 'nicotine' }, { name: 'morphine' },
+  { name: 'penicillin' }, { name: 'tetracycline' },
+  { name: 'glutathione' }, { name: 'creatine' }, { name: 'creatinine' },
+  { name: 'lactate' },
+
+  // Gases / diatomic
+  { name: 'oxygen', variants: ['O2'] },
+  { name: 'nitrogen', variants: ['N2'] },
+  { name: 'hydrogen', variants: ['H2'] },
+  { name: 'chlorine', variants: ['Cl2'] },
+  { name: 'bromine', variants: ['Br2'] },
+  { name: 'iodine', variants: ['I2'] },
+  { name: 'fluorine', variants: ['F2'] },
+];
+
+// Build the lookup table + matcher pattern once at module load.
+const { _molRegex, _molLookup, _molAcronymExact } = (() => {
+  const lookup = new Map();    // normalized key → canonical PubChem name
+  const acronymExact = new Set(); // case-sensitive surface form for acronyms
+  const allSurface = [];
+  for (const m of MOLECULES) {
+    const allNames = [m.name, ...(m.variants || [])];
+    for (const surface of allNames) {
+      allSurface.push(surface);
+      if (m.acronym) {
+        acronymExact.add(surface);
+        lookup.set(surface, m.name); // exact key for acronyms
+      } else {
+        lookup.set(surface.toLowerCase(), m.name);
+      }
+    }
+  }
+  // Longest first so multi-word phrases win over their substrings.
+  allSurface.sort((a, b) => b.length - a.length);
+  const pattern = '\\b(?:' + allSurface.map(escapeRegex).join('|') + ')\\b';
+  // 'g' for repeated matches, 'i' for case-insensitive — acronyms are
+  // post-filtered to their exact form below.
+  return { _molRegex: new RegExp(pattern, 'gi'), _molLookup: lookup, _molAcronymExact: acronymExact };
+})();
+
+// Find every molecule mention in `text`. Returns an array of segments where
+// {type:'text'} segments are plain strings and {type:'mol'} segments carry
+// both the displayed surface form (case preserved) and the canonical PubChem
+// lookup name. Adjacent non-match text is glued back together.
+function parseMoleculesInText(text) {
+  if (typeof text !== 'string' || !text) return [{ type: 'text', value: text || '' }];
+  const out = [];
+  let last = 0;
+  // Reset lastIndex because we share the regex across calls.
+  _molRegex.lastIndex = 0;
+  let mm;
+  while ((mm = _molRegex.exec(text)) !== null) {
+    const surface = mm[0];
+    const idx = mm.index;
+    // Look up canonical. Try the exact (case-preserved) surface first to
+    // catch acronyms; fall back to lowercased lookup. If we end up with an
+    // acronym hit but the surface isn't the exact acronym (e.g. matched
+    // "atp" inside text), skip the link.
+    let canonical = null;
+    if (_molLookup.has(surface)) {
+      canonical = _molLookup.get(surface);
+    } else if (_molAcronymExact.has(surface)) {
+      canonical = _molLookup.get(surface);
+    } else {
+      const lc = surface.toLowerCase();
+      if (_molLookup.has(lc)) {
+        // Reject acronym matches whose case doesn't match the dictionary.
+        // (e.g. dictionary has "ATP" exact-case; matching "atp" via the i
+        // flag would normalize to "atp", which isn't in the lookup at that
+        // case, so it'd hit lc-lookup with the wrong canonical — guard against
+        // that by checking acronymExact.has on the canonical's surface.)
+        const cand = _molLookup.get(lc);
+        // If the canonical is an acronym, only accept the exact form.
+        if (_molAcronymExact.has(cand) && cand !== surface) {
+          canonical = null;
+        } else {
+          canonical = cand;
+        }
+      }
+    }
+    if (!canonical) continue;
+    if (idx > last) out.push({ type: 'text', value: text.slice(last, idx) });
+    out.push({ type: 'mol', value: surface, canonical });
+    last = idx + surface.length;
+  }
+  if (last < text.length) out.push({ type: 'text', value: text.slice(last) });
+  if (!out.length) out.push({ type: 'text', value: text });
+  return out;
+}
+
+// ---------- molecule viewer context + modal ----------
+const MoleculeViewerCtx = createContext({ open: () => {}, close: () => {} });
+function useMoleculeViewer() { return useContext(MoleculeViewerCtx); }
+
+function MoleculeProvider({ children }) {
+  const [target, setTarget] = useState(null); // canonical molecule name or null
+  const ctx = useMemo(() => ({
+    open: (name) => setTarget(name || null),
+    close: () => setTarget(null),
+  }), []);
+  return (
+    <MoleculeViewerCtx.Provider value={ctx}>
+      {children}
+      {target && <MoleculeModal name={target} onClose={() => setTarget(null)} />}
+    </MoleculeViewerCtx.Provider>
+  );
+}
+
+function MoleculeModal({ name, onClose }) {
+  const [errored, setErrored] = useState(false);
+  // Lock background scroll like CARS / Connections runners do.
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = prev; };
+  }, []);
+  const enc = encodeURIComponent(name);
+  const imgUrl = `https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/${enc}/PNG?image_size=large`;
+  const pubchemPage = `https://pubchem.ncbi.nlm.nih.gov/#query=${enc}`;
+  return (
+    <div
+      className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-sm flex items-center justify-center p-3"
+      onClick={onClose}
+    >
+      <div
+        className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-5 max-w-md w-full max-h-[85vh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between gap-3 mb-3">
+          <div className="min-w-0">
+            <div className="text-[10px] uppercase tracking-wide text-[var(--text-muted)]">Molecule</div>
+            <div className="text-base sm:text-lg font-semibold text-[var(--text-strong)] truncate" title={name}>{name}</div>
+          </div>
+          <button
+            onClick={onClose}
+            className="shrink-0 text-2xl leading-none text-[var(--text-muted)] hover:text-[var(--text-strong)]"
+            aria-label="Close"
+          >×</button>
+        </div>
+        {!errored ? (
+          <div className="bg-white rounded-lg p-3 flex items-center justify-center">
+            <img
+              src={imgUrl}
+              alt={`Structure of ${name}`}
+              onError={() => setErrored(true)}
+              className="max-w-full h-auto"
+              style={{ maxHeight: '60vh' }}
+            />
+          </div>
+        ) : (
+          <div className="text-sm text-[var(--text-muted)] bg-[var(--bg-elev-soft)] border border-dashed border-[var(--border-soft)] rounded-lg px-3 py-4 text-center">
+            Couldn't load a structure image for "{name}" from PubChem.
+          </div>
+        )}
+        <div className="mt-3 flex items-center justify-between gap-3">
+          <a
+            href={pubchemPage}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-xs text-[var(--accent-text)] hover:underline"
+          >
+            Open on PubChem ↗
+          </a>
+          <button
+            onClick={onClose}
+            className="text-xs px-3 py-1.5 border border-[var(--border)] rounded hover:bg-[var(--bg-hover)]"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Inline renderer: drops a plain string in, returns it with known molecule
+// names wrapped in clickable spans that open the viewer modal. Safe to nest
+// inside <p>, <li>, etc. — yields a single <span>. Use this anywhere a quiz
+// or flashcard shows free-form text.
+function MoleculeText({ text, className }) {
+  const { open } = useMoleculeViewer();
+  if (typeof text !== 'string' || !text) return text || null;
+  const parts = parseMoleculesInText(text);
+  if (parts.length === 1 && parts[0].type === 'text') {
+    return className ? <span className={className}>{text}</span> : <>{text}</>;
+  }
+  return (
+    <span className={className}>
+      {parts.map((p, i) => {
+        if (p.type === 'text') return <React.Fragment key={i}>{p.value}</React.Fragment>;
+        return (
+          <span
+            key={i}
+            role="button"
+            tabIndex={0}
+            onClick={(e) => { e.stopPropagation(); e.preventDefault(); open(p.canonical); }}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); open(p.canonical); } }}
+            className="text-[var(--accent-text)] underline decoration-dotted decoration-[var(--accent-border)] underline-offset-2 cursor-pointer hover:bg-[var(--accent-soft)] rounded px-0.5"
+            title={`View 2D structure of ${p.canonical}`}
+          >
+            {p.value}
+          </span>
+        );
+      })}
+    </span>
+  );
+}
+
+// Whether a string looks like (entirely is) a molecule name. Used by
+// Flashcard to decide whether to show a "view structure" affordance instead
+// of inline-linking, since the card is itself a button (no nested buttons).
+function looksLikeMolecule(text) {
+  if (typeof text !== 'string' || !text) return null;
+  const trimmed = text.trim();
+  if (_molLookup.has(trimmed)) return _molLookup.get(trimmed);
+  const lc = trimmed.toLowerCase();
+  if (_molLookup.has(lc)) {
+    const cand = _molLookup.get(lc);
+    if (_molAcronymExact.has(cand) && cand !== trimmed) return null;
+    return cand;
+  }
+  return null;
+}
+
 // Click-to-flip flashcard. Front = term, back = definition. Both faces are
 // stacked in the same grid cell so the card auto-sizes to whichever face is
 // taller — no internal scrollbar, no clipped definitions.
+//
+// Container is a <div role="button"> rather than an actual <button> so the
+// inline molecule-link spans (which are also role="button") nest in valid
+// HTML — buttons can't contain buttons. Clicks bubble up to toggle flip;
+// MoleculeText spans stopPropagation so they don't accidentally flip.
 function Flashcard({ term, definition }) {
   const [flipped, setFlipped] = useState(false);
+  const { open: openMol } = useMoleculeViewer();
+  const termMol = looksLikeMolecule(term);
+  const flip = () => setFlipped((f) => !f);
   return (
-    <button
-      onClick={() => setFlipped((f) => !f)}
+    <div
+      onClick={flip}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); flip(); } }}
+      role="button"
+      tabIndex={0}
       data-no-haptic
-      className="relative w-full text-left grid rounded-lg overflow-hidden"
+      className="relative w-full text-left grid rounded-lg overflow-hidden cursor-pointer focus:outline-none focus:ring-2 focus:ring-[var(--accent-border)]"
       aria-label={flipped ? `Definition of ${term}` : `Show definition of ${term}`}
     >
       <div
@@ -5184,7 +5597,21 @@ function Flashcard({ term, definition }) {
         style={{ gridArea: '1 / 1', opacity: flipped ? 0 : 1, pointerEvents: flipped ? 'none' : 'auto' }}
         aria-hidden={flipped}
       >
-        <div className="text-[10px] uppercase tracking-wide text-[var(--text-faint)]">Term</div>
+        <div className="text-[10px] uppercase tracking-wide text-[var(--text-faint)] flex items-center justify-between gap-2">
+          <span>Term</span>
+          {termMol && (
+            <span
+              role="button"
+              tabIndex={0}
+              onClick={(e) => { e.stopPropagation(); openMol(termMol); }}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); openMol(termMol); } }}
+              className="text-[10px] px-1.5 py-0.5 rounded border border-[var(--accent-border)] text-[var(--accent-text)] hover:bg-[var(--accent-soft)] cursor-pointer normal-case tracking-normal"
+              title={`View 2D structure of ${termMol}`}
+            >
+              🧪 Structure
+            </span>
+          )}
+        </div>
         <div className="text-sm sm:text-base font-semibold text-[var(--text-strong)] leading-snug">{term}</div>
         <div className="text-[10px] text-[var(--text-fainter)] mt-1">Tap to flip</div>
       </div>
@@ -5193,10 +5620,24 @@ function Flashcard({ term, definition }) {
         style={{ gridArea: '1 / 1', opacity: flipped ? 1 : 0, pointerEvents: flipped ? 'auto' : 'none' }}
         aria-hidden={!flipped}
       >
-        <div className="text-[10px] uppercase tracking-wide text-[var(--accent-text)]">{term}</div>
-        <div className="text-xs sm:text-sm text-[var(--text)] leading-snug mt-0.5">{definition}</div>
+        <div className="text-[10px] uppercase tracking-wide text-[var(--accent-text)] flex items-center justify-between gap-2">
+          <span className="truncate">{term}</span>
+          {termMol && (
+            <span
+              role="button"
+              tabIndex={0}
+              onClick={(e) => { e.stopPropagation(); openMol(termMol); }}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); openMol(termMol); } }}
+              className="shrink-0 text-[10px] px-1.5 py-0.5 rounded border border-[var(--accent-border)] text-[var(--accent-text)] hover:bg-[var(--bg-hover)] cursor-pointer normal-case tracking-normal"
+              title={`View 2D structure of ${termMol}`}
+            >
+              🧪
+            </span>
+          )}
+        </div>
+        <div className="text-xs sm:text-sm text-[var(--text)] leading-snug mt-0.5"><MoleculeText text={definition} /></div>
       </div>
-    </button>
+    </div>
   );
 }
 
@@ -5236,7 +5677,7 @@ function MCQuestion({ item, onAnswer, nextSlot, onFlag }) {
 
   return (
     <div className="question-card space-y-4">
-      <p className="text-base leading-relaxed">{item.q.question}</p>
+      <p className="text-base leading-relaxed"><MoleculeText text={item.q.question} /></p>
       <div className="space-y-2">
         {shuffled.map((entry, i) => {
           const isPicked = picked && entry.origIdx === picked.origIdx;
@@ -5247,6 +5688,9 @@ function MCQuestion({ item, onAnswer, nextSlot, onFlag }) {
             else if (isPicked) cls = 'border-[var(--danger-border)] bg-[var(--danger-bg-strong)]';
             else cls = 'border-[var(--border-soft)] opacity-60';
           }
+          // Once the user has picked, choices are no longer click targets for
+          // selection — switch on molecule links so they can review structures.
+          const linkChoices = picked !== null;
           return (
             <button
               key={i}
@@ -5256,7 +5700,7 @@ function MCQuestion({ item, onAnswer, nextSlot, onFlag }) {
               className={`w-full text-left border rounded-lg px-3 py-2.5 text-sm transition-colors ${cls}`}
             >
               <span className="text-[var(--text-faint)] mr-2">{String.fromCharCode(65 + i)}.</span>
-              {entry.text}
+              {linkChoices ? <MoleculeText text={entry.text} /> : entry.text}
             </button>
           );
         })}
@@ -5277,7 +5721,7 @@ function MCQuestion({ item, onAnswer, nextSlot, onFlag }) {
             </div>
           </div>
           <div className="answer-reveal bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg p-3 text-sm text-[var(--text)]">
-            {item.q.explanation}
+            <MoleculeText text={item.q.explanation} />
           </div>
           <RelatedFlashcards item={item} />
         </>
@@ -5303,7 +5747,7 @@ function ShortAnswerQuestion({ item, onAnswer, nextSlot }) {
 
   return (
     <div className="question-card space-y-4">
-      <p className="text-base leading-relaxed">{item.q.prompt}</p>
+      <p className="text-base leading-relaxed"><MoleculeText text={item.q.prompt} /></p>
       <textarea
         value={text}
         onChange={(e) => setText(e.target.value)}
@@ -5324,13 +5768,13 @@ function ShortAnswerQuestion({ item, onAnswer, nextSlot }) {
         <div className="bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg p-4 space-y-3">
           <div>
             <div className="text-xs uppercase tracking-wide text-[var(--success-text)] mb-1">Ideal answer</div>
-            <div className="text-sm text-[var(--text-strong)]">{item.q.ideal_answer}</div>
+            <div className="text-sm text-[var(--text-strong)]"><MoleculeText text={item.q.ideal_answer} /></div>
           </div>
           {item.q.key_points?.length > 0 && (
             <div>
               <div className="text-xs uppercase tracking-wide text-[var(--accent-text)] mb-1">Key points</div>
               <ul className="text-sm text-[var(--text)] list-disc pl-5 space-y-0.5">
-                {item.q.key_points.map((p, i) => <li key={i}>{p}</li>)}
+                {item.q.key_points.map((p, i) => <li key={i}><MoleculeText text={p} /></li>)}
               </ul>
             </div>
           )}
@@ -5441,7 +5885,7 @@ function SinglePart({ part, onAnswer, nextSlot, continueLabel }) {
 
   return (
     <div className="question-card space-y-4">
-      <p className="text-base leading-relaxed">{part.question}</p>
+      <p className="text-base leading-relaxed"><MoleculeText text={part.question} /></p>
       <div className="space-y-2">
         {shuffled.map((entry, i) => {
           const isPicked = picked && entry.origIdx === picked.origIdx;
@@ -5452,6 +5896,7 @@ function SinglePart({ part, onAnswer, nextSlot, continueLabel }) {
             else if (isPicked) cls = 'border-[var(--danger-border)] bg-[var(--danger-bg-strong)]';
             else cls = 'border-[var(--border-soft)] opacity-60';
           }
+          const linkChoices = picked !== null;
           return (
             <button
               key={i}
@@ -5461,7 +5906,7 @@ function SinglePart({ part, onAnswer, nextSlot, continueLabel }) {
               className={`w-full text-left border rounded-lg px-3 py-2.5 text-sm transition-colors ${cls}`}
             >
               <span className="text-[var(--text-faint)] mr-2">{String.fromCharCode(65 + i)}.</span>
-              {entry.text}
+              {linkChoices ? <MoleculeText text={entry.text} /> : entry.text}
             </button>
           );
         })}
@@ -5483,7 +5928,7 @@ function SinglePart({ part, onAnswer, nextSlot, continueLabel }) {
             {advanced && nextSlot}
           </div>
           <div className="answer-reveal bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg p-3 text-sm text-[var(--text)]">
-            {part.explanation}
+            <MoleculeText text={part.explanation} />
           </div>
         </>
       )}
@@ -10137,7 +10582,9 @@ const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(
   <ErrorBoundary>
     <AppProvider>
-      <Root />
+      <MoleculeProvider>
+        <Root />
+      </MoleculeProvider>
     </AppProvider>
   </ErrorBoundary>
 );
