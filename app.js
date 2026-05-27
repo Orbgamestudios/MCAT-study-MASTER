@@ -3417,6 +3417,9 @@ function makeApiClient(getToken) {
     me: () => call('/me', { auth: true }),
     ping: () => call('/ping', { method: 'POST', auth: true }),
     postAttempts: (attempts) => call('/attempts', { method: 'POST', body: { attempts }, auth: true }),
+    getAttempts: () => call('/attempts', { auth: true }),
+    deleteAttempts: ({ file_id, chapter, subject, all } = {}) =>
+      call('/attempts', { method: 'DELETE', body: { file_id, chapter, subject, all }, auth: true }),
     meStats: () => call('/me/stats', { auth: true }),
     leaderboard: () => call('/leaderboard'),
     activity: () => call('/activity'),
@@ -3702,7 +3705,14 @@ function AppProvider({ children }) {
   }, []);
 
   const addAttempt = useCallback((a) => {
-    const stamped = { ...a, ts: Date.now() };
+    // client_id is a stable, client-generated UUID per attempt. The server
+    // INSERTs OR IGNOREs on (user_id, client_id), so a retried sync after a
+    // network blip can't double-count this attempt.
+    const cid =
+      (typeof crypto !== 'undefined' && crypto.randomUUID)
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+    const stamped = { ...a, ts: Date.now(), client_id: a.client_id || cid };
     setAttemptsState((prev) => {
       const next = [...prev, stamped];
       storage.set(KEYS.attempts, next);
@@ -3736,33 +3746,43 @@ function AppProvider({ children }) {
     [attempts]
   );
 
+  // Ref-based lock instead of relying on the React state `syncBusy`, which
+  // doesn't update synchronously — two close-together flushSync calls (e.g.
+  // login useEffect firing the same tick as a quiz-submit setTimeout) would
+  // both observe `syncBusy === false` and both POST the same queue. That's
+  // what caused duplicate final-score rows in your account.
+  const syncLockRef = useRef(false);
+
   const flushSync = useCallback(async () => {
     const s = storage.get(KEYS.session, null);
     if (!s?.token) return { ok: false, reason: 'not signed in' };
-    if (syncBusy) return { ok: false, reason: 'busy' };
-    const queue = storage.get(KEYS.attempts, []).filter((a) => !a.synced);
-    if (!queue.length) return { ok: true, inserted: 0 };
+    if (syncLockRef.current) return { ok: false, reason: 'busy' };
+    syncLockRef.current = true;
     setSyncBusy(true);
     setSyncError('');
     try {
+      const queue = storage.get(KEYS.attempts, []).filter((a) => !a.synced);
+      if (!queue.length) return { ok: true, inserted: 0 };
       // Chunk to stay well under the worker's 500-row cap.
       const CHUNK = 200;
       let remaining = queue.slice();
+      let inserted = 0;
       while (remaining.length) {
         const chunk = remaining.slice(0, CHUNK);
-        await api.postAttempts(chunk);
+        const resp = await api.postAttempts(chunk);
+        inserted += (resp && typeof resp.inserted === 'number') ? resp.inserted : chunk.length;
         remaining = remaining.slice(CHUNK);
       }
-      // Mark every attempt that was in the queue as synced.
-      const queuedTs = new Set(queue.map((a) => `${a.ts}:${a.question_id}`));
+      // Identify queued rows by client_id when present, falling back to
+      // ts:question_id for legacy attempts that predate client_id.
+      const idOf = (a) => a.client_id ? `c:${a.client_id}` : `t:${a.ts}:${a.question_id}`;
+      const queuedIds = new Set(queue.map(idOf));
       setAttemptsState((prev) => {
-        const next = prev.map((a) =>
-          queuedTs.has(`${a.ts}:${a.question_id}`) ? { ...a, synced: true } : a
-        );
+        const next = prev.map((a) => queuedIds.has(idOf(a)) ? { ...a, synced: true } : a);
         storage.set(KEYS.attempts, next);
         return next;
       });
-      return { ok: true, inserted: queue.length };
+      return { ok: true, inserted, submitted: queue.length };
     } catch (e) {
       setSyncError(e.message || 'sync failed');
       if (e.status === 401) {
@@ -3771,14 +3791,97 @@ function AppProvider({ children }) {
       }
       return { ok: false, reason: e.message };
     } finally {
+      syncLockRef.current = false;
       setSyncBusy(false);
     }
-  }, [api, syncBusy]);
+  }, [api]);
 
-  // On login or app load with an active session: flush any unsynced attempts.
+  // Pull every attempt from the server and merge into local. Used on sign-in so
+  // a fresh device rehydrates your full history. Dedupes by client_id;
+  // attempts without a client_id (legacy server rows) fall back to ts +
+  // question_id identity to avoid double-counting when the same attempt
+  // exists locally and remotely.
+  const pullAttempts = useCallback(async () => {
+    const s = storage.get(KEYS.session, null);
+    if (!s?.token) return { ok: false, reason: 'not signed in' };
+    try {
+      const resp = await api.getAttempts();
+      const remote = Array.isArray(resp?.attempts) ? resp.attempts : [];
+      if (!remote.length) return { ok: true, added: 0, total: 0 };
+      setAttemptsState((prev) => {
+        const haveCid = new Set();
+        const haveLegacy = new Set();
+        for (const a of prev) {
+          if (a.client_id) haveCid.add(a.client_id);
+          else haveLegacy.add(`${a.ts}:${a.question_id}`);
+        }
+        const additions = [];
+        for (const r of remote) {
+          if (r.client_id) {
+            if (haveCid.has(r.client_id)) continue;
+            haveCid.add(r.client_id);
+          } else {
+            const key = `${r.ts}:${r.question_id}`;
+            if (haveLegacy.has(key)) continue;
+            haveLegacy.add(key);
+          }
+          // Server rows are already synced — mark as such so flushSync won't
+          // try to re-POST them.
+          additions.push({
+            question_id: r.question_id,
+            mode: r.mode,
+            file_id: r.file_id || undefined,
+            chapter: r.chapter || undefined,
+            subject: r.subject || undefined,
+            correct: !!r.correct,
+            ts: r.ts,
+            client_id: r.client_id || undefined,
+            synced: true,
+          });
+        }
+        if (!additions.length) return prev;
+        const next = [...prev, ...additions].sort((a, b) => (a.ts || 0) - (b.ts || 0));
+        storage.set(KEYS.attempts, next);
+        return next;
+      });
+      return { ok: true, fetched: remote.length };
+    } catch (e) {
+      return { ok: false, reason: e.message };
+    }
+  }, [api]);
+
+  // Delete every local + remote attempt belonging to a specific quiz (chapter
+  // + subject, or local file_id). Used by Settings → Erase stats for a quiz to
+  // recover from sync glitches that duplicated rows on the server.
+  const eraseStatsFor = useCallback(async ({ file_id, chapter, subject } = {}) => {
+    const s = storage.get(KEYS.session, null);
+    let serverResult = null;
+    if (s?.token) {
+      try { serverResult = await api.deleteAttempts({ file_id, chapter, subject }); }
+      catch (e) { return { ok: false, reason: e.message }; }
+    }
+    setAttemptsState((prev) => {
+      const next = prev.filter((a) => {
+        if (file_id && a.file_id === file_id) return false;
+        if (chapter && a.chapter === chapter && (!subject || a.subject === subject)) return false;
+        return true;
+      });
+      storage.set(KEYS.attempts, next);
+      return next;
+    });
+    return { ok: true, serverDeleted: serverResult?.deleted ?? 0 };
+  }, [api]);
+
+  // On login or app load with an active session: pull remote attempts, then
+  // flush any unsynced local ones. Pull first so a new device sees existing
+  // history immediately; the subsequent flush only pushes what's truly new.
   useEffect(() => {
-    if (session?.token) flushSync();
-  }, [session?.token, flushSync]);
+    if (!session?.token) return;
+    (async () => {
+      try { await pullAttempts(); } catch {}
+      try { await flushSync(); } catch {}
+    })();
+  }, [session?.token, pullAttempts, flushSync]);
 
   // Auto-update: when enabled, silently refresh any locally-downloaded chapters
   // whose server updated_at is newer than what we last fetched.
@@ -3880,7 +3983,7 @@ function AppProvider({ children }) {
       files, setFiles,
       extractions, setExtraction,
       questions, setQuestionsFor,
-      attempts, addAttempt, clearAttempts,
+      attempts, addAttempt, clearAttempts, eraseStatsFor, pullAttempts,
       staticBank, useStaticBank,
       readOnly, setReadOnly,
       palette, mode, setPalette, setMode,
@@ -3895,7 +3998,7 @@ function AppProvider({ children }) {
       tropicalBg, setTropicalBg,
     }),
     [apiKey, setApiKey, files, setFiles, extractions, setExtraction, questions, setQuestionsFor,
-     attempts, addAttempt, clearAttempts, staticBank, useStaticBank, readOnly,
+     attempts, addAttempt, clearAttempts, eraseStatsFor, pullAttempts, staticBank, useStaticBank, readOnly,
      palette, mode, setPalette, setMode,
      github, setGithub, pushBank, pushStatus,
      session, setSession, api, pendingSync, flushSync, syncBusy, syncError, client,
@@ -5995,8 +6098,22 @@ function CarsRunner({ date, payload, onClose, alreadyDone }) {
 
   const goReview = () => { setPhase('review'); scrollTop(); };
 
+  // While the runner is open, lock the underlying page scroll so flick-scrolling
+  // doesn't drift the BankTab content behind it (iOS Safari is especially loose
+  // about this with nested scroll containers).
+  useEffect(() => {
+    const prevBodyOverflow = document.body.style.overflow;
+    const prevHtmlOverflow = document.documentElement.style.overflow;
+    document.body.style.overflow = 'hidden';
+    document.documentElement.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = prevBodyOverflow;
+      document.documentElement.style.overflow = prevHtmlOverflow;
+    };
+  }, []);
+
   return (
-    <div ref={scrollRef} className="fixed inset-x-0 bottom-0 z-30 bg-[var(--bg)] overflow-y-auto" style={{ top: 'var(--mcat-header-h, 56px)' }}>
+    <div ref={scrollRef} className="fixed inset-x-0 bottom-0 z-50 bg-[var(--bg)] overflow-y-auto" style={{ top: 'var(--mcat-header-h, 56px)' }}>
       {/* Banner is the FIRST child of the scroll container, with no padding
           above it, so it sits flush against the tabs bar and the sticky
           behavior keeps it there as the passage scrolls. */}
@@ -6651,8 +6768,20 @@ function ConnectionsRunner({ date, payload, onClose, alreadyDone }) {
   const dots = [0, 1, 2, 3];
   const mistakesLeft = 4 - mistakes;
 
+  // Lock background page scroll while the runner is open — see CarsRunner.
+  useEffect(() => {
+    const prevBodyOverflow = document.body.style.overflow;
+    const prevHtmlOverflow = document.documentElement.style.overflow;
+    document.body.style.overflow = 'hidden';
+    document.documentElement.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = prevBodyOverflow;
+      document.documentElement.style.overflow = prevHtmlOverflow;
+    };
+  }, []);
+
   return (
-    <div className="fixed inset-x-0 bottom-0 z-30 bg-[var(--bg)] overflow-y-auto" style={{ top: 'var(--mcat-header-h, 56px)' }}>
+    <div className="fixed inset-x-0 bottom-0 z-50 bg-[var(--bg)] overflow-y-auto" style={{ top: 'var(--mcat-header-h, 56px)' }}>
       <style>{`
         @keyframes conn-shake { 10%,90%{transform:translateX(-2px)} 20%,80%{transform:translateX(3px)} 30%,50%,70%{transform:translateX(-5px)} 40%,60%{transform:translateX(5px)} }
         .conn-shake { animation: conn-shake 0.45s ease-in-out; }
@@ -7940,6 +8069,97 @@ function SettingsPanel({ onClose }) {
         </label>
       </div>
 
+      <EraseQuizStatsSection />
+
+    </div>
+  );
+}
+
+// Lets a signed-in user erase the per-quiz statistics tied to their account
+// (not just local question attempts) for one chapter at a time. Useful if a
+// sync glitch duplicated entries on a single quiz. Lists every chapter you
+// have attempts for, with one Erase button per row.
+function EraseQuizStatsSection() {
+  const { attempts, session, eraseStatsFor } = useApp();
+  const [busy, setBusy] = useState(null); // key currently being erased
+  const [msg, setMsg] = useState(null);
+
+  // Group attempts by chapter+subject; that's the stable identity for a quiz
+  // across devices. file_id changes when a chapter is re-downloaded, so we
+  // don't key on it.
+  const groups = useMemo(() => {
+    const map = new Map();
+    for (const a of attempts) {
+      const chapter = a.chapter || '(unknown chapter)';
+      const subject = a.subject || '(unknown subject)';
+      const key = `${subject}::${chapter}`;
+      const g = map.get(key) || { key, chapter, subject, total: 0, correct: 0, fileIds: new Set() };
+      g.total++;
+      if (a.correct) g.correct++;
+      if (a.file_id) g.fileIds.add(a.file_id);
+      map.set(key, g);
+    }
+    return Array.from(map.values()).sort((a, b) => b.total - a.total);
+  }, [attempts]);
+
+  const erase = async (g) => {
+    const label = `${g.subject} — ${g.chapter}`;
+    if (!confirm(`Erase ALL ${g.total} attempt${g.total === 1 ? '' : 's'} for "${label}"?\n\nThis removes them from this device and from your account on the server. It can't be undone.`)) return;
+    setBusy(g.key); setMsg(null);
+    const res = await eraseStatsFor({ chapter: g.chapter, subject: g.subject });
+    setBusy(null);
+    if (res.ok) {
+      setMsg({ kind: 'ok', text: `Erased ${g.total} local${session ? ` and ${res.serverDeleted ?? 0} server` : ''} attempt${g.total === 1 ? '' : 's'} for "${label}".` });
+    } else {
+      setMsg({ kind: 'err', text: `Couldn't erase: ${res.reason || 'unknown error'}` });
+    }
+  };
+
+  return (
+    <div>
+      <div className="text-xs uppercase tracking-wide text-[var(--text-muted)] mb-2">Erase stats for a quiz</div>
+      <div className="text-[11px] text-[var(--text-faint)] mb-2">
+        Wipes both the local attempts AND the server-side stats tied to your account for that chapter. Use this if a sync glitch duplicated final scores.
+      </div>
+      {!session && (
+        <div className="text-[11px] text-[var(--warning-text-strong)] bg-[var(--warning-bg)] rounded px-2 py-1.5 mb-2">
+          Not signed in — only local attempts will be erased. Sign in to also clean up the duplicated rows on the server.
+        </div>
+      )}
+      {msg && (
+        <div className={`text-[11px] rounded px-2 py-1.5 mb-2 ${msg.kind === 'ok'
+          ? 'bg-[var(--success-bg)] text-[var(--success-text)]'
+          : 'bg-[var(--danger-bg)] text-[var(--danger-text)]'}`}>
+          {msg.text}
+        </div>
+      )}
+      {groups.length === 0 ? (
+        <div className="text-[11px] text-[var(--text-faint)] bg-[var(--bg-elev-soft)] border border-dashed border-[var(--border-soft)] rounded-lg px-3 py-3">
+          No quiz attempts yet.
+        </div>
+      ) : (
+        <ul className="max-h-64 overflow-y-auto divide-y divide-[var(--border-soft)] bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg">
+          {groups.map((g) => (
+            <li key={g.key} className="flex items-center gap-2 px-3 py-2">
+              <div className="min-w-0 flex-1">
+                <div className="text-sm text-[var(--text)] truncate" title={`${g.subject} — ${g.chapter}`}>
+                  {g.chapter}
+                </div>
+                <div className="text-[11px] text-[var(--text-faint)] truncate">
+                  {g.subject} · {g.correct}/{g.total} correct
+                </div>
+              </div>
+              <button
+                onClick={() => erase(g)}
+                disabled={busy === g.key}
+                className="shrink-0 text-[11px] px-2.5 py-1 border border-[var(--danger-border)] text-[var(--danger-text)] hover:bg-[var(--danger-bg)] disabled:opacity-40 rounded"
+              >
+                {busy === g.key ? 'Erasing…' : 'Erase'}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
