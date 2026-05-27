@@ -3418,8 +3418,8 @@ function makeApiClient(getToken) {
     ping: () => call('/ping', { method: 'POST', auth: true }),
     postAttempts: (attempts) => call('/attempts', { method: 'POST', body: { attempts }, auth: true }),
     getAttempts: () => call('/attempts', { auth: true }),
-    deleteAttempts: ({ file_id, chapter, subject, all } = {}) =>
-      call('/attempts', { method: 'DELETE', body: { file_id, chapter, subject, all }, auth: true }),
+    deleteAttempts: ({ file_id, chapter, subject, ts_gte, ts_lt, all } = {}) =>
+      call('/attempts', { method: 'DELETE', body: { file_id, chapter, subject, ts_gte, ts_lt, all }, auth: true }),
     meStats: () => call('/me/stats', { auth: true }),
     leaderboard: () => call('/leaderboard'),
     activity: () => call('/activity'),
@@ -3850,20 +3850,26 @@ function AppProvider({ children }) {
     }
   }, [api]);
 
-  // Delete every local + remote attempt belonging to a specific quiz (chapter
-  // + subject, or local file_id). Used by Settings → Erase stats for a quiz to
-  // recover from sync glitches that duplicated rows on the server.
-  const eraseStatsFor = useCallback(async ({ file_id, chapter, subject } = {}) => {
+  // Delete every local + remote attempt matching a scope: by file_id, by
+  // chapter (+ optional subject), or by a [ts_gte, ts_lt) time window. The
+  // Settings "erase attempts from this day" UI passes local-midnight bounds.
+  const eraseStatsFor = useCallback(async ({ file_id, chapter, subject, ts_gte, ts_lt } = {}) => {
     const s = storage.get(KEYS.session, null);
     let serverResult = null;
     if (s?.token) {
-      try { serverResult = await api.deleteAttempts({ file_id, chapter, subject }); }
+      try { serverResult = await api.deleteAttempts({ file_id, chapter, subject, ts_gte, ts_lt }); }
       catch (e) { return { ok: false, reason: e.message }; }
     }
     setAttemptsState((prev) => {
       const next = prev.filter((a) => {
         if (file_id && a.file_id === file_id) return false;
         if (chapter && a.chapter === chapter && (!subject || a.subject === subject)) return false;
+        if ((Number.isFinite(ts_gte) || Number.isFinite(ts_lt))) {
+          const t = a.ts || 0;
+          const okGte = !Number.isFinite(ts_gte) || t >= ts_gte;
+          const okLt  = !Number.isFinite(ts_lt)  || t <  ts_lt;
+          if (okGte && okLt) return false;
+        }
         return true;
       });
       storage.set(KEYS.attempts, next);
@@ -7674,7 +7680,7 @@ function McatPredictionCard() {
       )}
       <div className="flex items-center justify-between gap-3 mt-3">
         <div className="text-[11px] text-[var(--text-faint)] leading-snug flex-1">
-          Per-subject accuracy from your last 200 attempts, weighted into MCAT sections by AAMC content (renormalised to subjects you've attempted). Shrunk toward a 55% prior — treat as a floor, not a ceiling.
+          Accuracy on your most recent 200 questions per subject, weighted into each MCAT section by the AAMC content ratios shown in the breakdown (renormalised to subjects you've actually attempted). Shrunk toward a 55% prior — treat as a floor, not a ceiling.
         </div>
         <button
           onClick={() => setExpanded((x) => !x)}
@@ -8075,41 +8081,70 @@ function SettingsPanel({ onClose }) {
   );
 }
 
-// Lets a signed-in user erase the per-quiz statistics tied to their account
-// (not just local question attempts) for one chapter at a time. Useful if a
-// sync glitch duplicated entries on a single quiz. Lists every chapter you
-// have attempts for, with one Erase button per row.
+// Lets a signed-in user erase the question history tied to their account one
+// day at a time. Each day expands to show the per-quiz breakdown (chapter +
+// subject + accuracy). One click on the day's Erase button wipes BOTH the
+// local attempts and the server-side rows in that local-midnight window.
 function EraseQuizStatsSection() {
   const { attempts, session, eraseStatsFor } = useApp();
-  const [busy, setBusy] = useState(null); // key currently being erased
+  const [busy, setBusy] = useState(null); // day key currently being erased
   const [msg, setMsg] = useState(null);
+  const [openDay, setOpenDay] = useState(null);
 
-  // Group attempts by chapter+subject; that's the stable identity for a quiz
-  // across devices. file_id changes when a chapter is re-downloaded, so we
-  // don't key on it.
-  const groups = useMemo(() => {
-    const map = new Map();
+  // Group by local calendar day. Each day's bucket also keeps a per-quiz
+  // (chapter+subject) breakdown so the user can see what they actually did
+  // before confirming a delete.
+  const days = useMemo(() => {
+    const dayMap = new Map();
     for (const a of attempts) {
+      const ts = a.ts || 0;
+      const d = new Date(ts);
+      // Local-day key: YYYY-MM-DD in the user's tz.
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      const key = `${y}-${m}-${day}`;
+      const startOfDay = new Date(y, d.getMonth(), d.getDate(), 0, 0, 0, 0).getTime();
+      const endOfDay = startOfDay + 24 * 3600 * 1000;
+      let bucket = dayMap.get(key);
+      if (!bucket) {
+        bucket = { key, startOfDay, endOfDay, total: 0, correct: 0, quizzes: new Map() };
+        dayMap.set(key, bucket);
+      }
+      bucket.total++;
+      if (a.correct) bucket.correct++;
       const chapter = a.chapter || '(unknown chapter)';
       const subject = a.subject || '(unknown subject)';
-      const key = `${subject}::${chapter}`;
-      const g = map.get(key) || { key, chapter, subject, total: 0, correct: 0, fileIds: new Set() };
-      g.total++;
-      if (a.correct) g.correct++;
-      if (a.file_id) g.fileIds.add(a.file_id);
-      map.set(key, g);
+      const qkey = `${subject}::${chapter}`;
+      let q = bucket.quizzes.get(qkey);
+      if (!q) { q = { chapter, subject, total: 0, correct: 0 }; bucket.quizzes.set(qkey, q); }
+      q.total++;
+      if (a.correct) q.correct++;
     }
-    return Array.from(map.values()).sort((a, b) => b.total - a.total);
+    return Array.from(dayMap.values())
+      .map((b) => ({ ...b, quizzes: Array.from(b.quizzes.values()).sort((a, b) => b.total - a.total) }))
+      .sort((a, b) => b.startOfDay - a.startOfDay); // most recent first
   }, [attempts]);
 
-  const erase = async (g) => {
-    const label = `${g.subject} — ${g.chapter}`;
-    if (!confirm(`Erase ALL ${g.total} attempt${g.total === 1 ? '' : 's'} for "${label}"?\n\nThis removes them from this device and from your account on the server. It can't be undone.`)) return;
-    setBusy(g.key); setMsg(null);
-    const res = await eraseStatsFor({ chapter: g.chapter, subject: g.subject });
+  const fmtDay = (key, ts) => {
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const yest = new Date(today.getTime() - 24 * 3600 * 1000);
+    const d = new Date(ts);
+    const isToday = d.toDateString() === today.toDateString();
+    const isYest = d.toDateString() === yest.toDateString();
+    if (isToday) return `Today · ${key}`;
+    if (isYest) return `Yesterday · ${key}`;
+    return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }) + ` · ${key}`;
+  };
+
+  const eraseDay = async (b) => {
+    const label = fmtDay(b.key, b.startOfDay);
+    if (!confirm(`Erase ALL ${b.total} attempt${b.total === 1 ? '' : 's'} from ${label}?\n\nThis removes the question history for that day from this device AND from your account on the server. It can't be undone.`)) return;
+    setBusy(b.key); setMsg(null);
+    const res = await eraseStatsFor({ ts_gte: b.startOfDay, ts_lt: b.endOfDay });
     setBusy(null);
     if (res.ok) {
-      setMsg({ kind: 'ok', text: `Erased ${g.total} local${session ? ` and ${res.serverDeleted ?? 0} server` : ''} attempt${g.total === 1 ? '' : 's'} for "${label}".` });
+      setMsg({ kind: 'ok', text: `Erased ${b.total} local${session ? ` and ${res.serverDeleted ?? 0} server` : ''} attempt${b.total === 1 ? '' : 's'} from ${label}.` });
     } else {
       setMsg({ kind: 'err', text: `Couldn't erase: ${res.reason || 'unknown error'}` });
     }
@@ -8117,9 +8152,9 @@ function EraseQuizStatsSection() {
 
   return (
     <div>
-      <div className="text-xs uppercase tracking-wide text-[var(--text-muted)] mb-2">Erase stats for a quiz</div>
+      <div className="text-xs uppercase tracking-wide text-[var(--text-muted)] mb-2">Question history by day</div>
       <div className="text-[11px] text-[var(--text-faint)] mb-2">
-        Wipes both the local attempts AND the server-side stats tied to your account for that chapter. Use this if a sync glitch duplicated final scores.
+        Expand any day to see what you did. Erasing wipes both the local attempts and the matching rows on your account on the server. Use this if a sync glitch duplicated entries.
       </div>
       {!session && (
         <div className="text-[11px] text-[var(--warning-text-strong)] bg-[var(--warning-bg)] rounded px-2 py-1.5 mb-2">
@@ -8133,31 +8168,58 @@ function EraseQuizStatsSection() {
           {msg.text}
         </div>
       )}
-      {groups.length === 0 ? (
+      {days.length === 0 ? (
         <div className="text-[11px] text-[var(--text-faint)] bg-[var(--bg-elev-soft)] border border-dashed border-[var(--border-soft)] rounded-lg px-3 py-3">
           No quiz attempts yet.
         </div>
       ) : (
-        <ul className="max-h-64 overflow-y-auto divide-y divide-[var(--border-soft)] bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg">
-          {groups.map((g) => (
-            <li key={g.key} className="flex items-center gap-2 px-3 py-2">
-              <div className="min-w-0 flex-1">
-                <div className="text-sm text-[var(--text)] truncate" title={`${g.subject} — ${g.chapter}`}>
-                  {g.chapter}
+        <ul className="max-h-72 overflow-y-auto divide-y divide-[var(--border-soft)] bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg">
+          {days.map((b) => {
+            const open = openDay === b.key;
+            return (
+              <li key={b.key} className="px-3 py-2">
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setOpenDay(open ? null : b.key)}
+                    className="min-w-0 flex-1 text-left"
+                    aria-expanded={open}
+                  >
+                    <div className="text-sm text-[var(--text)] flex items-center gap-1.5">
+                      <span
+                        aria-hidden="true"
+                        className="text-[var(--text-muted)] transition-transform inline-block text-[10px]"
+                        style={{ transform: open ? 'rotate(90deg)' : 'rotate(0deg)' }}
+                      >▶</span>
+                      <span className="truncate">{fmtDay(b.key, b.startOfDay)}</span>
+                    </div>
+                    <div className="text-[11px] text-[var(--text-faint)] truncate pl-4">
+                      {b.correct}/{b.total} correct · {b.quizzes.length} quiz{b.quizzes.length === 1 ? '' : 'zes'}
+                    </div>
+                  </button>
+                  <button
+                    onClick={() => eraseDay(b)}
+                    disabled={busy === b.key}
+                    className="shrink-0 text-[11px] px-2.5 py-1 border border-[var(--danger-border)] text-[var(--danger-text)] hover:bg-[var(--danger-bg)] disabled:opacity-40 rounded"
+                  >
+                    {busy === b.key ? 'Erasing…' : 'Erase'}
+                  </button>
                 </div>
-                <div className="text-[11px] text-[var(--text-faint)] truncate">
-                  {g.subject} · {g.correct}/{g.total} correct
-                </div>
-              </div>
-              <button
-                onClick={() => erase(g)}
-                disabled={busy === g.key}
-                className="shrink-0 text-[11px] px-2.5 py-1 border border-[var(--danger-border)] text-[var(--danger-text)] hover:bg-[var(--danger-bg)] disabled:opacity-40 rounded"
-              >
-                {busy === g.key ? 'Erasing…' : 'Erase'}
-              </button>
-            </li>
-          ))}
+                {open && (
+                  <ul className="mt-1.5 ml-4 space-y-1">
+                    {b.quizzes.map((q) => (
+                      <li key={`${q.subject}::${q.chapter}`} className="text-[11px] flex items-center justify-between gap-2 text-[var(--text-muted)]">
+                        <span className="min-w-0 truncate" title={`${q.subject} — ${q.chapter}`}>
+                          <span className="text-[var(--text)]">{q.chapter}</span>
+                          <span className="text-[var(--text-fainter)]"> · {q.subject}</span>
+                        </span>
+                        <span className="shrink-0 font-mono text-[var(--text-faint)]">{q.correct}/{q.total}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>
