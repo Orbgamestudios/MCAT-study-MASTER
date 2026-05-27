@@ -2532,22 +2532,275 @@ function updateFavicon(theme) {
   } catch {}
 }
 
+// LZ-string compressToUTF16 / decompressFromUTF16. Inlined from pieroxy's
+// lz-string (MIT). Synchronous, no deps, packs the LZW dictionary into 15
+// bits per char so the result still fits cleanly in a UTF-16 localStorage
+// string. Typically 65–75% smaller than raw JSON for our chapter blobs,
+// which is what gets us comfortably under the iOS Safari ~5 MB cap.
+const lzString = (function () {
+  const f = String.fromCharCode;
+  function _compress(uncompressed, bitsPerChar, getCharFromInt) {
+    if (uncompressed == null) return '';
+    let i, value, ii;
+    const context_dictionary = {}, context_dictionaryToCreate = {};
+    let context_c = '', context_wc = '', context_w = '';
+    let context_enlargeIn = 2, context_dictSize = 3, context_numBits = 2;
+    const context_data = [];
+    let context_data_val = 0, context_data_position = 0;
+    for (ii = 0; ii < uncompressed.length; ii += 1) {
+      context_c = uncompressed.charAt(ii);
+      if (!Object.prototype.hasOwnProperty.call(context_dictionary, context_c)) {
+        context_dictionary[context_c] = context_dictSize++;
+        context_dictionaryToCreate[context_c] = true;
+      }
+      context_wc = context_w + context_c;
+      if (Object.prototype.hasOwnProperty.call(context_dictionary, context_wc)) {
+        context_w = context_wc;
+      } else {
+        if (Object.prototype.hasOwnProperty.call(context_dictionaryToCreate, context_w)) {
+          if (context_w.charCodeAt(0) < 256) {
+            for (i = 0; i < context_numBits; i++) {
+              context_data_val = (context_data_val << 1);
+              if (context_data_position == bitsPerChar - 1) {
+                context_data_position = 0; context_data.push(getCharFromInt(context_data_val)); context_data_val = 0;
+              } else context_data_position++;
+            }
+            value = context_w.charCodeAt(0);
+            for (i = 0; i < 8; i++) {
+              context_data_val = (context_data_val << 1) | (value & 1);
+              if (context_data_position == bitsPerChar - 1) {
+                context_data_position = 0; context_data.push(getCharFromInt(context_data_val)); context_data_val = 0;
+              } else context_data_position++;
+              value = value >> 1;
+            }
+          } else {
+            value = 1;
+            for (i = 0; i < context_numBits; i++) {
+              context_data_val = (context_data_val << 1) | value;
+              if (context_data_position == bitsPerChar - 1) {
+                context_data_position = 0; context_data.push(getCharFromInt(context_data_val)); context_data_val = 0;
+              } else context_data_position++;
+              value = 0;
+            }
+            value = context_w.charCodeAt(0);
+            for (i = 0; i < 16; i++) {
+              context_data_val = (context_data_val << 1) | (value & 1);
+              if (context_data_position == bitsPerChar - 1) {
+                context_data_position = 0; context_data.push(getCharFromInt(context_data_val)); context_data_val = 0;
+              } else context_data_position++;
+              value = value >> 1;
+            }
+          }
+          context_enlargeIn--;
+          if (context_enlargeIn == 0) { context_enlargeIn = Math.pow(2, context_numBits); context_numBits++; }
+          delete context_dictionaryToCreate[context_w];
+        } else {
+          value = context_dictionary[context_w];
+          for (i = 0; i < context_numBits; i++) {
+            context_data_val = (context_data_val << 1) | (value & 1);
+            if (context_data_position == bitsPerChar - 1) {
+              context_data_position = 0; context_data.push(getCharFromInt(context_data_val)); context_data_val = 0;
+            } else context_data_position++;
+            value = value >> 1;
+          }
+        }
+        context_enlargeIn--;
+        if (context_enlargeIn == 0) { context_enlargeIn = Math.pow(2, context_numBits); context_numBits++; }
+        context_dictionary[context_wc] = context_dictSize++;
+        context_w = String(context_c);
+      }
+    }
+    if (context_w !== '') {
+      if (Object.prototype.hasOwnProperty.call(context_dictionaryToCreate, context_w)) {
+        if (context_w.charCodeAt(0) < 256) {
+          for (i = 0; i < context_numBits; i++) {
+            context_data_val = (context_data_val << 1);
+            if (context_data_position == bitsPerChar - 1) { context_data_position = 0; context_data.push(getCharFromInt(context_data_val)); context_data_val = 0; }
+            else context_data_position++;
+          }
+          value = context_w.charCodeAt(0);
+          for (i = 0; i < 8; i++) {
+            context_data_val = (context_data_val << 1) | (value & 1);
+            if (context_data_position == bitsPerChar - 1) { context_data_position = 0; context_data.push(getCharFromInt(context_data_val)); context_data_val = 0; }
+            else context_data_position++;
+            value = value >> 1;
+          }
+        } else {
+          value = 1;
+          for (i = 0; i < context_numBits; i++) {
+            context_data_val = (context_data_val << 1) | value;
+            if (context_data_position == bitsPerChar - 1) { context_data_position = 0; context_data.push(getCharFromInt(context_data_val)); context_data_val = 0; }
+            else context_data_position++;
+            value = 0;
+          }
+          value = context_w.charCodeAt(0);
+          for (i = 0; i < 16; i++) {
+            context_data_val = (context_data_val << 1) | (value & 1);
+            if (context_data_position == bitsPerChar - 1) { context_data_position = 0; context_data.push(getCharFromInt(context_data_val)); context_data_val = 0; }
+            else context_data_position++;
+            value = value >> 1;
+          }
+        }
+        context_enlargeIn--;
+        if (context_enlargeIn == 0) { context_enlargeIn = Math.pow(2, context_numBits); context_numBits++; }
+        delete context_dictionaryToCreate[context_w];
+      } else {
+        value = context_dictionary[context_w];
+        for (i = 0; i < context_numBits; i++) {
+          context_data_val = (context_data_val << 1) | (value & 1);
+          if (context_data_position == bitsPerChar - 1) { context_data_position = 0; context_data.push(getCharFromInt(context_data_val)); context_data_val = 0; }
+          else context_data_position++;
+          value = value >> 1;
+        }
+      }
+      context_enlargeIn--;
+      if (context_enlargeIn == 0) { context_enlargeIn = Math.pow(2, context_numBits); context_numBits++; }
+    }
+    value = 2;
+    for (i = 0; i < context_numBits; i++) {
+      context_data_val = (context_data_val << 1) | (value & 1);
+      if (context_data_position == bitsPerChar - 1) { context_data_position = 0; context_data.push(getCharFromInt(context_data_val)); context_data_val = 0; }
+      else context_data_position++;
+      value = value >> 1;
+    }
+    while (true) {
+      context_data_val = (context_data_val << 1);
+      if (context_data_position == bitsPerChar - 1) { context_data.push(getCharFromInt(context_data_val)); break; }
+      else context_data_position++;
+    }
+    return context_data.join('');
+  }
+  function _decompress(length, resetValue, getNextValue) {
+    const dictionary = [];
+    let enlargeIn = 4, dictSize = 4, numBits = 3, entry = '', result = [],
+        i, w, bits, resb, maxpower, power, c;
+    const data = { val: getNextValue(0), position: resetValue, index: 1 };
+    for (i = 0; i < 3; i += 1) dictionary[i] = i;
+    bits = 0; maxpower = Math.pow(2, 2); power = 1;
+    while (power != maxpower) {
+      resb = data.val & data.position;
+      data.position >>= 1;
+      if (data.position == 0) { data.position = resetValue; data.val = getNextValue(data.index++); }
+      bits |= (resb > 0 ? 1 : 0) * power; power <<= 1;
+    }
+    switch (bits) {
+      case 0:
+        bits = 0; maxpower = Math.pow(2, 8); power = 1;
+        while (power != maxpower) {
+          resb = data.val & data.position; data.position >>= 1;
+          if (data.position == 0) { data.position = resetValue; data.val = getNextValue(data.index++); }
+          bits |= (resb > 0 ? 1 : 0) * power; power <<= 1;
+        }
+        c = f(bits); break;
+      case 1:
+        bits = 0; maxpower = Math.pow(2, 16); power = 1;
+        while (power != maxpower) {
+          resb = data.val & data.position; data.position >>= 1;
+          if (data.position == 0) { data.position = resetValue; data.val = getNextValue(data.index++); }
+          bits |= (resb > 0 ? 1 : 0) * power; power <<= 1;
+        }
+        c = f(bits); break;
+      case 2: return '';
+    }
+    dictionary[3] = c; w = c; result.push(c);
+    while (true) {
+      if (data.index > length) return '';
+      bits = 0; maxpower = Math.pow(2, numBits); power = 1;
+      while (power != maxpower) {
+        resb = data.val & data.position; data.position >>= 1;
+        if (data.position == 0) { data.position = resetValue; data.val = getNextValue(data.index++); }
+        bits |= (resb > 0 ? 1 : 0) * power; power <<= 1;
+      }
+      switch (c = bits) {
+        case 0:
+          bits = 0; maxpower = Math.pow(2, 8); power = 1;
+          while (power != maxpower) {
+            resb = data.val & data.position; data.position >>= 1;
+            if (data.position == 0) { data.position = resetValue; data.val = getNextValue(data.index++); }
+            bits |= (resb > 0 ? 1 : 0) * power; power <<= 1;
+          }
+          dictionary[dictSize++] = f(bits); c = dictSize - 1; enlargeIn--; break;
+        case 1:
+          bits = 0; maxpower = Math.pow(2, 16); power = 1;
+          while (power != maxpower) {
+            resb = data.val & data.position; data.position >>= 1;
+            if (data.position == 0) { data.position = resetValue; data.val = getNextValue(data.index++); }
+            bits |= (resb > 0 ? 1 : 0) * power; power <<= 1;
+          }
+          dictionary[dictSize++] = f(bits); c = dictSize - 1; enlargeIn--; break;
+        case 2: return result.join('');
+      }
+      if (enlargeIn == 0) { enlargeIn = Math.pow(2, numBits); numBits++; }
+      if (dictionary[c]) entry = dictionary[c];
+      else { if (c === dictSize) entry = w + w.charAt(0); else return null; }
+      result.push(entry);
+      dictionary[dictSize++] = w + entry.charAt(0);
+      enlargeIn--; w = entry;
+      if (enlargeIn == 0) { enlargeIn = Math.pow(2, numBits); numBits++; }
+    }
+  }
+  return {
+    compressToUTF16: function (input) {
+      if (input == null) return '';
+      return _compress(input, 15, function (a) { return f(a + 32); }) + ' ';
+    },
+    decompressFromUTF16: function (compressed) {
+      if (compressed == null) return '';
+      if (compressed == '') return null;
+      return _decompress(compressed.length, 16384, function (index) { return compressed.charCodeAt(index) - 32; });
+    },
+  };
+})();
+
+// 4-char marker so we can tell compressed entries from legacy plain-JSON
+// ones. Pre-compression entries written by older app versions still load
+// correctly via the JSON.parse fallback in storage.get below.
+const STORAGE_LZ_MARKER = 'LZv1';
+// Only compress entries above this raw-JSON size. Below it, the marker +
+// LZ overhead is bigger than the savings.
+const STORAGE_LZ_MIN_BYTES = 1024;
+
 const storage = {
   get(key, fallback = null) {
     try {
       const raw = localStorage.getItem(key);
-      return raw == null ? fallback : JSON.parse(raw);
+      if (raw == null) return fallback;
+      if (raw.startsWith(STORAGE_LZ_MARKER)) {
+        const body = raw.slice(STORAGE_LZ_MARKER.length);
+        const json = lzString.decompressFromUTF16(body);
+        return json == null ? fallback : JSON.parse(json);
+      }
+      return JSON.parse(raw);
     } catch { return fallback; }
   },
-  // Returns true on success, false on failure. When localStorage is full,
-  // we *don't* want to silently drop data — the React in-memory state will
-  // keep working but reload will revert to the last successful snapshot.
-  // We dispatch a window event so the UI can surface the failure.
+  // Returns true on success, false on failure. Compresses large values
+  // (>1 KB raw) before writing to localStorage so 36+ chapters fit
+  // comfortably under the ~5 MB cap. Falls back to raw JSON on small
+  // values where compression would cost more than it saves.
   set(key, value) {
+    let json;
+    try { json = JSON.stringify(value); } catch (e) {
+      try {
+        window.dispatchEvent(new CustomEvent('mcat:storage-fail', {
+          detail: { key, quota: false, message: 'JSON.stringify failed: ' + (e?.message || e) },
+        }));
+      } catch {}
+      return false;
+    }
+    const big = json.length >= STORAGE_LZ_MIN_BYTES;
+    const payload = big ? (STORAGE_LZ_MARKER + lzString.compressToUTF16(json)) : json;
     try {
-      localStorage.setItem(key, JSON.stringify(value));
+      localStorage.setItem(key, payload);
       return true;
     } catch (e) {
+      // If we wrote raw and quota'd, try again compressed — the user may
+      // have an older browser where small writes hit the cap.
+      if (!big) {
+        try {
+          localStorage.setItem(key, STORAGE_LZ_MARKER + lzString.compressToUTF16(json));
+          return true;
+        } catch {}
+      }
       try {
         const isQuota = e && (e.name === 'QuotaExceededError' || e.code === 22 || /quota/i.test(String(e.message)));
         window.dispatchEvent(new CustomEvent('mcat:storage-fail', {
@@ -2558,6 +2811,40 @@ const storage = {
     }
   },
   remove(key) { localStorage.removeItem(key); },
+  // Walk every localStorage key once and re-write any uncompressed entry
+  // through storage.set. Compresses existing chapter data in place — runs
+  // once per app upgrade thanks to the version marker, so it doesn't
+  // re-pay the cost on every load.
+  migrateCompressIfNeeded() {
+    const FLAG = 'mcat:_compressed_v1';
+    try { if (localStorage.getItem(FLAG) === '1') return; } catch { return; }
+    let migrated = 0, freed = 0;
+    try {
+      const keys = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith('mcat:')) keys.push(k);
+      }
+      for (const k of keys) {
+        try {
+          const raw = localStorage.getItem(k);
+          if (raw == null) continue;
+          if (raw.startsWith(STORAGE_LZ_MARKER)) continue; // already compressed
+          if (raw.length < STORAGE_LZ_MIN_BYTES) continue; // not worth it
+          const parsed = JSON.parse(raw);
+          const before = raw.length;
+          if (this.set(k, parsed)) {
+            const after = (localStorage.getItem(k) || '').length;
+            if (after < before) { migrated++; freed += (before - after) * 2; }
+          }
+        } catch {}
+      }
+      localStorage.setItem(FLAG, '1');
+    } catch {}
+    if (migrated > 0) {
+      try { console.info(`[storage] compressed ${migrated} keys, freed ~${Math.round(freed / 1024)} KB`); } catch {}
+    }
+  },
   // Sum of all mcat:* keys in bytes. Used by the storage-full warning to
   // tell the user how full their localStorage actually is.
   usageBytes() {
@@ -10700,6 +10987,11 @@ function Root() {
 // Crash diagnostics now live in index.html as a plain <script> so they install
 // BEFORE Babel parses this file. That way iOS Safari (no devtools) still sees a
 // visible error banner even if app.js fails to parse or React fails to mount.
+
+// One-time compress every existing uncompressed mcat:* key. Frees ~60–70%
+// of localStorage for the 36+ chapter snapshots that older app versions
+// stored uncompressed.
+try { storage.migrateCompressIfNeeded(); } catch {}
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(
