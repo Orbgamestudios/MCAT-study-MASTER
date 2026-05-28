@@ -7319,23 +7319,26 @@ function TwoPartQuestion({ item, onAnswer, nextSlot, onFlag }) {
     }
   };
 
-  const current = parts[partIdx];
-
+  // Render every part reached so far, stacked, so an answered part (with its
+  // pick, correct answer, and explanation) stays visible while the next part
+  // is in progress. Each SinglePart keeps a stable key so it is never
+  // remounted — that's what preserves the earlier part's revealed state.
   return (
     <div className="space-y-4">
-      <div className="flex items-baseline justify-between">
-        <span className="text-xs uppercase tracking-wide text-[var(--accent-text)]">
-          Two-part · {item.q.theme}
-        </span>
-        <span className="text-xs text-[var(--text-faint)]">Part {partIdx + 1} of {parts.length}</span>
-      </div>
-      <SinglePart
-        key={partIdx}
-        part={current}
-        onAnswer={handlePartAnswer}
-        nextSlot={done && partIdx === parts.length - 1 ? nextSlot : null}
-        continueLabel={partIdx === parts.length - 1 ? null : 'Continue →'}
-      />
+      <span className="block text-xs uppercase tracking-wide text-[var(--accent-text)]">
+        Two-part · {item.q.theme}
+      </span>
+      {parts.slice(0, partIdx + 1).map((p, i) => (
+        <div key={i} className="space-y-2">
+          <span className="block text-xs text-[var(--text-faint)]">Part {i + 1} of {parts.length}</span>
+          <SinglePart
+            part={p}
+            onAnswer={handlePartAnswer}
+            nextSlot={done && i === parts.length - 1 ? nextSlot : null}
+            continueLabel={i === parts.length - 1 ? null : 'Continue →'}
+          />
+        </div>
+      ))}
       {done && onFlag && (
         <div className="flex justify-end">
           <button
