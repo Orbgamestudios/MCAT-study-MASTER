@@ -8120,10 +8120,13 @@ function CarsRunner({ date, payload, onClose, alreadyDone }) {
   }, []);
 
   return (
-    <div ref={scrollRef} className="fixed inset-x-0 bottom-0 z-50 bg-[var(--bg)] overflow-y-auto" style={{ top: 'var(--mcat-header-h, 56px)' }}>
+    <div ref={scrollRef} className="fixed inset-x-0 bottom-0 z-50 bg-[var(--bg)] overflow-y-auto" style={{ top: 'var(--mcat-header-h, 56px)', marginTop: 0 }}>
       {/* Banner is the FIRST child of the scroll container, with no padding
           above it, so it sits flush against the tabs bar and the sticky
-          behavior keeps it there as the passage scrolls. */}
+          behavior keeps it there as the passage scrolls.
+          marginTop:0 defeats an inherited Tailwind `space-y` margin when this
+          fixed overlay is launched as a sibling inside a space-y container
+          (the Home tab) — without it the banner sits a row's gap too low. */}
       <div className="sticky top-0 z-10 bg-[var(--bg)] border-b border-[var(--border-soft)] px-3 sm:px-6 py-2">
         <div className="max-w-3xl mx-auto flex items-center justify-between gap-3">
           <div className="min-w-0">
@@ -8799,7 +8802,7 @@ function ConnectionsRunner({ date, payload, onClose, alreadyDone }) {
   }, []);
 
   return (
-    <div className="fixed inset-x-0 bottom-0 z-50 bg-[var(--bg)] overflow-y-auto" style={{ top: 'var(--mcat-header-h, 56px)' }}>
+    <div className="fixed inset-x-0 bottom-0 z-50 bg-[var(--bg)] overflow-y-auto" style={{ top: 'var(--mcat-header-h, 56px)', marginTop: 0 }}>
       <style>{`
         @keyframes conn-shake { 10%,90%{transform:translateX(-2px)} 20%,80%{transform:translateX(3px)} 30%,50%,70%{transform:translateX(-5px)} 40%,60%{transform:translateX(5px)} }
         .conn-shake { animation: conn-shake 0.45s ease-in-out; }
@@ -10482,6 +10485,14 @@ function FlagFixesPanel() {
   const done = queue.filter((f) => f.status !== 'pending');
 
   const refresh = () => setQueue(storage.get(KEYS.flagQueue, []));
+
+  // Pick up flags added elsewhere (e.g. the quiz flag modal) the moment they
+  // land, so a freshly flagged question shows up here without a reload.
+  useEffect(() => {
+    const onChange = () => setQueue(storage.get(KEYS.flagQueue, []));
+    window.addEventListener('mcat:flagQueueChange', onChange);
+    return () => window.removeEventListener('mcat:flagQueueChange', onChange);
+  }, []);
 
   const saveQueue = (next) => {
     storage.set(KEYS.flagQueue, next);
@@ -12260,11 +12271,13 @@ function Shell() {
                   </button>
                 </div>
               )}
-              <FileList />
-              {/* FlagFixesPanel is always visible (regardless of contributorMode)
-                  so any user who flags a question can run the fix pipeline
-                  on their own queue with their own Gemini key. */}
+              {/* FlagFixesPanel sits at the TOP of the Library tab so a
+                  just-flagged question is the first thing you see. It is always
+                  visible (regardless of contributorMode) so any user who flags
+                  a question can run the fix pipeline on their own queue with
+                  their own Gemini key. */}
               <FlagFixesPanel />
+              <FileList />
             </div>
           )}
           {tabIs('home') && (
