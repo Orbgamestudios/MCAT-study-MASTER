@@ -33,6 +33,8 @@ const KEYS = {
   bankSeen: 'mcat:bankSeen', // timestamp — last time the user reviewed the Bank tab
   cars: 'mcat:cars', // { [date]: { score, total, completed_at } } — daily CARS results
   connectionsResults: 'mcat:connectionsResults', // { [date]: { solved, mistakes, completed_at } }
+  lessonsCache: 'mcat:lessonsCache', // { [chapter_id]: lessonObject } — downloaded lesson bodies
+  lessonProgress: 'mcat:lessonProgress', // { [chapter_id]: { completed_at } } — kept after body removed
 };
 
 // Theme is a (palette, mode) pair. Palette picks the colour family; mode picks
@@ -9362,9 +9364,236 @@ function HomeView({ onGoToStudy }) {
 // them launch an adaptive review — the same adaptive principle the full lessons
 // use: questions already answered correctly drop out and only resurface if missed
 // again later.
+// Latest-attempt correctness per question_id. A section's check_id counts as
+// "known" only if the student's MOST RECENT answer to it was correct — so a
+// later wrong answer automatically un-masters (resurfaces) the section.
+function lessonLatestCorrect(attempts) {
+  const best = {};
+  for (const a of attempts) {
+    const cur = best[a.question_id];
+    if (!cur || a.ts > cur.ts) best[a.question_id] = { ts: a.ts, correct: !!a.correct };
+  }
+  const out = {};
+  for (const k in best) out[k] = best[k].correct;
+  return out;
+}
+
+// Mastery for one section given latest-attempt correctness.
+function lessonSectionStatus(sec, latestCorrect) {
+  const ids = Array.isArray(sec.check_ids) ? sec.check_ids : [];
+  let correct = 0, attempted = 0;
+  for (const id of ids) {
+    if (id in latestCorrect) { attempted++; if (latestCorrect[id]) correct++; }
+  }
+  const thr = typeof sec.mastery_threshold === 'number' ? sec.mastery_threshold : 1.0;
+  const mastered = ids.length > 0 && correct / ids.length >= thr;
+  return { mastered, correct, attempted, total: ids.length };
+}
+
+// Click-to-reveal flashcard for a definition drill.
+function LessonDrillCard({ term, definition }) {
+  const [show, setShow] = useState(false);
+  return (
+    <button
+      onClick={() => setShow((s) => !s)}
+      className="text-left w-full bg-[var(--bg-elev)] border border-[var(--border)] rounded-lg px-3 py-2 hover:bg-[var(--bg-hover)]"
+    >
+      <div className="text-sm font-medium text-[var(--text-strong)]">{term}</div>
+      {show
+        ? <div className="text-xs text-[var(--text-muted)] mt-1">{definition}</div>
+        : <div className="text-xs text-[var(--text-faint)] mt-1">Tap to reveal definition</div>}
+    </button>
+  );
+}
+
+// One lesson section: collapsed when mastered, expanded otherwise.
+function LessonSection({ sec, status, onQuiz }) {
+  const [open, setOpen] = useState(!status.mastered);
+  const paras = (sec.teach || '').split(/\n\n+/).map((p) => p.trim()).filter(Boolean);
+  const drills = Array.isArray(sec.definition_drills) ? sec.definition_drills : [];
+  const examples = Array.isArray(sec.worked_examples) ? sec.worked_examples : [];
+  const nChecks = Array.isArray(sec.check_ids) ? sec.check_ids.length : 0;
+
+  return (
+    <div className={`rounded-xl border p-4 ${status.mastered ? 'border-[var(--border-soft)] bg-[var(--bg-card-soft)]' : 'border-[var(--border)] bg-[var(--bg-card)]'}`}>
+      <button onClick={() => setOpen((o) => !o)} className="flex items-center justify-between gap-3 w-full text-left">
+        <span className="font-semibold text-[var(--text-strong)]">{sec.order}. {sec.title}</span>
+        <span className="flex items-center gap-2 shrink-0">
+          {status.mastered
+            ? <span className="text-xs px-2 py-0.5 rounded-full bg-green-500/15 text-green-500 font-medium">Mastered ✓</span>
+            : status.attempted > 0
+              ? <span className="text-xs text-[var(--text-faint)]">{status.correct}/{status.total} correct</span>
+              : <span className="text-xs text-[var(--text-faint)]">New</span>}
+          <span className="text-[var(--text-faint)] text-xs">{open ? '▲' : '▼'}</span>
+        </span>
+      </button>
+
+      {open && (
+        <div className="mt-3 space-y-3">
+          {paras.map((p, i) => (
+            <p key={i} className="text-sm text-[var(--text-muted)] leading-relaxed">{p}</p>
+          ))}
+
+          {examples.length > 0 && (
+            <div className="space-y-2">
+              {examples.map((ex, i) => (
+                <div key={i} className="bg-[var(--bg-elev)] border border-[var(--border)] rounded-lg p-3">
+                  <div className="text-xs uppercase tracking-wide text-[var(--text-faint)] mb-1">Worked example</div>
+                  <div className="text-sm text-[var(--text-strong)] whitespace-pre-wrap">{ex.prompt}</div>
+                  <div className="text-sm text-[var(--text-muted)] whitespace-pre-wrap mt-2">{ex.solution}</div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {drills.length > 0 && (
+            <div className="space-y-1.5">
+              <div className="text-xs uppercase tracking-wide text-[var(--text-faint)]">Key terms</div>
+              <div className="grid gap-1.5 sm:grid-cols-2">
+                {drills.map((d, i) => <LessonDrillCard key={i} term={d.term} definition={d.definition} />)}
+              </div>
+            </div>
+          )}
+
+          {nChecks > 0 && (
+            <button
+              onClick={onQuiz}
+              className="text-xs px-3 py-1.5 rounded font-medium bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)]"
+            >
+              {status.mastered ? 'Quiz again' : 'Quiz this section'} ({nChecks}) →
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Full-screen lesson reader. Renders the cached lesson's sections in order,
+// collapsing mastered ones and offering each section's check_ids as a quiz.
+function LessonReader({ lesson, latestCorrect, completed, onBack, onQuizSection, onMarkComplete }) {
+  const sections = [...(lesson.sections || [])].sort((a, b) => (a.order || 0) - (b.order || 0));
+  const statuses = sections.map((s) => lessonSectionStatus(s, latestCorrect));
+  const masteredCount = statuses.filter((s) => s.mastered).length;
+  const allMastered = sections.length > 0 && masteredCount === sections.length;
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-5">
+        <button onClick={onBack} className="text-xs text-[var(--text-muted)] hover:text-[var(--text-strong)] mb-2">← Back to lessons</button>
+        <h2 className="font-semibold text-[var(--text-strong)]">{lesson.title}</h2>
+        {lesson.intro && <p className="text-sm text-[var(--text-muted)] mt-1 leading-relaxed">{lesson.intro}</p>}
+        <div className="flex items-center justify-between gap-3 mt-3">
+          <span className="text-xs text-[var(--text-faint)]">
+            {masteredCount}/{sections.length} sections mastered{completed ? ' · marked complete' : ''}
+          </span>
+          {!completed && (
+            <button
+              onClick={onMarkComplete}
+              className="text-xs px-3 py-1.5 rounded border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-strong)]"
+            >
+              {allMastered ? 'Mark complete' : 'Mark complete anyway'}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {sections.map((sec, i) => (
+        <LessonSection key={sec.id || i} sec={sec} status={statuses[i]} onQuiz={() => onQuizSection(sec)} />
+      ))}
+    </div>
+  );
+}
+
 function LessonsView({ onGoToStudy }) {
-  const { files, questions, extractions, attempts } = useApp();
+  const { api, files, questions, extractions, attempts } = useApp();
   const [showAll, setShowAll] = useState(false);
+  const [lessonsCache, setLessonsCache] = useState(() => storage.get(KEYS.lessonsCache, {}) || {});
+  const [progress, setProgress] = useState(() => storage.get(KEYS.lessonProgress, {}) || {});
+  const [availMap, setAvailMap] = useState({}); // chapter_id -> lesson exists on server
+  const [busy, setBusy] = useState({}); // chapter_id -> true while downloading
+  const [openId, setOpenId] = useState(null); // chapter_id whose reader is open
+  const [error, setError] = useState('');
+
+  const fileToChapter = useMemo(() => {
+    const m = {};
+    for (const f of files) if (f.chapter_id) m[f.file_id] = f.chapter_id;
+    return m;
+  }, [files]);
+  const chapterToFile = useMemo(() => {
+    const m = {};
+    for (const f of files) if (f.chapter_id) m[f.chapter_id] = f.file_id;
+    return m;
+  }, [files]);
+
+  // Cheap availability probe — lesson_at is included in the chapter list, the
+  // heavy lesson body is not (it only comes from GET /chapters/<id>).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await api.listChapters();
+        if (cancelled) return;
+        const m = {};
+        for (const ch of (data?.chapters || [])) m[ch.id] = !!ch.stages?.lesson?.done;
+        setAvailMap(m);
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, [api]);
+
+  const latestCorrect = useMemo(() => lessonLatestCorrect(attempts), [attempts]);
+
+  const persistCache = (next) => { setLessonsCache(next); storage.set(KEYS.lessonsCache, next); };
+  const persistProgress = (next) => { setProgress(next); storage.set(KEYS.lessonProgress, next); };
+
+  const downloadLesson = async (chapterId) => {
+    if (!chapterId) return;
+    setBusy((b) => ({ ...b, [chapterId]: true }));
+    setError('');
+    try {
+      const full = await api.getChapter(chapterId);
+      const lesson = full?.lesson;
+      if (!lesson || !Array.isArray(lesson.sections)) {
+        setError('No lesson is available for that chapter yet.');
+        return;
+      }
+      persistCache({ ...lessonsCache, [chapterId]: lesson });
+      setOpenId(chapterId);
+    } catch (e) {
+      setError(e?.message || 'Download failed.');
+    } finally {
+      setBusy((b) => { const n = { ...b }; delete n[chapterId]; return n; });
+    }
+  };
+
+  const removeLesson = (chapterId) => {
+    const next = { ...lessonsCache };
+    delete next[chapterId];
+    persistCache(next);
+    if (openId === chapterId) setOpenId(null);
+  };
+
+  const markComplete = (chapterId) => {
+    persistProgress({ ...progress, [chapterId]: { completed_at: Date.now() } });
+  };
+
+  // Start a quiz seeded with exactly this section's check_ids (mc + two_part + short).
+  const quizSection = (chapterId, sec) => {
+    const fid = chapterToFile[chapterId];
+    if (!fid) return;
+    const ctx = { files, questions, extractions, attempts };
+    const pool = [
+      ...buildPool(ctx, 'mc', { fileIds: new Set([fid]) }),
+      ...buildPool(ctx, 'short', { fileIds: new Set([fid]) }),
+    ];
+    const want = new Set(sec.check_ids || []);
+    const items = shuffle(pool.filter((x) => want.has(x.id)));
+    if (!items.length) return;
+    sfxQuizStart();
+    window.dispatchEvent(new CustomEvent('mcat:startQuiz', { detail: { items } }));
+    onGoToStudy?.();
+  };
 
   const rows = useMemo(() => {
     // Only real processed chapters belong here — exclude daily activities like
@@ -9387,11 +9616,11 @@ function LessonsView({ onGoToStudy }) {
       // "Needs review" = questions missed OR never seen. Mastered (answered
       // correctly, not since missed) questions are intentionally excluded.
       const need = pool.filter((x) => wrongIds.has(x.id) || !seenIds.has(x.id)).length;
-      return { fid, acc: s.total ? s.correct / s.total : 1, correct: s.correct, total: s.total, chapter: s.chapter, subject: s.subject, need };
+      return { fid, chapterId: fileToChapter[fid] || null, acc: s.total ? s.correct / s.total : 1, correct: s.correct, total: s.total, chapter: s.chapter, subject: s.subject, need };
     });
     out.sort((a, b) => a.acc - b.acc || b.total - a.total);
     return out;
-  }, [files, questions, extractions, attempts]);
+  }, [files, questions, extractions, attempts, fileToChapter]);
 
   const launchReview = (fid) => {
     const pool = buildPool({ files, questions, extractions, attempts }, 'mc', { fileIds: new Set([fid]) });
@@ -9413,6 +9642,20 @@ function LessonsView({ onGoToStudy }) {
     onGoToStudy?.();
   };
 
+  // Reader takes over the tab when a lesson is open and still cached.
+  if (openId && lessonsCache[openId]) {
+    return (
+      <LessonReader
+        lesson={lessonsCache[openId]}
+        latestCorrect={latestCorrect}
+        completed={!!progress[openId]}
+        onBack={() => setOpenId(null)}
+        onQuizSection={(sec) => quizSection(openId, sec)}
+        onMarkComplete={() => markComplete(openId)}
+      />
+    );
+  }
+
   if (rows.length === 0) {
     return (
       <div className="space-y-4">
@@ -9431,14 +9674,43 @@ function LessonsView({ onGoToStudy }) {
 
   const visible = showAll ? rows : rows.slice(0, 3);
 
+  const lessonButton = (r) => {
+    if (!r.chapterId) return null;
+    const cached = !!lessonsCache[r.chapterId];
+    const avail = availMap[r.chapterId];
+    const isBusy = !!busy[r.chapterId];
+    const done = !!progress[r.chapterId];
+    if (cached) {
+      return (
+        <div className="flex items-center gap-2">
+          {done && <span className="text-xs text-green-500">✓ complete</span>}
+          <button onClick={() => setOpenId(r.chapterId)} className="text-xs px-3 py-1.5 rounded font-medium bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)]">Open lesson</button>
+          <button onClick={() => removeLesson(r.chapterId)} title="Remove the downloaded lesson body from this device" className="text-xs px-2 py-1.5 rounded border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--bg-hover)]">Remove</button>
+        </div>
+      );
+    }
+    // Not cached. Only offer a download when the server says a lesson exists
+    // (availMap unknown === undefined → still allow, getChapter will tell us).
+    if (avail === false) return <span className="text-xs text-[var(--text-faint)]">No lesson yet</span>;
+    return (
+      <button onClick={() => downloadLesson(r.chapterId)} disabled={isBusy} className="text-xs px-3 py-1.5 rounded font-medium disabled:opacity-50 border border-[var(--accent)] text-[var(--accent)] hover:bg-[var(--accent)] hover:text-white">
+        {isBusy ? 'Downloading…' : 'Download lesson'}
+      </button>
+    );
+  };
+
   return (
     <div className="space-y-4">
       <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-5">
         <h2 className="font-semibold text-[var(--text-strong)]">Lessons</h2>
         <p className="text-sm text-[var(--text-muted)] mt-1">
-          Your most-struggled chapters, weakest first. Each review adapts to you — questions you've already answered correctly drop out, and only come back if you miss them again later.
+          Your most-struggled chapters, weakest first. Download a guided lesson to study the concepts, then quiz each section — anything you answer correctly drops out, and only comes back if you miss it again later.
         </p>
       </div>
+
+      {error && (
+        <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-3 text-xs text-red-400">{error}</div>
+      )}
 
       <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-5 space-y-4">
         <h3 className="font-semibold text-[var(--text-strong)]">
@@ -9448,17 +9720,20 @@ function LessonsView({ onGoToStudy }) {
           {visible.map((r) => (
             <div key={r.fid} className="space-y-2">
               <StatBar label={`${r.subject} — ${r.chapter}`} correct={r.correct} total={r.total} />
-              <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center justify-between gap-3 flex-wrap">
                 <span className="text-xs text-[var(--text-faint)]">
                   {r.need > 0 ? `${r.need} question${r.need === 1 ? '' : 's'} to review` : 'All caught up — nice'}
                 </span>
-                <button
-                  onClick={() => launchReview(r.fid)}
-                  disabled={r.need === 0}
-                  className="text-xs px-3 py-1.5 rounded font-medium disabled:opacity-40 disabled:cursor-not-allowed bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)]"
-                >
-                  Start adaptive review →
-                </button>
+                <div className="flex items-center gap-2 flex-wrap">
+                  {lessonButton(r)}
+                  <button
+                    onClick={() => launchReview(r.fid)}
+                    disabled={r.need === 0}
+                    className="text-xs px-3 py-1.5 rounded font-medium disabled:opacity-40 disabled:cursor-not-allowed bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)]"
+                  >
+                    Quick review →
+                  </button>
+                </div>
               </div>
             </div>
           ))}
@@ -9471,10 +9746,6 @@ function LessonsView({ onGoToStudy }) {
             {showAll ? 'Show less' : `View more (${rows.length - 3} more)`}
           </button>
         )}
-      </div>
-
-      <div className="bg-[var(--bg-card-soft)] border border-dashed border-[var(--border-soft)] rounded-2xl p-4 text-xs text-[var(--text-faint)]">
-        Full guided lessons — teaching sections, worked examples, and definition drills built per chapter — are being generated and will appear here. Until then, the adaptive review above pulls from each chapter's question bank.
       </div>
     </div>
   );
