@@ -9473,8 +9473,13 @@ function LessonDrillCard({ term, definition }) {
 // be opened until that checkpoint is passed.
 function LessonSection({ sec, status, onQuiz, locked }) {
   const [open, setOpen] = useState(false);
+  const [matchRound, setMatchRound] = useState(0); // 0 = hidden; bump to (re)start
   const paras = (sec.teach || '').split(/\n\n+/).map((p) => p.trim()).filter(Boolean);
   const drills = Array.isArray(sec.definition_drills) ? sec.definition_drills : [];
+  // Matching practice is built from this section's own key terms — capped at 5
+  // per set to keep it readable. It is study-only (no attempt is recorded) and
+  // is never part of the checkpoint/final exams, which draw from the MC pool.
+  const matchTerms = drills.filter((d) => d && d.term && d.definition).slice(0, 5);
   const examples = Array.isArray(sec.worked_examples) ? sec.worked_examples : [];
   const nChecks = Array.isArray(sec.check_ids) ? sec.check_ids.length : 0;
 
@@ -9528,6 +9533,44 @@ function LessonSection({ sec, status, onQuiz, locked }) {
               <div className="grid gap-1.5 sm:grid-cols-2">
                 {drills.map((d, i) => <LessonDrillCard key={i} term={d.term} definition={d.definition} />)}
               </div>
+            </div>
+          )}
+
+          {matchTerms.length >= 2 && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="text-xs uppercase tracking-wide text-[var(--text-faint)]">Match terms to definitions</div>
+                {matchRound > 0 && (
+                  <button
+                    onClick={() => setMatchRound((r) => r + 1)}
+                    className="text-xs text-[var(--accent-text)] hover:underline"
+                  >
+                    Shuffle ↺
+                  </button>
+                )}
+              </div>
+              {matchRound === 0 ? (
+                <button
+                  onClick={() => setMatchRound(1)}
+                  className="text-xs px-3 py-1.5 rounded font-medium border border-[var(--border)] hover:bg-[var(--bg-hover)] text-[var(--text)]"
+                >
+                  Practice matching ({matchTerms.length}) →
+                </button>
+              ) : (
+                <MatchingQuestion
+                  key={matchRound}
+                  item={{ id: `lmatch_${sec.id}_${matchRound}`, q: { terms: matchTerms } }}
+                  onAnswer={() => {}}
+                  nextSlot={
+                    <button
+                      onClick={() => setMatchRound((r) => r + 1)}
+                      className="text-xs px-3 py-1.5 rounded font-medium bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)]"
+                    >
+                      Try again ↺
+                    </button>
+                  }
+                />
+              )}
             </div>
           )}
 
