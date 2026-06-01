@@ -131,7 +131,7 @@ PUT /chapters/<id>/stage/lesson         -> the lesson object (the value of "less
 Auth: `Authorization: Bearer <token>`
 Host: `mcat-api.solitary-sky-76c1.workers.dev`
 
-> **Backend note (one-time):** the worker currently accepts stages `extraction | mc | two_part | short`. Adding lessons requires allowing a new `lesson` stage on `PUT /chapters/<id>/stage/<stage>` and returning it inside `GET /chapters/<id>` (e.g. as `payload.lesson`). The app's Lessons tab reads `lesson.sections` and applies the adaptive skip/resurface logic against the student's local attempts. Until that route exists, write the file locally to `Generated/<slug>/lesson_ch<N>.json` and the push step is a no-op.
+> **Backend note (one-time):** the worker currently accepts stages `extraction | mc | two_part | short`. Adding lessons requires allowing a new `lesson` stage on `PUT /chapters/<id>/stage/<stage>` and returning it inside `GET /chapters/<id>` (e.g. as `payload.lesson`). The app's Lessons tab reads `lesson.sections` and applies the adaptive skip/resurface logic against the student's local attempts. **The lesson is served only on `GET /chapters/<id>` (the per-chapter fetch), never in the lightweight `GET /chapters` list** — that keeps the list cheap and means a device downloads a body only when the student opens it. Until that route exists, write the file locally to `Generated/<slug>/lesson_ch<N>.json` and the push step is a no-op.
 
 ### Windows shell: strip UTF-8 BOM ONLY if present
 ```bash
@@ -156,3 +156,20 @@ The Lessons tab orders sections by `order`, then for each section checks the stu
 - otherwise → **show** the `teach` text, `worked_examples`, and `definition_drills`, and offer its `check_ids` as a short quiz.
 - a later wrong answer on any `check_id` flips that section back to "needs review" automatically.
 This is exactly the adaptive behavior the student asked for: get something right and it drops out of the lesson; miss it later and it comes back.
+
+---
+
+## On-device storage model (download → complete → remove)
+
+Lesson bodies (`teach` prose, worked examples, drills) are large, so they live **on the server and are NOT bundled into the app or stored locally by default** — same as chapter question banks. The device only ever holds the lessons the student has explicitly pulled, so a phone's `localStorage` stays small.
+
+The lifecycle, mirroring the existing chapter download/delete pattern:
+
+1. **Browse (no download):** the Lessons tab lists chapters using only the student's local *attempt* stats (already on-device). Each row shows a **Download lesson** action. Nothing about the lesson body is fetched until the student taps it.
+2. **Download:** tapping fetches the lesson once via `GET /chapters/<id>` (reading `payload.lesson`) and caches it under a single local key, e.g. `mcat:lessonsCache = { [chapter_id]: lessonObject }`. The row flips to **Open lesson** and shows it's on the device.
+3. **Study:** the in-app reader renders the cached lesson with the adaptive skip/resurface rules above. Per-section progress is derived from `attempts` (which are already local) plus a small `mcat:lessonProgress = { [chapter_id]: { completed_at, ... } }` record — progress is kept even after the body is removed.
+4. **Complete → remove:** when every section is mastered (or the student taps *Mark complete*), the row exposes a **Remove from device** action that deletes just that chapter's entry from `mcat:lessonsCache` to reclaim storage. Completion status and attempt history are **kept** (they're tiny); only the heavy lesson body is dropped. A removed lesson can always be re-downloaded.
+
+Optional: honour an auto-remove-on-complete preference, and surface total cached-lesson size in Settings next to the existing chapter auto-download controls.
+
+**Implications for this generator:** keep each lesson self-contained and reference-by-id only — never inline chapter question text into the lesson body (use `check_ids`), so the cached payload stays as small as possible and the device can drop/re-fetch it freely. The server is always the source of truth.
