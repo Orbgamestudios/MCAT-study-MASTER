@@ -4092,12 +4092,21 @@ function makeClient(getKey) {
         'terms drawn from the supplied pool, grouped into 4 categories of 4 terms each. Every category is a ' +
         'genuine, defensible MCAT-relevant connection (a shared mechanism, anatomical system, hormone family, ' +
         'cognitive bias family, amino-acid class, neurotransmitter system, lab technique, error type, etc.) — ' +
-        'not a superficial word-game connection. The four difficulty tiers, in order, must be:\n' +
-        '  • green  — easiest, the most obvious shared category a first-year student would catch\n' +
-        '  • yellow — second-easiest, a clear category but requires recalling the definition\n' +
-        '  • blue   — second-hardest, a subtle or cross-disciplinary link\n' +
-        '  • purple — hardest, a tricky or non-obvious link; ideally includes terms that LOOK like they belong ' +
-        'in another category (red herrings).\n' +
+        'not a superficial word-game connection. The four difficulty tiers form a deliberate ABSTRACTION RAMP: ' +
+        'the conceptual link binding the four terms must get progressively more abstract, indirect, and ' +
+        'non-obvious from green to purple. Abstraction must increase monotonically green < yellow < blue < ' +
+        'purple — never make yellow as easy as green, or blue as easy as yellow.\n' +
+        '  • green  — easiest: a concrete, surface-level shared category a first-year student spots instantly ' +
+        '(e.g. "steroid hormones", "bones of the forearm"). The link is literal and definitional.\n' +
+        '  • yellow — harder: a clear single-discipline category that requires recalling each term\'s actual ' +
+        'definition, not just its name. More demanding than green but still concrete.\n' +
+        '  • blue   — harder still: a subtle, usually cross-disciplinary link where the shared thread is a ' +
+        'mechanism, functional role, or shared consequence rather than a textbook heading. Solving it takes a ' +
+        'genuine conceptual leap, not just recall.\n' +
+        '  • purple — hardest: a highly abstract, non-obvious link — the four terms share an underlying ' +
+        'principle, analogy, or second-order property that only clicks after real lateral thinking. The ' +
+        'connection should feel surprising yet defensible once seen. Deliberately include terms that LOOK like ' +
+        'they belong in the green/yellow/blue groups (red herrings). This is the heart of the puzzle.\n' +
         'Hard constraints: each term must appear in exactly ONE group; the 16 chosen terms must all come from ' +
         'the supplied pool (use the term name EXACTLY as given); never invent terms; never use the same term ' +
         'twice. Category labels are short noun phrases (≤ 60 chars). Set `difficulty` to one of green/yellow/' +
@@ -8981,20 +8990,45 @@ function DailyConnectionsCard() {
         if (termPool.length < 24) { setState('needs-terms'); return; }
         setState('generating');
         try {
-          const gen = await client.generateDailyConnections(termPool, today);
-          if (!gen?.groups?.length) throw new Error('Generation returned no groups.');
-          // Validation — must be exactly 4 groups × 4 terms, all from the pool, unique.
-          if (gen.groups.length !== 4) throw new Error('Generation did not return 4 groups.');
+          // The model occasionally returns a term whose casing / spacing / punctuation
+          // differs slightly from the pool (e.g. "Reticular formation" vs "reticular
+          // formation"). Reconcile to the canonical pool spelling instead of failing, and
+          // retry the whole generation a few times before giving up.
           const poolSet = new Set(termPool.map((t) => t.term));
-          const usedTerms = new Set();
-          for (const g of gen.groups) {
-            if (!Array.isArray(g.terms) || g.terms.length !== 4) throw new Error('Each group must have 4 terms.');
-            for (const t of g.terms) {
-              if (!poolSet.has(t)) throw new Error(`Generated term not in pool: ${t}`);
-              if (usedTerms.has(t)) throw new Error(`Term used in more than one group: ${t}`);
-              usedTerms.add(t);
+          const norm = (s) => (s || '').toLowerCase().replace(/[\s\-_/]+/g, ' ').replace(/[^a-z0-9 ]/g, '').trim();
+          const normMap = new Map();
+          for (const t of termPool) { const n = norm(t.term); if (n && !normMap.has(n)) normMap.set(n, t.term); }
+          const reconcile = (term) => {
+            if (poolSet.has(term)) return term;
+            const n = norm(term);
+            if (!n) return null;
+            if (normMap.has(n)) return normMap.get(n);
+            for (const [pn, canon] of normMap) { if (pn.includes(n) || n.includes(pn)) return canon; }
+            return null;
+          };
+          const buildValid = async () => {
+            const gen = await client.generateDailyConnections(termPool, today);
+            if (!gen?.groups?.length) throw new Error('Generation returned no groups.');
+            if (gen.groups.length !== 4) throw new Error('Generation did not return 4 groups.');
+            const usedTerms = new Set();
+            for (const g of gen.groups) {
+              if (!Array.isArray(g.terms) || g.terms.length !== 4) throw new Error('Each group must have 4 terms.');
+              g.terms = g.terms.map((t) => {
+                const canon = reconcile(t);
+                if (!canon) throw new Error(`Generated term not in pool: ${t}`);
+                if (usedTerms.has(canon)) throw new Error(`Term used in more than one group: ${canon}`);
+                usedTerms.add(canon);
+                return canon;
+              });
             }
+            return gen;
+          };
+
+          let gen = null, lastErr = null;
+          for (let attempt = 0; attempt < 3 && !cancelled; attempt++) {
+            try { gen = await buildValid(); break; } catch (e) { lastErr = e; }
           }
+          if (!gen) throw lastErr || new Error('Could not generate a valid puzzle.');
           await api.postConnections({ date: today, title: gen.title || '', payload: gen });
           if (!cancelled) { setConnectionsCachePayload(today, gen); setPayload(gen); setState('ready'); }
         } catch (ge) {
@@ -9316,6 +9350,128 @@ function HomeView({ onGoToStudy }) {
           Process a chapter in the Library tab and answer some questions — once you do, this is where your daily suggested quiz will live.
         </div>
       )}
+    </div>
+  );
+}
+
+// ---------- lessons ----------
+// Guided, chapter-by-chapter lessons. The lesson CONTENT (sections, teaching
+// text, embedded checks) is generated per chapter by the opus pipeline described
+// in Website/LESSON_GENERATION_PROMPT.md and will slot in here once published.
+// Until then this tab surfaces the student's most-struggled chapters and lets
+// them launch an adaptive review — the same adaptive principle the full lessons
+// use: questions already answered correctly drop out and only resurface if missed
+// again later.
+function LessonsView({ onGoToStudy }) {
+  const { files, questions, extractions, attempts } = useApp();
+  const [showAll, setShowAll] = useState(false);
+
+  const rows = useMemo(() => {
+    const byChapter = {};
+    for (const a of attempts) {
+      const key = a.file_id;
+      if (!byChapter[key]) byChapter[key] = { correct: 0, total: 0, chapter: a.chapter, subject: a.subject };
+      byChapter[key].total++;
+      if (a.correct) byChapter[key].correct++;
+    }
+    const wrongIds = new Set();
+    const seenIds = new Set();
+    for (const a of attempts) { seenIds.add(a.question_id); if (!a.correct) wrongIds.add(a.question_id); }
+
+    const out = Object.entries(byChapter).map(([fid, s]) => {
+      const pool = buildPool({ files, questions, extractions, attempts }, 'mc', { fileIds: new Set([fid]) });
+      // "Needs review" = questions missed OR never seen. Mastered (answered
+      // correctly, not since missed) questions are intentionally excluded.
+      const need = pool.filter((x) => wrongIds.has(x.id) || !seenIds.has(x.id)).length;
+      return { fid, acc: s.total ? s.correct / s.total : 1, correct: s.correct, total: s.total, chapter: s.chapter, subject: s.subject, need };
+    });
+    out.sort((a, b) => a.acc - b.acc || b.total - a.total);
+    return out;
+  }, [files, questions, extractions, attempts]);
+
+  const launchReview = (fid) => {
+    const pool = buildPool({ files, questions, extractions, attempts }, 'mc', { fileIds: new Set([fid]) });
+    if (!pool.length) return;
+    const wrongIds = new Set();
+    const seenIds = new Set();
+    for (const a of attempts) { seenIds.add(a.question_id); if (!a.correct) wrongIds.add(a.question_id); }
+    const misses = pool.filter((x) => wrongIds.has(x.id));
+    const unseen = pool.filter((x) => !seenIds.has(x.id));
+    const mastered = pool.filter((x) => seenIds.has(x.id) && !wrongIds.has(x.id));
+    // Adaptive order: things you got wrong first, then things you've never seen,
+    // and only fall back to mastered questions if there aren't enough of the rest.
+    let items = [...shuffle(misses), ...shuffle(unseen)];
+    if (items.length < 15) items = [...items, ...shuffle(mastered)];
+    items = items.slice(0, 15);
+    if (!items.length) return;
+    sfxQuizStart();
+    window.dispatchEvent(new CustomEvent('mcat:startQuiz', { detail: { items } }));
+    onGoToStudy?.();
+  };
+
+  if (rows.length === 0) {
+    return (
+      <div className="space-y-4">
+        <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-5">
+          <h2 className="font-semibold text-[var(--text-strong)]">Lessons</h2>
+          <p className="text-sm text-[var(--text-muted)] mt-1">
+            Guided, chapter-by-chapter lessons that adapt to you — concepts you've already proven you know are skipped, and only resurface if you miss them later.
+          </p>
+        </div>
+        <div className="bg-[var(--bg-card-soft)] border border-dashed border-[var(--border-soft)] rounded-2xl p-5 text-sm text-[var(--text-muted)]">
+          Answer some quiz questions first. Once you do, your most-struggled chapters show up here so you can drill them.
+        </div>
+      </div>
+    );
+  }
+
+  const visible = showAll ? rows : rows.slice(0, 3);
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-5">
+        <h2 className="font-semibold text-[var(--text-strong)]">Lessons</h2>
+        <p className="text-sm text-[var(--text-muted)] mt-1">
+          Your most-struggled chapters, weakest first. Each review adapts to you — questions you've already answered correctly drop out, and only come back if you miss them again later.
+        </p>
+      </div>
+
+      <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-5 space-y-4">
+        <h3 className="font-semibold text-[var(--text-strong)]">
+          {showAll ? 'All chapters' : 'Top 3 to work on'}
+        </h3>
+        <div className="space-y-4">
+          {visible.map((r) => (
+            <div key={r.fid} className="space-y-2">
+              <StatBar label={`${r.subject} — ${r.chapter}`} correct={r.correct} total={r.total} />
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-xs text-[var(--text-faint)]">
+                  {r.need > 0 ? `${r.need} question${r.need === 1 ? '' : 's'} to review` : 'All caught up — nice'}
+                </span>
+                <button
+                  onClick={() => launchReview(r.fid)}
+                  disabled={r.need === 0}
+                  className="text-xs px-3 py-1.5 rounded font-medium disabled:opacity-40 disabled:cursor-not-allowed bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)]"
+                >
+                  Start adaptive review →
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+        {rows.length > 3 && (
+          <button
+            onClick={() => setShowAll((s) => !s)}
+            className="w-full text-sm py-2 rounded border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-strong)]"
+          >
+            {showAll ? 'Show less' : `View more (${rows.length - 3} more)`}
+          </button>
+        )}
+      </div>
+
+      <div className="bg-[var(--bg-card-soft)] border border-dashed border-[var(--border-soft)] rounded-2xl p-4 text-xs text-[var(--text-faint)]">
+        Full guided lessons — teaching sections, worked examples, and definition drills built per chapter — are being generated and will appear here. Until then, the adaptive review above pulls from each chapter's question bank.
+      </div>
     </div>
   );
 }
@@ -12122,10 +12278,10 @@ function Shell() {
 
   const hasLibrary = apiKey || readOnly || session;
   const tabs = readOnly
-    ? [['study', 'Study'], ['home', 'Home'], ['stats', 'Stats'], ['banks', 'Bank'], ['library', 'Library']]
+    ? [['home', 'Home'], ['lessons', 'Lessons'], ['study', 'Study'], ['stats', 'Stats'], ['banks', 'Bank'], ['library', 'Library']]
     : hasLibrary
-      ? [['library', 'Library'], ['study', 'Study'], ['home', 'Home'], ['stats', 'Stats'], ['banks', 'Bank']]
-      : [['home', 'Home'], ['stats', 'Stats'], ['banks', 'Bank'], ['study', 'Study']];
+      ? [['library', 'Library'], ['home', 'Home'], ['lessons', 'Lessons'], ['study', 'Study'], ['stats', 'Stats'], ['banks', 'Bank']]
+      : [['home', 'Home'], ['lessons', 'Lessons'], ['stats', 'Stats'], ['banks', 'Bank'], ['study', 'Study']];
   useEffect(() => { if (readOnly) setTab('home'); else if (!hasLibrary) setTab('home'); }, [readOnly, hasLibrary]);
   useEffect(() => { setProfileUser(null); }, [tab]);
 
@@ -12286,6 +12442,11 @@ function Shell() {
           {tabIs('home') && (
             <div {...tabWrap('home', '')}>
               <HomeView onGoToStudy={() => switchTab('study')} />
+            </div>
+          )}
+          {tabIs('lessons') && (
+            <div {...tabWrap('lessons', 'space-y-4 sm:space-y-5')}>
+              <LessonsView onGoToStudy={() => switchTab('study')} />
             </div>
           )}
           {tabIs('stats') && (
