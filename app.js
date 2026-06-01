@@ -35,7 +35,14 @@ const KEYS = {
   connectionsResults: 'mcat:connectionsResults', // { [date]: { solved, mistakes, completed_at } }
   lessonsCache: 'mcat:lessonsCache', // { [chapter_id]: lessonObject } — downloaded lesson bodies
   lessonProgress: 'mcat:lessonProgress', // { [chapter_id]: { completed_at } } — kept after body removed
+  lessonGates: 'mcat:lessonGates', // { [chapter_id]: { unlocked, mastered, mastered_at } } — checkpoint gating
 };
+
+// Sections are studied in groups of this size; each group is gated by a
+// cumulative checkpoint quiz that must be passed 100% to unlock the next group.
+const LESSON_GROUP_SIZE = 3;
+const LESSON_CHECKPOINT_Q = 15; // cumulative MC questions per checkpoint
+const LESSON_FINAL_Q = 30;      // cumulative MC questions for the final exam
 
 // Theme is a (palette, mode) pair. Palette picks the colour family; mode picks
 // light/dark, or follows the OS when 'system'. The pair resolves to one of the
@@ -5726,6 +5733,15 @@ function QuizLauncher({ onStart, onStartFlashcards }) {
   };
   const selectAll = () => setSelected(new Set(readyChapters.map((f) => f.file_id)));
   const selectNone = () => setSelected(new Set());
+  // Chapters whose lesson final exam was passed 100% (mastered), from the
+  // lesson gating store. Lets the student drill only material they've mastered.
+  const masteredFileIds = useMemo(() => {
+    const g = storage.get(KEYS.lessonGates, {}) || {};
+    const out = new Set();
+    for (const f of readyChapters) if (f.chapter_id && g[f.chapter_id]?.mastered) out.add(f.file_id);
+    return out;
+  }, [readyChapters]);
+  const selectMastered = () => setSelected(new Set(masteredFileIds));
 
   return (
     <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-5 space-y-5">
@@ -5756,6 +5772,12 @@ function QuizLauncher({ onStart, onStartFlashcards }) {
               <button onClick={selectAll} className="text-[var(--accent-text)] hover:underline">All</button>
               <span className="text-[var(--text-fainter)]">·</span>
               <button onClick={selectNone} className="text-[var(--text-muted)] hover:underline">None</button>
+              {masteredFileIds.size > 0 && (
+                <>
+                  <span className="text-[var(--text-fainter)]">·</span>
+                  <button onClick={selectMastered} className="text-[var(--accent-text)] hover:underline" title="Select only chapters you've mastered (100% on the final exam)">Mastered only</button>
+                </>
+              )}
             </div>
           )}
         </div>
@@ -9446,13 +9468,27 @@ function LessonDrillCard({ term, definition }) {
   );
 }
 
-// One lesson section: collapsed when mastered, expanded otherwise.
-function LessonSection({ sec, status, onQuiz }) {
-  const [open, setOpen] = useState(!status.mastered);
+// One lesson section. Always starts collapsed; click the header to expand.
+// When `locked`, the section is gated behind an earlier checkpoint and cannot
+// be opened until that checkpoint is passed.
+function LessonSection({ sec, status, onQuiz, locked }) {
+  const [open, setOpen] = useState(false);
   const paras = (sec.teach || '').split(/\n\n+/).map((p) => p.trim()).filter(Boolean);
   const drills = Array.isArray(sec.definition_drills) ? sec.definition_drills : [];
   const examples = Array.isArray(sec.worked_examples) ? sec.worked_examples : [];
   const nChecks = Array.isArray(sec.check_ids) ? sec.check_ids.length : 0;
+
+  if (locked) {
+    return (
+      <div className="rounded-xl border border-dashed border-[var(--border-soft)] bg-[var(--bg-card-soft)] p-4 opacity-70">
+        <div className="flex items-center justify-between gap-3">
+          <span className="font-semibold text-[var(--text-faint)]">{sec.order}. {sec.title}</span>
+          <span className="text-xs px-2 py-0.5 rounded-full bg-[var(--bg-hover)] text-[var(--text-faint)] font-medium">🔒 Locked</span>
+        </div>
+        <p className="text-xs text-[var(--text-faint)] mt-1">Pass the checkpoint above to unlock this section.</p>
+      </div>
+    );
+  }
 
   return (
     <div className={`rounded-xl border p-4 ${status.mastered ? 'border-[var(--border-soft)] bg-[var(--bg-card-soft)]' : 'border-[var(--border)] bg-[var(--bg-card)]'}`}>
@@ -9509,38 +9545,211 @@ function LessonSection({ sec, status, onQuiz }) {
   );
 }
 
-// Full-screen lesson reader. Renders the cached lesson's sections in order,
-// collapsing mastered ones and offering each section's check_ids as a quiz.
-function LessonReader({ lesson, latestCorrect, completed, onBack, onQuizSection, onMarkComplete }) {
+// Inline cumulative MC quiz that gates lesson progress. Requires a perfect
+// score (100%) to pass; any miss means the whole quiz restarts with a fresh
+// shuffle. Used for both per-group checkpoints (15 Q) and the final exam (30 Q).
+function LessonGateQuiz({ kind, pool, need, onPass, onCancel }) {
+  const { addAttempt } = useApp();
+  const [round, setRound] = useState(0);
+  const items = useMemo(() => shuffle(pool).slice(0, need), [pool, need, round]);
+  const [index, setIndex] = useState(0);
+  const [answered, setAnswered] = useState(false);
+  const [correctCount, setCorrectCount] = useState(0);
+  const [done, setDone] = useState(false);
+
+  const total = items.length;
+  const item = items[index];
+  const label = kind === 'final' ? 'Final exam' : 'Checkpoint quiz';
+
+  const restart = () => { setRound((r) => r + 1); setIndex(0); setAnswered(false); setCorrectCount(0); setDone(false); };
+
+  if (total === 0) {
+    return (
+      <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-5 space-y-3">
+        <h2 className="font-semibold text-[var(--text-strong)]">{label}</h2>
+        <p className="text-sm text-[var(--text-muted)]">No multiple-choice questions are available for this checkpoint yet.</p>
+        <button onClick={onCancel} className="text-xs px-3 py-1.5 rounded border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--bg-hover)]">← Back to lesson</button>
+      </div>
+    );
+  }
+
+  if (done) {
+    const passed = correctCount === total;
+    return (
+      <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-6 space-y-4 text-center">
+        <div className="text-4xl">{passed ? '🎉' : '🔁'}</div>
+        <h2 className="font-semibold text-[var(--text-strong)]">{passed ? `${label} passed!` : 'Not quite — 100% required'}</h2>
+        <p className="text-sm text-[var(--text-muted)]">You scored {correctCount}/{total}.{passed ? '' : ' The quiz will reshuffle and restart from the top.'}</p>
+        <div className="flex items-center justify-center gap-2">
+          {passed ? (
+            <button onClick={onPass} className="px-4 py-2 rounded font-medium bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)]">
+              {kind === 'final' ? 'Master chapter →' : 'Unlock next sections →'}
+            </button>
+          ) : (
+            <button onClick={restart} className="px-4 py-2 rounded font-medium bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)]">Restart quiz</button>
+          )}
+          <button onClick={onCancel} className="px-4 py-2 rounded border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--bg-hover)]">Back to lesson</button>
+        </div>
+      </div>
+    );
+  }
+
+  const handleAnswer = ({ correct, isInterim }) => {
+    if (isInterim || answered) return;
+    setAnswered(true);
+    if (correct) setCorrectCount((c) => c + 1);
+    addAttempt({ question_id: item.id, mode: item.mode, file_id: item.file_id, chapter: item.chapter, subject: item.subject, correct });
+  };
+  const next = () => {
+    if (index + 1 >= total) { setDone(true); return; }
+    setIndex((i) => i + 1);
+    setAnswered(false);
+  };
+  const nextBtn = answered ? (
+    <button onClick={next} className="bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] rounded px-4 py-2 text-sm font-medium shrink-0">
+      {index + 1 >= total ? 'See score' : 'Next →'}
+    </button>
+  ) : null;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-xs text-[var(--text-muted)] min-w-0">
+          <span className="text-[var(--text-strong)]">{label}</span>
+          <span className="ml-2">· {index + 1}/{total} · need 100%</span>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <span className="text-xs font-mono text-[var(--text-muted)]">{correctCount}/{index + (answered ? 1 : 0)}</span>
+          <button onClick={onCancel} className="text-xs text-[var(--text-muted)] hover:text-[var(--danger-text)] border border-[var(--border)] rounded px-2 py-1">Quit</button>
+        </div>
+      </div>
+      <div className="h-1 bg-[var(--bg-hover)] rounded-full overflow-hidden">
+        <div className="h-full bg-[var(--accent-hover)] transition-all" style={{ width: `${((index + (answered ? 1 : 0)) / total) * 100}%` }} />
+      </div>
+      <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-5">
+        <MCQuestion key={item.id} item={item} onAnswer={handleAnswer} nextSlot={nextBtn} />
+      </div>
+    </div>
+  );
+}
+
+// Full-screen lesson reader. Sections are studied in groups of LESSON_GROUP_SIZE;
+// each group is gated behind a cumulative checkpoint quiz (100% to pass) and the
+// whole chapter ends with a 30-question final exam that confers "mastered".
+function LessonReader({ lesson, latestCorrect, completed, gate, quizPool, onBack, onQuizSection, onMarkComplete, onPassCheckpoint, onMaster }) {
   const sections = [...(lesson.sections || [])].sort((a, b) => (a.order || 0) - (b.order || 0));
   const statuses = sections.map((s) => lessonSectionStatus(s, latestCorrect));
   const masteredCount = statuses.filter((s) => s.mastered).length;
-  const allMastered = sections.length > 0 && masteredCount === sections.length;
+  const total = sections.length;
+  const G = LESSON_GROUP_SIZE;
+  const groupCount = Math.ceil(total / G);
+  const mastered = !!gate?.mastered;
+  // Number of sections currently accessible. Mastered chapters are fully open.
+  const unlocked = mastered ? total : Math.min(total, Math.max(G, gate?.unlocked || G));
+  const allUnlocked = unlocked >= total;
+
+  const [quiz, setQuiz] = useState(null); // { kind, pool, need, unlockTo }
+
+  const poolThrough = (end) => {
+    const ids = new Set();
+    for (let k = 0; k < end; k++) for (const id of (sections[k].check_ids || [])) ids.add(id);
+    return quizPool.filter((x) => ids.has(x.id));
+  };
+  const startCheckpoint = (groupEndIndex) => {
+    const pool = poolThrough(groupEndIndex);
+    setQuiz({ kind: 'checkpoint', pool, need: Math.min(LESSON_CHECKPOINT_Q, pool.length), unlockTo: Math.min(total, groupEndIndex + G) });
+  };
+  const startFinal = () => {
+    const pool = poolThrough(total);
+    setQuiz({ kind: 'final', pool, need: Math.min(LESSON_FINAL_Q, pool.length) });
+  };
+
+  if (quiz) {
+    return (
+      <div className="space-y-3">
+        <button onClick={() => setQuiz(null)} className="text-xs text-[var(--text-muted)] hover:text-[var(--text-strong)]">← {lesson.title}</button>
+        <LessonGateQuiz
+          kind={quiz.kind}
+          pool={quiz.pool}
+          need={quiz.need}
+          onCancel={() => setQuiz(null)}
+          onPass={() => {
+            if (quiz.kind === 'final') onMaster();
+            else onPassCheckpoint(quiz.unlockTo);
+            setQuiz(null);
+          }}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">
       <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-5">
         <button onClick={onBack} className="text-xs text-[var(--text-muted)] hover:text-[var(--text-strong)] mb-2">← Back to lessons</button>
-        <h2 className="font-semibold text-[var(--text-strong)]">{lesson.title}</h2>
+        <div className="flex items-start justify-between gap-3">
+          <h2 className="font-semibold text-[var(--text-strong)]">{lesson.title}</h2>
+          {mastered && <span className="text-xs px-2 py-0.5 rounded-full bg-green-500/15 text-green-500 font-medium shrink-0">Mastered ✓</span>}
+        </div>
         {lesson.intro && <p className="text-sm text-[var(--text-muted)] mt-1 leading-relaxed">{lesson.intro}</p>}
         <div className="flex items-center justify-between gap-3 mt-3">
           <span className="text-xs text-[var(--text-faint)]">
-            {masteredCount}/{sections.length} sections mastered{completed ? ' · marked complete' : ''}
+            {masteredCount}/{total} sections mastered · {Math.min(unlocked, total)}/{total} unlocked{completed ? ' · marked complete' : ''}
           </span>
           {!completed && (
             <button
               onClick={onMarkComplete}
               className="text-xs px-3 py-1.5 rounded border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-strong)]"
             >
-              {allMastered ? 'Mark complete' : 'Mark complete anyway'}
+              {mastered ? 'Mark complete' : 'Mark complete anyway'}
             </button>
           )}
         </div>
       </div>
 
-      {sections.map((sec, i) => (
-        <LessonSection key={sec.id || i} sec={sec} status={statuses[i]} onQuiz={() => onQuizSection(sec)} />
-      ))}
+      {Array.from({ length: groupCount }).map((_, g) => {
+        const startIdx = g * G;
+        const endIdx = Math.min(startIdx + G, total);
+        const isLastGroup = endIdx >= total;
+        const groupUnlocked = unlocked >= endIdx; // every section in this group is accessible
+        const checkpointPassed = unlocked > endIdx || mastered; // next group already open
+        return (
+          <React.Fragment key={g}>
+            {sections.slice(startIdx, endIdx).map((sec, j) => {
+              const i = startIdx + j;
+              const locked = !mastered && i >= unlocked;
+              return <LessonSection key={sec.id || i} sec={sec} status={statuses[i]} onQuiz={() => onQuizSection(sec)} locked={locked} />;
+            })}
+            {!isLastGroup && (
+              <div className="rounded-xl border border-[var(--accent-border)] bg-[var(--accent-soft)] p-4 flex items-center justify-between gap-3 flex-wrap">
+                {checkpointPassed ? (
+                  <span className="text-sm text-green-500 font-medium">✓ Checkpoint {g + 1} passed</span>
+                ) : groupUnlocked ? (
+                  <>
+                    <span className="text-sm text-[var(--text-strong)]">Checkpoint {g + 1} — {LESSON_CHECKPOINT_Q} cumulative questions, 100% to unlock the next sections.</span>
+                    <button onClick={() => startCheckpoint(endIdx)} className="text-xs px-3 py-1.5 rounded font-medium bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] shrink-0">Take checkpoint →</button>
+                  </>
+                ) : (
+                  <span className="text-sm text-[var(--text-faint)]">🔒 Pass the previous checkpoint to reach this one.</span>
+                )}
+              </div>
+            )}
+          </React.Fragment>
+        );
+      })}
+
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-4 flex items-center justify-between gap-3 flex-wrap">
+        {mastered ? (
+          <span className="text-sm text-green-500 font-medium">🏆 Chapter mastered — you scored 100% on the final exam.</span>
+        ) : allUnlocked ? (
+          <>
+            <span className="text-sm text-[var(--text-strong)]">Final exam — {LESSON_FINAL_Q} cumulative questions, 100% to master this chapter.</span>
+            <button onClick={startFinal} className="text-xs px-3 py-1.5 rounded font-medium bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] shrink-0">Take final exam →</button>
+          </>
+        ) : (
+          <span className="text-sm text-[var(--text-faint)]">🔒 Unlock all sections to take the final exam.</span>
+        )}
+      </div>
     </div>
   );
 }
@@ -9548,8 +9757,10 @@ function LessonReader({ lesson, latestCorrect, completed, onBack, onQuizSection,
 function LessonsView({ onGoToStudy }) {
   const { api, files, questions, extractions, attempts } = useApp();
   const [showAll, setShowAll] = useState(false);
+  const [sortBy, setSortBy] = useState('weakest'); // 'weakest' | 'subject'
   const [lessonsCache, setLessonsCache] = useState(() => storage.get(KEYS.lessonsCache, {}) || {});
   const [progress, setProgress] = useState(() => storage.get(KEYS.lessonProgress, {}) || {});
+  const [gates, setGates] = useState(() => storage.get(KEYS.lessonGates, {}) || {});
   const [availMap, setAvailMap] = useState({}); // chapter_id -> lesson exists on server
   const [busy, setBusy] = useState({}); // chapter_id -> true while downloading
   const [openId, setOpenId] = useState(null); // chapter_id whose reader is open
@@ -9586,6 +9797,25 @@ function LessonsView({ onGoToStudy }) {
 
   const persistCache = (next) => { setLessonsCache(next); storage.set(KEYS.lessonsCache, next); };
   const persistProgress = (next) => { setProgress(next); storage.set(KEYS.lessonProgress, next); };
+  const persistGates = (next) => { setGates(next); storage.set(KEYS.lessonGates, next); };
+
+  const gateFor = (chapterId) => gates[chapterId] || { unlocked: LESSON_GROUP_SIZE, mastered: false };
+  const passCheckpoint = (chapterId, unlockTo) => {
+    const g = gateFor(chapterId);
+    persistGates({ ...gates, [chapterId]: { ...g, unlocked: Math.max(g.unlocked || 0, unlockTo) } });
+  };
+  const masterChapter = (chapterId) => {
+    const g = gateFor(chapterId);
+    persistGates({ ...gates, [chapterId]: { ...g, mastered: true, mastered_at: Date.now() } });
+  };
+
+  // Full MC pool (regular MC only — pure multiple choice) for one chapter's file.
+  const mcPoolFor = (chapterId) => {
+    const fid = chapterToFile[chapterId];
+    if (!fid) return [];
+    return buildPool({ files, questions, extractions, attempts }, 'mc', { fileIds: new Set([fid]) })
+      .filter((x) => x.mode === 'mc');
+  };
 
   const downloadLesson = async (chapterId) => {
     if (!chapterId) return;
@@ -9658,9 +9888,19 @@ function LessonsView({ onGoToStudy }) {
       const need = pool.filter((x) => wrongIds.has(x.id) || !seenIds.has(x.id)).length;
       return { fid, chapterId: fileToChapter[fid] || null, acc: s.total ? s.correct / s.total : 1, correct: s.correct, total: s.total, chapter: s.chapter, subject: s.subject, need };
     });
-    out.sort((a, b) => a.acc - b.acc || b.total - a.total);
+    if (sortBy === 'subject') {
+      // Behavioral Sciences first, then alphabetical by subject, then by chapter
+      // number within each subject (Chapter 1, 2, 3 …).
+      const subjectRank = (s) => /behavior/i.test(s || '') ? '0' : `1${(s || '').toLowerCase()}`;
+      out.sort((a, b) =>
+        subjectRank(a.subject).localeCompare(subjectRank(b.subject)) ||
+        (a.chapter || '').localeCompare(b.chapter || '', undefined, { numeric: true })
+      );
+    } else {
+      out.sort((a, b) => a.acc - b.acc || b.total - a.total);
+    }
     return out;
-  }, [files, questions, extractions, attempts, fileToChapter]);
+  }, [files, questions, extractions, attempts, fileToChapter, sortBy]);
 
   const launchReview = (fid) => {
     const pool = buildPool({ files, questions, extractions, attempts }, 'mc', { fileIds: new Set([fid]) });
@@ -9689,9 +9929,13 @@ function LessonsView({ onGoToStudy }) {
         lesson={lessonsCache[openId]}
         latestCorrect={latestCorrect}
         completed={!!progress[openId]}
+        gate={gateFor(openId)}
+        quizPool={mcPoolFor(openId)}
         onBack={() => setOpenId(null)}
         onQuizSection={(sec) => quizSection(openId, sec)}
         onMarkComplete={() => markComplete(openId)}
+        onPassCheckpoint={(unlockTo) => passCheckpoint(openId, unlockTo)}
+        onMaster={() => masterChapter(openId)}
       />
     );
   }
@@ -9712,7 +9956,18 @@ function LessonsView({ onGoToStudy }) {
     );
   }
 
-  const visible = showAll ? rows : rows.slice(0, 3);
+  const visible = (showAll || sortBy === 'subject') ? rows : rows.slice(0, 3);
+
+  // In-progress = lesson downloaded to this device, not yet mastered and not
+  // marked complete. Surfaced at the top so you can pick up where you left off.
+  // Built from the cache (not the attempt-derived rows) so a freshly downloaded
+  // lesson with no attempts yet still appears.
+  const inProgress = Object.keys(lessonsCache)
+    .filter((cid) => !gates[cid]?.mastered && !progress[cid])
+    .map((cid) => {
+      const f = files.find((x) => x.chapter_id === cid);
+      return { chapterId: cid, fid: chapterToFile[cid] || cid, chapter: f?.chapter || lessonsCache[cid]?.title || 'Lesson', subject: f?.subject || '' };
+    });
 
   const lessonButton = (r) => {
     if (!r.chapterId) return null;
@@ -9744,7 +9999,7 @@ function LessonsView({ onGoToStudy }) {
       <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-5">
         <h2 className="font-semibold text-[var(--text-strong)]">Lessons</h2>
         <p className="text-sm text-[var(--text-muted)] mt-1">
-          Your most-struggled chapters, weakest first. Download a guided lesson to study the concepts, then quiz each section — anything you answer correctly drops out, and only comes back if you miss it again later.
+          Download a guided lesson and work through it in groups of {LESSON_GROUP_SIZE} sections. Each group is gated by a {LESSON_CHECKPOINT_Q}-question checkpoint (100% to advance), and a {LESSON_FINAL_Q}-question final exam masters the chapter.
         </p>
       </div>
 
@@ -9752,10 +10007,46 @@ function LessonsView({ onGoToStudy }) {
         <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-3 text-xs text-red-400">{error}</div>
       )}
 
+      {inProgress.length > 0 && (
+        <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-5 space-y-3">
+          <h3 className="font-semibold text-[var(--text-strong)]">In progress</h3>
+          <div className="space-y-2">
+            {inProgress.map((r) => {
+              const g = gates[r.chapterId] || {};
+              const lesson = lessonsCache[r.chapterId];
+              const totalSecs = (lesson?.sections || []).length;
+              const unlocked = Math.min(totalSecs, Math.max(LESSON_GROUP_SIZE, g.unlocked || LESSON_GROUP_SIZE));
+              return (
+                <div key={r.fid} className="flex items-center justify-between gap-3 bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg px-3 py-2 flex-wrap">
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium text-[var(--text-strong)] truncate">{r.chapter}</div>
+                    <div className="text-xs text-[var(--text-faint)]">{r.subject} · {Math.min(unlocked, totalSecs)}/{totalSecs} sections unlocked</div>
+                  </div>
+                  <button onClick={() => setOpenId(r.chapterId)} className="text-xs px-3 py-1.5 rounded font-medium bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] shrink-0">Resume →</button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-5 space-y-4">
-        <h3 className="font-semibold text-[var(--text-strong)]">
-          {showAll ? 'All chapters' : 'Top 3 to work on'}
-        </h3>
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <h3 className="font-semibold text-[var(--text-strong)]">
+            {sortBy === 'subject' ? 'All chapters by subject' : (showAll ? 'All chapters' : 'Top 3 to work on')}
+          </h3>
+          <div className="flex items-center gap-1 text-xs">
+            <span className="text-[var(--text-faint)] mr-1">Sort:</span>
+            <button
+              onClick={() => setSortBy('weakest')}
+              className={`px-2 py-1 rounded border ${sortBy === 'weakest' ? 'bg-[var(--accent)] text-white border-[var(--accent-border)]' : 'border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--bg-hover)]'}`}
+            >% incorrect</button>
+            <button
+              onClick={() => setSortBy('subject')}
+              className={`px-2 py-1 rounded border ${sortBy === 'subject' ? 'bg-[var(--accent)] text-white border-[var(--accent-border)]' : 'border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--bg-hover)]'}`}
+            >Subject</button>
+          </div>
+        </div>
         <div className="space-y-4">
           {visible.map((r) => (
             <div key={r.fid} className="space-y-2">
@@ -9778,7 +10069,7 @@ function LessonsView({ onGoToStudy }) {
             </div>
           ))}
         </div>
-        {rows.length > 3 && (
+        {sortBy !== 'subject' && rows.length > 3 && (
           <button
             onClick={() => setShowAll((s) => !s)}
             className="w-full text-sm py-2 rounded border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-strong)]"
