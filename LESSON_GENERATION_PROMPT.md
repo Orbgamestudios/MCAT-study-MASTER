@@ -57,7 +57,7 @@ For each planned section, collect the `question_id`s from `mc`/`two_part`/`short
 
 Each section teaches its concept, then drills it. Sections contain:
 
-1. **`teach`** — 2–5 short paragraphs (plain prose, no markdown headers) that explain the concept the way a strong tutor would: the intuition, the mechanism, why it matters on the MCAT, and the single most common misconception. Pull facts from `summary_sentences`; do not contradict the bank.
+1. **`teach`** — 2–5 short paragraphs (plain prose, no markdown headers) that explain the concept the way a strong tutor would: the intuition, the mechanism, why it matters on the MCAT, and the single most common misconception. **Every factual claim must be grounded in the Milesdown end-of-chapter Concept Summary (delivered as `extraction.summary_sentences`) and/or the chapter's own Concept Summary** — paraphrase and explain those points, never introduce facts that contradict or aren't supported by them or the bank. The summary is the source of truth; the teach text is your expansion of it.
 2. **`worked_examples`** (0–3) — `{ prompt, solution }`. For quantitative chapters (physics, parts of gchem/biochem) at least one section must show a fully worked numeric example that rearranges/uses an `equation`. Plain ASCII digits.
 3. **`definition_drills`** — the `key_terms` that belong to this concept, as `{ term, definition }`, using the EXACT `term` strings from `extraction.key_terms`. These render as flashcards.
 4. **`check_ids`** — the real bank question IDs that gate this section's mastery (see B).
@@ -114,6 +114,7 @@ Field notes:
 ### ⚠ Field-name + encoding rules (same as the question pipeline)
 - Plain ASCII digits only — no Unicode subscripts (`CH3`, `H2O`, not `CH₃`). Plain hyphen in `title`/`chapter` fields (no em dash).
 - Greek letters, →, °, ² ³ are safe in `teach`/`solution` text.
+- **Always write Greek letters as their actual Unicode symbol, never spelled out.** Use `λ` not "lambda", `Δ` not "delta", `μ` not "mu/micro", `θ` not "theta", `α β γ ω π σ φ ρ ε η κ ν τ χ ψ Ω Σ Φ` etc. This applies everywhere — `teach`, `worked_examples`, `definition_drills`, equation references. The only exception: keep a spelled-out word if it is part of a proper term that is conventionally written in Latin letters (e.g. "alpha helix", "beta sheet", "gamma rays" stay as words). Be consistent within the lesson.
 - `definition_drills[].term` must byte-match an `extraction.key_terms[].term`.
 - `check_ids` must all exist in the chapter's published `mc`/`two_part`/`short` arrays.
 - After writing the JSON, verify zero Unicode subscripts and that every `check_id` resolves against the chapter payload from `GET /chapters/<id>`.

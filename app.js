@@ -6727,6 +6727,9 @@ function _calcEvaluate(expr) {
   let s = String(expr)
     .replace(/×/g, '*').replace(/÷/g, '/')
     .replace(/−/g, '-') // unicode minus
+    // Scientific notation: 3E8 or 1.6E-19 -> (3*Math.pow(10,8)). Must run
+    // before the lowercase-e -> Math.E rewrite (capital E is distinct).
+    .replace(/(\d+(?:\.\d+)?)E([+-]?\d+(?:\.\d+)?)/g, '($1*Math.pow(10,$2))')
     .replace(/π/g, '(Math.PI)')
     .replace(/(?<![A-Za-z])e(?![A-Za-z0-9])/g, '(Math.E)')
     .replace(/√\s*\(/g, 'Math.sqrt(')
@@ -6734,14 +6737,18 @@ function _calcEvaluate(expr) {
     .replace(/(\d+(?:\.\d+)?|\))\s*\^\s*(\d+(?:\.\d+)?|\([^)]+\))/g, 'Math.pow($1,$2)')
     .replace(/\blog\(/g, 'Math.log10(')
     .replace(/\bln\(/g, 'Math.log(')
+    // Inverse trig before forward trig so "asin(" isn't half-rewritten.
+    .replace(/\basin\(/g, 'Math.asin(')
+    .replace(/\bacos\(/g, 'Math.acos(')
+    .replace(/\batan\(/g, 'Math.atan(')
     .replace(/\bsin\(/g, 'Math.sin(')
     .replace(/\bcos\(/g, 'Math.cos(')
     .replace(/\btan\(/g, 'Math.tan(')
     .replace(/(\d+(?:\.\d+)?)\s*%/g, '($1/100)');
   // Whitelist: digits, dot, ops, parens, comma (for Math.pow args), spaces,
-  // and the identifiers Math.PI/E/sqrt/pow/log/log10/sin/cos/tan.
-  if (!/^[0-9+\-*/().,\s]|Math\.(PI|E|sqrt|pow|log|log10|sin|cos|tan)/.test(s)) return NaN;
-  const stripped = s.replace(/Math\.(PI|E|sqrt|pow|log10|log|sin|cos|tan)/g, '');
+  // and the identifiers Math.PI/E/sqrt/pow/log/log10/sin/cos/tan/asin/acos/atan.
+  if (!/^[0-9+\-*/().,\s]|Math\.(PI|E|sqrt|pow|log|log10|asin|acos|atan|sin|cos|tan)/.test(s)) return NaN;
+  const stripped = s.replace(/Math\.(PI|E|sqrt|pow|log10|log|asin|acos|atan|sin|cos|tan)/g, '');
   if (/[^0-9+\-*/().,\s]/.test(stripped)) return NaN;
   try {
     // eslint-disable-next-line no-new-func
@@ -6751,8 +6758,7 @@ function _calcEvaluate(expr) {
   } catch { return NaN; }
 }
 
-function CalculatorModal({ onClose }) {
-  const [expr, setExpr] = useState('');
+function CalculatorModal({ expr, setExpr, onClose, onMinimize, minimized }) {
   const result = useMemo(() => {
     if (!expr.trim()) return '';
     const v = _calcEvaluate(expr);
@@ -6763,22 +6769,43 @@ function CalculatorModal({ onClose }) {
     return String(fixed);
   }, [expr]);
   useEffect(() => {
+    if (minimized) return;
     const prev = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
-    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    const onKey = (e) => { if (e.key === 'Escape') onMinimize(); };
     window.addEventListener('keydown', onKey);
     return () => { document.body.style.overflow = prev; window.removeEventListener('keydown', onKey); };
-  }, [onClose]);
+  }, [onMinimize, minimized]);
   const push = (s) => setExpr((p) => p + s);
   const back = () => setExpr((p) => p.slice(0, -1));
   const ac   = () => setExpr('');
   const equals = () => { if (result !== '') setExpr(result); };
-  // Five rows × four cols, plus a top row of scientific ops.
+
+  // Minimized: a small floating pill that keeps the running expression/result
+  // so you can peek at the problem again, then tap to restore the keypad.
+  if (minimized) {
+    return (
+      <button
+        onClick={onMinimize}
+        title="Restore calculator"
+        className="fixed bottom-4 right-4 z-[60] flex items-center gap-2 bg-[var(--bg-card)] border border-[var(--border-soft)] shadow-lg rounded-full pl-3 pr-4 py-2 hover:bg-[var(--bg-hover)]"
+      >
+        <span className="text-base">🧮</span>
+        <span className="font-mono text-sm text-[var(--text-strong)] max-w-[10rem] truncate text-right">
+          {result || expr || '0'}
+        </span>
+      </button>
+    );
+  }
+
+  // Scientific ops incl. trig + inverse trig and an EE (×10ⁿ) key.
   const sci = [
     ['(', () => push('(')], [')', () => push(')')],
-    ['π', () => push('π')], ['e', () => push('e')],
+    ['π', () => push('π')], ['e', () => push('e')], ['EE', () => push('E')],
     ['√', () => push('√(')], ['x²', () => push('^2')], ['xʸ', () => push('^')],
-    ['log', () => push('log(')], ['ln', () => push('ln(')], ['%', () => push('%')],
+    ['log', () => push('log(')], ['ln', () => push('ln(')],
+    ['sin', () => push('sin(')], ['cos', () => push('cos(')], ['tan', () => push('tan(')], ['%', () => push('%')],
+    ['sin⁻¹', () => push('asin(')], ['cos⁻¹', () => push('acos(')], ['tan⁻¹', () => push('atan(')],
   ];
   const grid = [
     ['AC', ac, 'op'], ['⌫', back, 'op'], ['÷', () => push('÷'), 'op'], ['×', () => push('×'), 'op'],
@@ -6788,14 +6815,17 @@ function CalculatorModal({ onClose }) {
     ['0', () => push('0')], ['.', () => push('.')],
   ];
   return (
-    <div className="fixed inset-0 z-[60] bg-black/55 backdrop-blur-sm flex items-end sm:items-center justify-center p-2 sm:p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[60] bg-black/55 backdrop-blur-sm flex items-end sm:items-center justify-center p-2 sm:p-4" onClick={onMinimize}>
       <div
         className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 w-full max-w-sm space-y-3"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between gap-3">
           <div className="text-[10px] uppercase tracking-wide text-[var(--text-muted)]">Calculator</div>
-          <button onClick={onClose} className="text-2xl leading-none text-[var(--text-muted)] hover:text-[var(--text-strong)]" aria-label="Close">×</button>
+          <div className="flex items-center gap-2">
+            <button onClick={onMinimize} className="text-xl leading-none text-[var(--text-muted)] hover:text-[var(--text-strong)]" title="Minimize (keeps your work)" aria-label="Minimize">—</button>
+            <button onClick={onClose} className="text-2xl leading-none text-[var(--text-muted)] hover:text-[var(--text-strong)]" aria-label="Close">×</button>
+          </div>
         </div>
         <div className="bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg px-3 py-3">
           <div className="text-right text-sm text-[var(--text-faint)] font-mono break-all min-h-[1.25rem]">{expr || ' '}</div>
@@ -6806,7 +6836,7 @@ function CalculatorModal({ onClose }) {
             <button
               key={label}
               onClick={fn}
-              className="text-xs px-2 py-2 border border-[var(--border)] rounded text-[var(--text-muted)] hover:bg-[var(--bg-hover)]"
+              className="text-xs px-1 py-2 border border-[var(--border)] rounded text-[var(--text-muted)] hover:bg-[var(--bg-hover)]"
             >{label}</button>
           ))}
         </div>
@@ -7629,6 +7659,8 @@ function QuizRunner({ items, onExit, onPause }) {
 
   const [flagging, setFlagging] = useState(false);
   const [showCalc, setShowCalc] = useState(false);
+  const [calcMin, setCalcMin] = useState(false);
+  const [calcExpr, setCalcExpr] = useState('');
   const [showTable, setShowTable] = useState(false);
 
   const item = items[index];
@@ -7686,7 +7718,7 @@ function QuizRunner({ items, onExit, onPause }) {
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
           <button
-            onClick={() => setShowCalc(true)}
+            onClick={() => { setShowCalc(true); setCalcMin(false); }}
             title="Open calculator"
             aria-label="Open calculator"
             className="text-sm px-2 py-1 border border-[var(--border)] rounded text-[var(--text-muted)] hover:text-[var(--text-strong)] hover:bg-[var(--bg-hover)]"
@@ -7734,7 +7766,15 @@ function QuizRunner({ items, onExit, onPause }) {
         })()}
       </div>
       {flagging && <FlagQuestionModal item={item} onClose={() => setFlagging(false)} />}
-      {showCalc && <CalculatorModal onClose={() => setShowCalc(false)} />}
+      {showCalc && (
+        <CalculatorModal
+          expr={calcExpr}
+          setExpr={setCalcExpr}
+          minimized={calcMin}
+          onMinimize={() => setCalcMin((m) => !m)}
+          onClose={() => { setShowCalc(false); setCalcMin(false); setCalcExpr(''); }}
+        />
+      )}
       {showTable && <PeriodicTableModal onClose={() => setShowTable(false)} />}
     </div>
   );
