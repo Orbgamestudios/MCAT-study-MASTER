@@ -12412,29 +12412,6 @@ function Shell() {
 
       <main className="flex-1 px-3 pb-3 pt-[17px] sm:px-6 sm:pb-6 sm:pt-[29px] overflow-x-hidden">
         <div className="max-w-3xl mx-auto">
-          {tabIs('library') && (
-            <div {...tabWrap('library', 'space-y-4 sm:space-y-5')}>
-              {contributorMode && !readOnly && apiKey && <UploadPanel />}
-              {contributorMode && session && <PublishAllPanel />}
-              {contributorMode && fullyProcessed > 0 && (
-                <div className="flex justify-end">
-                  <button
-                    onClick={() => exportBank({ files, extractions, questions })}
-                    className="text-xs px-3 py-1.5 border border-[var(--border)] hover:bg-[var(--bg-hover)] text-[var(--text-muted)] rounded"
-                  >
-                    Export data.json locally
-                  </button>
-                </div>
-              )}
-              {/* FlagFixesPanel sits at the TOP of the Library tab so a
-                  just-flagged question is the first thing you see. It is always
-                  visible (regardless of contributorMode) so any user who flags
-                  a question can run the fix pipeline on their own queue with
-                  their own Gemini key. */}
-              <FlagFixesPanel />
-              <FileList />
-            </div>
-          )}
           {tabIs('home') && (
             <div {...tabWrap('home', '')}>
               <HomeView onGoToStudy={() => switchTab('study')} />
@@ -12459,7 +12436,24 @@ function Shell() {
             </div>
           )}
           {tabIs('banks') && (
-            <div {...tabWrap('banks', '')}>
+            <div {...tabWrap('banks', 'space-y-4 sm:space-y-5')}>
+              {/* Former Library controls, now at the top of the Bank tab. */}
+              {contributorMode && !readOnly && apiKey && <UploadPanel />}
+              {contributorMode && session && <PublishAllPanel />}
+              {contributorMode && fullyProcessed > 0 && (
+                <div className="flex justify-end">
+                  <button
+                    onClick={() => exportBank({ files, extractions, questions })}
+                    className="text-xs px-3 py-1.5 border border-[var(--border)] hover:bg-[var(--bg-hover)] text-[var(--text-muted)] rounded"
+                  >
+                    Export data.json locally
+                  </button>
+                </div>
+              )}
+              {/* FlagFixesPanel is always visible so any user who flags a
+                  question can run the fix pipeline on their own queue. */}
+              <FlagFixesPanel />
+              <FileList />
               <BankTab />
             </div>
           )}
