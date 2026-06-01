@@ -9367,9 +9367,13 @@ function LessonsView({ onGoToStudy }) {
   const [showAll, setShowAll] = useState(false);
 
   const rows = useMemo(() => {
+    // Only real processed chapters belong here — exclude daily activities like
+    // CARS and Connections, which record attempts under synthetic file_ids.
+    const chapterFileIds = new Set(files.map((f) => f.file_id));
     const byChapter = {};
     for (const a of attempts) {
       const key = a.file_id;
+      if (!chapterFileIds.has(key)) continue;
       if (!byChapter[key]) byChapter[key] = { correct: 0, total: 0, chapter: a.chapter, subject: a.subject };
       byChapter[key].total++;
       if (a.correct) byChapter[key].correct++;
