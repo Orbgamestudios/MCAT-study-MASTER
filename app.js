@@ -5772,11 +5772,11 @@ function QuizLauncher({ onStart, onStartFlashcards }) {
               <button onClick={selectAll} className="text-[var(--accent-text)] hover:underline">All</button>
               <span className="text-[var(--text-fainter)]">·</span>
               <button onClick={selectNone} className="text-[var(--text-muted)] hover:underline">None</button>
-              {masteredFileIds.size > 0 && (
-                <>
-                  <span className="text-[var(--text-fainter)]">·</span>
-                  <button onClick={selectMastered} className="text-[var(--accent-text)] hover:underline" title="Select only chapters you've mastered (100% on the final exam)">Mastered only</button>
-                </>
+              <span className="text-[var(--text-fainter)]">·</span>
+              {masteredFileIds.size > 0 ? (
+                <button onClick={selectMastered} className="text-[var(--accent-text)] hover:underline" title="Select only chapters you've mastered (100% on the final exam)">Mastered only</button>
+              ) : (
+                <span className="text-[var(--text-fainter)] cursor-not-allowed" title="No mastered chapters yet — pass a lesson's final exam (100%) to master it">Mastered only</span>
               )}
             </div>
           )}
