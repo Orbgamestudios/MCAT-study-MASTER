@@ -12277,11 +12277,7 @@ function Shell() {
   }, []);
 
   const hasLibrary = apiKey || readOnly || session;
-  const tabs = readOnly
-    ? [['home', 'Home'], ['lessons', 'Lessons'], ['study', 'Study'], ['stats', 'Stats'], ['banks', 'Bank'], ['library', 'Library']]
-    : hasLibrary
-      ? [['library', 'Library'], ['home', 'Home'], ['lessons', 'Lessons'], ['study', 'Study'], ['stats', 'Stats'], ['banks', 'Bank']]
-      : [['home', 'Home'], ['lessons', 'Lessons'], ['stats', 'Stats'], ['banks', 'Bank'], ['study', 'Study']];
+  const tabs = [['lessons', 'Lessons'], ['study', 'Study'], ['home', 'Home'], ['stats', 'Stats'], ['banks', 'Bank']];
   useEffect(() => { if (readOnly) setTab('home'); else if (!hasLibrary) setTab('home'); }, [readOnly, hasLibrary]);
   useEffect(() => { setProfileUser(null); }, [tab]);
 
