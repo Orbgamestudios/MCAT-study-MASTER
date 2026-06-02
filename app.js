@@ -9599,6 +9599,10 @@ function LessonGateQuiz({ kind, pool, need, onPass, onCancel }) {
   const [answered, setAnswered] = useState(false);
   const [correctCount, setCorrectCount] = useState(0);
   const [done, setDone] = useState(false);
+  const [showCalc, setShowCalc] = useState(false);
+  const [calcMin, setCalcMin] = useState(false);
+  const [calcExpr, setCalcExpr] = useState('');
+  const [showTable, setShowTable] = useState(false);
 
   const total = items.length;
   const item = items[index];
@@ -9661,7 +9665,19 @@ function LessonGateQuiz({ kind, pool, need, onPass, onCancel }) {
           <span className="text-[var(--text-strong)]">{label}</span>
           <span className="ml-2">· {index + 1}/{total} · need 100%</span>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-1.5 shrink-0">
+          <button
+            onClick={() => { setShowCalc(true); setCalcMin(false); }}
+            title="Open calculator"
+            aria-label="Open calculator"
+            className="text-sm px-2 py-1 border border-[var(--border)] rounded text-[var(--text-muted)] hover:text-[var(--text-strong)] hover:bg-[var(--bg-hover)]"
+          >🧮</button>
+          <button
+            onClick={() => setShowTable(true)}
+            title="Open periodic table"
+            aria-label="Open periodic table"
+            className="text-sm px-2 py-1 border border-[var(--border)] rounded text-[var(--text-muted)] hover:text-[var(--text-strong)] hover:bg-[var(--bg-hover)]"
+          >⚛️</button>
           <span className="text-xs font-mono text-[var(--text-muted)]">{correctCount}/{index + (answered ? 1 : 0)}</span>
           <button onClick={onCancel} className="text-xs text-[var(--text-muted)] hover:text-[var(--danger-text)] border border-[var(--border)] rounded px-2 py-1">Quit</button>
         </div>
@@ -9672,6 +9688,16 @@ function LessonGateQuiz({ kind, pool, need, onPass, onCancel }) {
       <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-5">
         <MCQuestion key={item.id} item={item} onAnswer={handleAnswer} nextSlot={nextBtn} />
       </div>
+      {showCalc && (
+        <CalculatorModal
+          expr={calcExpr}
+          setExpr={setCalcExpr}
+          minimized={calcMin}
+          onMinimize={() => setCalcMin((m) => !m)}
+          onClose={() => { setShowCalc(false); setCalcMin(false); setCalcExpr(''); }}
+        />
+      )}
+      {showTable && <PeriodicTableModal onClose={() => setShowTable(false)} />}
     </div>
   );
 }
