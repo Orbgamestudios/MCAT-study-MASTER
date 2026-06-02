@@ -10098,7 +10098,9 @@ function LessonReader({ lesson, latestCorrect, completed, gate, quizPool, onBack
 function LessonsView({ onGoToStudy }) {
   const { api, files, questions, extractions, attempts } = useApp();
   const [showAll, setShowAll] = useState(false);
-  const [sortBy, setSortBy] = useState('weakest'); // 'weakest' | 'subject'
+  const [sortBy, setSortBy] = useState('subject'); // 'weakest' | 'subject'
+  const [openSubjects, setOpenSubjects] = useState({}); // subject -> expanded (collapsed by default)
+  const toggleSubject = (s) => setOpenSubjects((m) => ({ ...m, [s]: !m[s] }));
   const [lessonsCache, setLessonsCache] = useState(() => storage.get(KEYS.lessonsCache, {}) || {});
   const [progress, setProgress] = useState(() => storage.get(KEYS.lessonProgress, {}) || {});
   const [gates, setGates] = useState(() => storage.get(KEYS.lessonGates, {}) || {});
@@ -10335,6 +10337,39 @@ function LessonsView({ onGoToStudy }) {
     );
   };
 
+  const renderRow = (r) => (
+    <div key={r.fid} className="space-y-2">
+      <StatBar label={`${r.subject} — ${r.chapter}`} correct={r.correct} total={r.total} />
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <span className="text-xs text-[var(--text-faint)]">
+          {r.need > 0 ? `${r.need} question${r.need === 1 ? '' : 's'} to review` : 'All caught up — nice'}
+        </span>
+        <div className="flex items-center gap-2 flex-wrap">
+          {lessonButton(r)}
+          <button
+            onClick={() => launchReview(r.fid)}
+            disabled={r.need === 0}
+            className="text-xs px-3 py-1.5 rounded font-medium disabled:opacity-40 disabled:cursor-not-allowed bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)]"
+          >
+            Quick review →
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  // Group rows by subject (preserving the subject-sorted order in `rows`).
+  const subjectGroups = (() => {
+    const order = [];
+    const map = {};
+    for (const r of rows) {
+      const s = r.subject || 'Other';
+      if (!map[s]) { map[s] = []; order.push(s); }
+      map[s].push(r);
+    }
+    return order.map((s) => [s, map[s]]);
+  })();
+
   return (
     <div className="space-y-4">
       <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-5">
@@ -10388,28 +10423,38 @@ function LessonsView({ onGoToStudy }) {
             >Subject</button>
           </div>
         </div>
-        <div className="space-y-4">
-          {visible.map((r) => (
-            <div key={r.fid} className="space-y-2">
-              <StatBar label={`${r.subject} — ${r.chapter}`} correct={r.correct} total={r.total} />
-              <div className="flex items-center justify-between gap-3 flex-wrap">
-                <span className="text-xs text-[var(--text-faint)]">
-                  {r.need > 0 ? `${r.need} question${r.need === 1 ? '' : 's'} to review` : 'All caught up — nice'}
-                </span>
-                <div className="flex items-center gap-2 flex-wrap">
-                  {lessonButton(r)}
+        {sortBy === 'subject' ? (
+          <div className="space-y-2">
+            {subjectGroups.map(([subject, items]) => {
+              const open = !!openSubjects[subject];
+              const need = items.reduce((n, r) => n + r.need, 0);
+              return (
+                <div key={subject} className="border border-[var(--border-soft)] rounded-xl overflow-hidden">
                   <button
-                    onClick={() => launchReview(r.fid)}
-                    disabled={r.need === 0}
-                    className="text-xs px-3 py-1.5 rounded font-medium disabled:opacity-40 disabled:cursor-not-allowed bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)]"
+                    onClick={() => toggleSubject(subject)}
+                    className="w-full flex items-center justify-between gap-3 px-3 py-2.5 bg-[var(--bg-elev-soft)] hover:bg-[var(--bg-hover)] text-left"
                   >
-                    Quick review →
+                    <span className="flex items-center gap-2 min-w-0">
+                      <span className="text-[var(--text-faint)] transition-transform" style={{ transform: open ? 'rotate(90deg)' : 'none' }}>▶</span>
+                      <span className="text-sm font-medium text-[var(--text-strong)] truncate">{subject || 'Other'}</span>
+                      <span className="text-xs text-[var(--text-faint)]">{items.length} chapter{items.length === 1 ? '' : 's'}</span>
+                    </span>
+                    {need > 0 && <span className="text-xs text-[var(--text-faint)] shrink-0">{need} to review</span>}
                   </button>
+                  {open && (
+                    <div className="p-3 space-y-4">
+                      {items.map((r) => renderRow(r))}
+                    </div>
+                  )}
                 </div>
-              </div>
-            </div>
-          ))}
-        </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {visible.map((r) => renderRow(r))}
+          </div>
+        )}
         {sortBy !== 'subject' && rows.length > 3 && (
           <button
             onClick={() => setShowAll((s) => !s)}
@@ -13400,7 +13445,6 @@ function Shell() {
               {/* FlagFixesPanel is always visible so any user who flags a
                   question can run the fix pipeline on their own queue. */}
               <FlagFixesPanel />
-              <FileList />
               <BankTab />
             </div>
           )}
