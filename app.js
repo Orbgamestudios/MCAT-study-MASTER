@@ -10213,6 +10213,15 @@ function LessonsView({ onGoToStudy }) {
     // CARS and Connections, which record attempts under synthetic file_ids.
     const chapterFileIds = new Set(files.map((f) => f.file_id));
     const byChapter = {};
+    // Seed every processed chapter so ones you haven't answered questions for
+    // yet still show up (with 0/0 stats) rather than only appearing after a
+    // first attempt is recorded.
+    for (const f of files) {
+      if (!f.file_id) continue;
+      const q = questions[f.file_id];
+      if (!q || !q.mc) continue; // only fully processed chapters
+      byChapter[f.file_id] = { correct: 0, total: 0, chapter: f.chapter, subject: f.subject };
+    }
     for (const a of attempts) {
       const key = a.file_id;
       if (!chapterFileIds.has(key)) continue;
