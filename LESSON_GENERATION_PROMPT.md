@@ -62,6 +62,7 @@ Each section teaches its concept, then drills it. Sections contain:
 3. **`definition_drills`** — the `key_terms` that belong to this concept, as `{ term, definition }`, using the EXACT `term` strings from `extraction.key_terms`. These render as flashcards **and** power an in-section **Match terms to definitions** exercise (the app pairs the section's first 5 drills term↔definition using the existing matching widget). Aim for **≥2 drills per section** wherever the concept has named terms so the matching practice appears; a section with 0–1 drills shows no matching exercise. This matching practice is study-only — it records no attempt and is **never** part of the checkpoint or final exams (those draw only from the MC bank). Keep definitions short and mutually distinct so the pairing is unambiguous.
 4. **`check_ids`** — the real bank question IDs that gate this section's mastery (see B).
 5. **`equations`** (optional) — names of `extraction.equations` introduced here (exact `name` strings), for quick reference.
+6. **`figures`** (optional, 0-3) — array of strings naming high-yield diagrams for this concept. The app renders each as a clickable thumbnail that loads the lead image of the matching **English Wikipedia article** (same mechanism as the molecule viewer, which loads PubChem structures by name). Use the **exact Wikipedia article title** so the image resolves — e.g. `"Citric acid cycle"` (not "Krebs cycle"), `"Nephron"`, `"Cardiac cycle"`, `"Action potential"`, `"Glycolysis"`, `"Sarcomere"`, `"Lipid bilayer"`, `"Transcription (biology)"`. Only add a figure when a real diagram genuinely aids the concept (anatomy, pathways, cycles, structures); skip it for purely verbal/quantitative concepts. Verify the title corresponds to an article whose lead image is the diagram you mean.
 
 ## D. Coverage check (mandatory)
 
@@ -96,6 +97,7 @@ Each section teaches its concept, then drills it. Sections contain:
           { "term": "exact term string", "definition": "one sentence" }
         ],
         "equations": ["exact equation name"],
+        "figures": ["Exact Wikipedia article title"],
         "check_ids": ["mc_...","term_...","sa_..."],
         "mastery_threshold": 1.0
       }
@@ -116,6 +118,7 @@ Field notes:
 - Greek letters, →, °, ² ³ are safe in `teach`/`solution` text.
 - **Always write Greek letters as their actual Unicode symbol, never spelled out.** Use `λ` not "lambda", `Δ` not "delta", `μ` not "mu/micro", `θ` not "theta", `α β γ ω π σ φ ρ ε η κ ν τ χ ψ Ω Σ Φ` etc. This applies everywhere — `teach`, `worked_examples`, `definition_drills`, equation references. The only exception: keep a spelled-out word if it is part of a proper term that is conventionally written in Latin letters (e.g. "alpha helix", "beta sheet", "gamma rays" stay as words). Be consistent within the lesson.
 - `definition_drills[].term` must byte-match an `extraction.key_terms[].term`.
+- `figures[]` entries are exact **English Wikipedia article titles** (the app loads each article's lead image). Prefer the canonical title (`"Citric acid cycle"`, `"Pulmonary alveolus"`) and keep diacritics where the real title has them (`"Michaelis–Menten kinetics"`). A wrong/nonexistent title just shows a "no figure found" placeholder, so verify titles you're unsure about.
 - `check_ids` must all exist in the chapter's published `mc`/`two_part`/`short` arrays.
 - After writing the JSON, verify zero Unicode subscripts and that every `check_id` resolves against the chapter payload from `GET /chapters/<id>`.
 

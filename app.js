@@ -6739,6 +6739,258 @@ function looksLikeMolecule(text) {
   return null;
 }
 
+// ---------- figure viewer (Wikipedia-backed) ----------
+// Same idea as the molecule viewer, but for biology/biochem diagrams. Each
+// entry's `title` is a Wikipedia article whose lead image is the figure (the
+// REST summary endpoint returns thumbnail/originalimage by article title, just
+// like PubChem returns a structure PNG by compound name). `label` is the
+// surface form shown/linked in text; `variants` are alternate phrasings that
+// resolve to the same article. `acronym: true` forces case-sensitive matching
+// (e.g. "DNA") so we don't link the letters inside ordinary words.
+const FIGURES = [
+  // Cardiovascular / respiratory
+  { label: 'heart', title: 'Heart' },
+  { label: 'cardiac cycle', title: 'Cardiac cycle' },
+  { label: 'cardiac muscle', title: 'Cardiac muscle', variants: ['myocardium'] },
+  { label: 'circulatory system', title: 'Circulatory system', variants: ['cardiovascular system'] },
+  { label: 'capillary', title: 'Capillary' },
+  { label: 'respiratory system', title: 'Respiratory system' },
+  { label: 'alveolus', title: 'Pulmonary alveolus', variants: ['alveoli'] },
+  { label: 'lung', title: 'Lung', variants: ['lungs'] },
+  // Renal / digestive
+  { label: 'nephron', title: 'Nephron' },
+  { label: 'kidney', title: 'Kidney' },
+  { label: 'digestive system', title: 'Human digestive system' },
+  { label: 'small intestine', title: 'Small intestine' },
+  { label: 'liver', title: 'Liver' },
+  // Nervous / muscle / sensory
+  { label: 'neuron', title: 'Neuron' },
+  { label: 'action potential', title: 'Action potential' },
+  { label: 'synapse', title: 'Chemical synapse', variants: ['chemical synapse'] },
+  { label: 'reflex arc', title: 'Reflex arc' },
+  { label: 'brain', title: 'Human brain' },
+  { label: 'sarcomere', title: 'Sarcomere' },
+  { label: 'skeletal muscle', title: 'Skeletal muscle' },
+  { label: 'eye', title: 'Human eye' },
+  { label: 'ear', title: 'Ear' },
+  // Immune / endocrine
+  { label: 'antibody', title: 'Antibody' },
+  { label: 'lymphatic system', title: 'Lymphatic system' },
+  { label: 'endocrine system', title: 'Endocrine system' },
+  // Cell / molecular
+  { label: 'cell membrane', title: 'Cell membrane', variants: ['plasma membrane'] },
+  { label: 'lipid bilayer', title: 'Lipid bilayer', variants: ['phospholipid bilayer'] },
+  { label: 'mitochondrion', title: 'Mitochondrion', variants: ['mitochondria'] },
+  { label: 'ribosome', title: 'Ribosome' },
+  { label: 'nucleus', title: 'Cell nucleus' },
+  { label: 'endoplasmic reticulum', title: 'Endoplasmic reticulum' },
+  { label: 'Golgi apparatus', title: 'Golgi apparatus' },
+  { label: 'cell cycle', title: 'Cell cycle' },
+  { label: 'mitosis', title: 'Mitosis' },
+  { label: 'meiosis', title: 'Meiosis' },
+  { label: 'DNA', title: 'DNA', acronym: true },
+  { label: 'DNA replication', title: 'DNA replication' },
+  { label: 'transcription', title: 'Transcription (biology)' },
+  { label: 'translation', title: 'Translation (biology)' },
+  { label: 'nucleotide', title: 'Nucleotide' },
+  // Biochem pathways / structure
+  { label: 'Krebs cycle', title: 'Citric acid cycle', variants: ['citric acid cycle', 'TCA cycle', 'tricarboxylic acid cycle'] },
+  { label: 'glycolysis', title: 'Glycolysis' },
+  { label: 'gluconeogenesis', title: 'Gluconeogenesis' },
+  { label: 'electron transport chain', title: 'Electron transport chain' },
+  { label: 'oxidative phosphorylation', title: 'Oxidative phosphorylation' },
+  { label: 'ATP synthase', title: 'ATP synthase' },
+  { label: 'amino acid', title: 'Amino acid' },
+  { label: 'alpha helix', title: 'Alpha helix' },
+  { label: 'beta sheet', title: 'Beta sheet' },
+  { label: 'enzyme', title: 'Enzyme' },
+  { label: 'Michaelis-Menten kinetics', title: 'Michaelis–Menten kinetics', variants: ['Michaelis-Menten'] },
+  { label: 'Lineweaver-Burk plot', title: 'Lineweaver–Burk plot', variants: ['Lineweaver-Burk'] },
+];
+
+// Build the figure lookup + matcher pattern once at module load (mirrors the
+// molecule table builder).
+const { _figRegex, _figLookup, _figAcronymExact } = (() => {
+  const lookup = new Map();       // normalized surface → { label, title }
+  const acronymExact = new Set(); // case-sensitive surface form for acronyms
+  const allSurface = [];
+  for (const f of FIGURES) {
+    const allNames = [f.label, ...(f.variants || [])];
+    for (const surface of allNames) {
+      allSurface.push(surface);
+      const entry = { label: f.label, title: f.title };
+      if (f.acronym) { acronymExact.add(surface); lookup.set(surface, entry); }
+      else lookup.set(surface.toLowerCase(), entry);
+    }
+  }
+  allSurface.sort((a, b) => b.length - a.length); // longest first
+  const pattern = '\\b(?:' + allSurface.map(escapeRegex).join('|') + ')\\b';
+  return {
+    _figRegex: new RegExp(pattern, 'gi'),
+    _figLookup: lookup,
+    _figAcronymExact: acronymExact,
+  };
+})();
+
+// Resolve a free-form figure string (from a lesson's `figures` array) to a
+// { title, label }. Known dictionary terms map to their curated article;
+// anything else is treated as a literal Wikipedia article title so the
+// generator can reference any figure by title.
+function resolveFigure(str) {
+  if (typeof str !== 'string' || !str.trim()) return null;
+  const t = str.trim();
+  if (_figLookup.has(t)) { const e = _figLookup.get(t); return { title: e.title, label: t }; }
+  const lc = t.toLowerCase();
+  if (_figLookup.has(lc)) { const e = _figLookup.get(lc); return { title: e.title, label: t }; }
+  return { title: t, label: t };
+}
+
+// Segment text into plain + figure spans (explicit-dictionary pass only).
+function parseFiguresInText(text) {
+  if (typeof text !== 'string' || !text) return [{ type: 'text', value: text || '' }];
+  const matches = [];
+  _figRegex.lastIndex = 0;
+  let mm;
+  while ((mm = _figRegex.exec(text)) !== null) {
+    const surface = mm[0];
+    const idx = mm.index;
+    let entry = null;
+    if (_figLookup.has(surface)) entry = _figLookup.get(surface);
+    else {
+      const lc = surface.toLowerCase();
+      if (_figLookup.has(lc)) {
+        const cand = _figLookup.get(lc);
+        // Acronym entries (DNA) only match their exact uppercase surface.
+        if (!_figAcronymExact.has(cand.label) || cand.label === surface) entry = cand;
+      }
+    }
+    if (entry) matches.push({ start: idx, end: idx + surface.length, value: surface, entry });
+  }
+  const out = [];
+  let last = 0;
+  for (const m of matches) {
+    if (m.start < last) continue;
+    if (m.start > last) out.push({ type: 'text', value: text.slice(last, m.start) });
+    out.push({ type: 'fig', value: m.value, entry: m.entry });
+    last = m.end;
+  }
+  if (last < text.length) out.push({ type: 'text', value: text.slice(last) });
+  if (!out.length) out.push({ type: 'text', value: text });
+  return out;
+}
+
+const FigureViewerCtx = createContext({ open: () => {}, close: () => {} });
+function useFigureViewer() { return useContext(FigureViewerCtx); }
+
+function FigureProvider({ children }) {
+  const [target, setTarget] = useState(null); // { title, label } or null
+  const ctx = useMemo(() => ({
+    open: (title, label) => setTarget(title ? { title, label: label || title } : null),
+    close: () => setTarget(null),
+  }), []);
+  return (
+    <FigureViewerCtx.Provider value={ctx}>
+      {children}
+      {target && <FigureModal title={target.title} label={target.label} onClose={() => setTarget(null)} />}
+    </FigureViewerCtx.Provider>
+  );
+}
+
+function FigureModal({ title, label, onClose }) {
+  const [state, setState] = useState({ loading: true });
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = prev; };
+  }, []);
+  useEffect(() => {
+    let alive = true;
+    setState({ loading: true });
+    const pageUrl = `https://en.wikipedia.org/wiki/${encodeURIComponent(title.replace(/ /g, '_'))}`;
+    const api = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title.replace(/ /g, '_'))}`;
+    fetch(api)
+      .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
+      .then((j) => {
+        if (!alive) return;
+        const img = (j.originalimage && j.originalimage.source) || (j.thumbnail && j.thumbnail.source) || null;
+        setState({ loading: false, img, extract: j.extract, pageUrl: (j.content_urls && j.content_urls.desktop && j.content_urls.desktop.page) || pageUrl });
+      })
+      .catch(() => { if (alive) setState({ loading: false, errored: true, pageUrl }); });
+    return () => { alive = false; };
+  }, [title]);
+  return (
+    <div
+      className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-sm flex items-center justify-center p-3"
+      onClick={onClose}
+    >
+      <div
+        className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-5 max-w-lg w-full max-h-[88vh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between gap-3 mb-3">
+          <div className="min-w-0">
+            <div className="text-[10px] uppercase tracking-wide text-[var(--text-muted)]">Figure</div>
+            <div className="text-base sm:text-lg font-semibold text-[var(--text-strong)] truncate" title={label}>{label}</div>
+            {title !== label && <div className="text-[11px] text-[var(--text-faint)] mt-0.5">Wikipedia: {title}</div>}
+          </div>
+          <button onClick={onClose} className="shrink-0 text-2xl leading-none text-[var(--text-muted)] hover:text-[var(--text-strong)]" aria-label="Close">×</button>
+        </div>
+        {state.loading ? (
+          <div className="text-sm text-[var(--text-muted)] bg-[var(--bg-elev-soft)] border border-dashed border-[var(--border-soft)] rounded-lg px-3 py-6 text-center">Loading figure…</div>
+        ) : state.img ? (
+          <div className="bg-white rounded-lg p-3 flex items-center justify-center">
+            <img src={state.img} alt={label} className="max-w-full h-auto" style={{ maxHeight: '60vh' }} />
+          </div>
+        ) : (
+          <div className="text-sm text-[var(--text-muted)] bg-[var(--bg-elev-soft)] border border-dashed border-[var(--border-soft)] rounded-lg px-3 py-4 text-center">
+            No figure image found for "{title}".
+          </div>
+        )}
+        {state.extract && (
+          <p className="text-xs text-[var(--text-muted)] leading-relaxed mt-3">{state.extract}</p>
+        )}
+        <div className="mt-3 flex items-center justify-between gap-3">
+          <span className="text-[10px] text-[var(--text-faint)]">Image via Wikipedia (CC BY-SA)</span>
+          <a href={state.pageUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-[var(--accent-text)] hover:underline">Open on Wikipedia ↗</a>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Inline renderer: wraps known figure terms in clickable spans that open the
+// figure modal. Mirrors MoleculeText. Yields a single <span>; safe in <p>/<li>.
+function FigureText({ text, className }) {
+  const { open } = useFigureViewer();
+  if (typeof text !== 'string' || !text) return text || null;
+  const parts = parseFiguresInText(text);
+  if (parts.length === 1 && parts[0].type === 'text') {
+    return className ? <span className={className}>{text}</span> : <>{text}</>;
+  }
+  return (
+    <span className={className}>
+      {parts.map((p, i) => {
+        if (p.type === 'text') return <React.Fragment key={i}>{p.value}</React.Fragment>;
+        return (
+          <span
+            key={i}
+            role="button"
+            tabIndex={0}
+            onPointerDown={(e) => { e.stopPropagation(); e.preventDefault(); open(p.entry.title, p.entry.label); }}
+            onClick={(e) => { e.stopPropagation(); e.preventDefault(); open(p.entry.title, p.entry.label); }}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); open(p.entry.title, p.entry.label); } }}
+            className="text-[var(--accent-text)] underline decoration-dotted decoration-[var(--accent-border)] underline-offset-2 cursor-pointer hover:bg-[var(--accent-soft)] rounded px-0.5"
+            style={{ pointerEvents: 'auto' }}
+            title={`View figure: ${p.entry.label}`}
+          >
+            {p.value}
+          </span>
+        );
+      })}
+    </span>
+  );
+}
+
 // ---------- quiz helpers: calculator + periodic table ----------
 
 // Safe-ish expression evaluator. Input is allowed to contain digits, the
@@ -9472,6 +9724,7 @@ function LessonDrillCard({ term, definition }) {
 // When `locked`, the section is gated behind an earlier checkpoint and cannot
 // be opened until that checkpoint is passed.
 function LessonSection({ sec, status, onQuiz, locked }) {
+  const { open: openFigure } = useFigureViewer();
   const [open, setOpen] = useState(false);
   const [matchRound, setMatchRound] = useState(0); // 0 = hidden; bump to (re)start
   const paras = (sec.teach || '').split(/\n\n+/).map((p) => p.trim()).filter(Boolean);
@@ -9481,6 +9734,7 @@ function LessonSection({ sec, status, onQuiz, locked }) {
   // is never part of the checkpoint/final exams, which draw from the MC pool.
   const matchTerms = drills.filter((d) => d && d.term && d.definition).slice(0, 5);
   const examples = Array.isArray(sec.worked_examples) ? sec.worked_examples : [];
+  const figures = (Array.isArray(sec.figures) ? sec.figures : []).map(resolveFigure).filter(Boolean);
   const nChecks = Array.isArray(sec.check_ids) ? sec.check_ids.length : 0;
 
   if (locked) {
@@ -9512,8 +9766,26 @@ function LessonSection({ sec, status, onQuiz, locked }) {
       {open && (
         <div className="mt-3 space-y-3">
           {paras.map((p, i) => (
-            <p key={i} className="text-sm text-[var(--text-muted)] leading-relaxed">{p}</p>
+            <p key={i} className="text-sm text-[var(--text-muted)] leading-relaxed"><FigureText text={p} /></p>
           ))}
+
+          {figures.length > 0 && (
+            <div className="space-y-1.5">
+              <div className="text-xs uppercase tracking-wide text-[var(--text-faint)]">Figures</div>
+              <div className="flex flex-wrap gap-2">
+                {figures.map((fig, i) => (
+                  <button
+                    key={i}
+                    onClick={() => openFigure(fig.title, fig.label)}
+                    className="text-xs px-3 py-1.5 rounded-full border border-[var(--border)] text-[var(--text)] hover:bg-[var(--bg-hover)]"
+                    title={`View figure: ${fig.label}`}
+                  >
+                    🖼 {fig.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           {examples.length > 0 && (
             <div className="space-y-2">
@@ -13184,7 +13456,9 @@ root.render(
   <ErrorBoundary>
     <AppProvider>
       <MoleculeProvider>
-        <Root />
+        <FigureProvider>
+          <Root />
+        </FigureProvider>
       </MoleculeProvider>
     </AppProvider>
   </ErrorBoundary>

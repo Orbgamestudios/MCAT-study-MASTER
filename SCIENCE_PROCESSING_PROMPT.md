@@ -114,7 +114,10 @@ Two-part part shape:
 - **O-Chem**: wrong stereochemistry, wrong regio (Markovnikov/anti), wrong leaving group, swapped SN1/SN2
 
 ## Structure/diagram rule
-Cannot embed images. Use IUPAC names, condensed formulas (`CH3CH(OH)CH2CH3`), or text descriptions.
+Question/answer text cannot embed images — use IUPAC names, condensed formulas (`CH3CH(OH)CH2CH3`), or text descriptions. Two viewers render images by name automatically: molecule names link to their PubChem structure, and (in lessons) figure references load the lead image of the named **English Wikipedia article**. So you never paste an image — you name the molecule or the article and the app fetches it.
+
+### Optional `figures` in extraction
+You may add a top-level `"figures"` array to the extraction object: exact English Wikipedia article titles for the chapter's highest-yield diagrams (e.g. `"Nephron"`, `"Citric acid cycle"`, `"Action potential"`). The lesson generator (see LESSON_GENERATION_PROMPT.md) distributes these to the relevant sections, where they render as clickable thumbnails. Only include diagrams a real Wikipedia article illustrates well; omit for purely quantitative chapters.
 
 ## ⚠ Character encoding rules (critical — app renders UTF-8 as Windows-1252)
 The quiz app renders question text through a narrow Unicode path. Violations produce garbled gibberish (e.g. `CHâ,fCHâ,,` instead of `CH3CH2`).
