@@ -9896,13 +9896,13 @@ function HomeView({ onGoToStudy }) {
     <div className="space-y-4">
       <BirdHero username={username} quote={quote} />
 
-      <DailyExamCard onGoToStudy={onGoToStudy} />
-
       <DailyCarsCard />
 
       <DailyConnectionsCard />
 
       <HomeActivity />
+
+      <DailyExamCard onGoToStudy={onGoToStudy} />
     </div>
   );
 }
@@ -10240,7 +10240,7 @@ function DailyExamCard({ onGoToStudy }) {
 
   if (state === 'generating') return card(
     <div>
-      <h2 className="font-semibold text-[var(--text-strong)]">Daily exam</h2>
+      <h2 className="font-semibold text-[var(--text-strong)]">Today's MCAT</h2>
       <p className="text-sm text-[var(--text-muted)] mt-1">Writing today's {DAILY_EXAM_COUNT} questions with Gemini — about 20 seconds…</p>
     </div>
   );
@@ -10248,7 +10248,7 @@ function DailyExamCard({ onGoToStudy }) {
   if (state === 'error') return card(
     <div>
       <div className="flex items-center justify-between gap-3">
-        <h2 className="font-semibold text-[var(--text-strong)]">Daily exam</h2>
+        <h2 className="font-semibold text-[var(--text-strong)]">Today's MCAT</h2>
         <button onClick={generate} className="shrink-0 text-xs px-3 py-1.5 border border-[var(--border)] rounded hover:bg-[var(--bg-hover)]">Retry</button>
       </div>
       <p className="text-sm text-[var(--danger-text)] mt-1 break-words whitespace-pre-wrap">{err}</p>
@@ -10257,7 +10257,7 @@ function DailyExamCard({ onGoToStudy }) {
 
   if (state === 'unavailable') return card(
     <div>
-      <h2 className="font-semibold text-[var(--text-strong)]">Daily exam</h2>
+      <h2 className="font-semibold text-[var(--text-strong)]">Today's MCAT</h2>
       <p className="text-sm text-[var(--text-muted)] mt-1">
         Add your Gemini API key in Settings to get a fresh {DAILY_EXAM_COUNT}-question MCAT-style exam each day, written from the chapters you've mastered.
       </p>
@@ -10270,7 +10270,7 @@ function DailyExamCard({ onGoToStudy }) {
       <>
         <div>
           <div className="flex items-center gap-2">
-            <h2 className="font-semibold text-[var(--text-strong)]">Daily exam</h2>
+            <h2 className="font-semibold text-[var(--text-strong)]">Today's MCAT</h2>
             {!allDone && <span className="w-2 h-2 rounded-full bg-[var(--danger-border)]" />}
           </div>
           <p className="text-sm text-[var(--text-muted)]">
@@ -10292,7 +10292,7 @@ function DailyExamCard({ onGoToStudy }) {
   // idle — has a key but no set generated yet (or no mastered chapters).
   if (!mastered.length) return card(
     <div>
-      <h2 className="font-semibold text-[var(--text-strong)]">Daily exam</h2>
+      <h2 className="font-semibold text-[var(--text-strong)]">Today's MCAT</h2>
       <p className="text-sm text-[var(--text-muted)] mt-1">
         Master a lesson first — pass a chapter's final exam (100%) in the Lessons tab and your daily {DAILY_EXAM_COUNT}-question exam will draw from it. Master more and the pool grows.
       </p>
@@ -10302,7 +10302,7 @@ function DailyExamCard({ onGoToStudy }) {
   return card((
     <>
       <div>
-        <h2 className="font-semibold text-[var(--text-strong)]">Daily exam</h2>
+        <h2 className="font-semibold text-[var(--text-strong)]">Today's MCAT</h2>
         <p className="text-sm text-[var(--text-muted)]">
           A fresh {DAILY_EXAM_COUNT}-question MCAT-style exam, written by Gemini from your {mastered.length} mastered chapter{mastered.length === 1 ? '' : 's'}.
         </p>
