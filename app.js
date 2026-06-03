@@ -30,6 +30,7 @@ const KEYS = {
   autoDownloadAll: 'mcat:autoDownloadAll', // boolean — download every cloud chapter that isn't local yet
   contributorMode: 'mcat:contributorMode', // boolean — show upload/publish/export panels in Library
   tropicalBg: 'mcat:tropicalBg',    // boolean — tropical island background
+  bgBlur:     'mcat:bgBlur',        // 0-100 % — blur applied to the dynamic background canvas
   bankSeen: 'mcat:bankSeen', // timestamp — last time the user reviewed the Bank tab
   cars: 'mcat:cars', // { [date]: { score, total, completed_at } } — daily CARS results
   connectionsResults: 'mcat:connectionsResults', // { [date]: { solved, mistakes, completed_at } }
@@ -4542,6 +4543,16 @@ function AppProvider({ children }) {
     storage.set(KEYS.tropicalBg, !!v);
     setTropicalBgState(!!v);
   }, []);
+  // 0..100 % blur over the dynamic background canvas. 100% maps to a 32px blur.
+  const [bgBlur, setBgBlurState] = useState(() => {
+    const v = storage.get(KEYS.bgBlur, 0);
+    return typeof v === 'number' && v >= 0 && v <= 100 ? v : 0;
+  });
+  const setBgBlur = useCallback((v) => {
+    const clamped = Math.min(100, Math.max(0, Math.round(Number(v) || 0)));
+    storage.set(KEYS.bgBlur, clamped);
+    setBgBlurState(clamped);
+  }, []);
   const [volume, setVolumeState] = useState(() => {
     const v = storage.get(KEYS.volume, 1);
     return typeof v === 'number' && v >= 0 && v <= 1 ? v : 1;
@@ -4605,6 +4616,13 @@ function AppProvider({ children }) {
     }
     return stopDynamicBg;
   }, [tropicalBg, palette, mode]);
+
+  // Live-apply the blur slider to whichever canvas is currently mounted.
+  useEffect(() => {
+    const el = document.getElementById('mc-dyn-bg');
+    if (!el) return;
+    el.style.filter = bgBlur > 0 ? `blur(${(bgBlur / 100) * 32}px)` : '';
+  }, [bgBlur, tropicalBg, palette, mode]);
 
   // One-time cleanup: drop the temporary drag-position key now that the bird
   // is anchored to the speech bubble's bottom.
@@ -4996,6 +5014,7 @@ function AppProvider({ children }) {
       autoDownloadAll, setAutoDownloadAll,
       contributorMode, setContributorMode,
       tropicalBg, setTropicalBg,
+      bgBlur, setBgBlur,
     }),
     [apiKey, setApiKey, files, setFiles, extractions, setExtraction, questions, setQuestionsFor,
      attempts, addAttempt, updateLastAttempt, clearAttempts, eraseStatsFor, pullAttempts, staticBank, useStaticBank, readOnly,
@@ -5006,7 +5025,8 @@ function AppProvider({ children }) {
      autoDownloadChapters, setAutoDownloadChapters,
      autoDownloadAll, setAutoDownloadAll,
      contributorMode, setContributorMode,
-     tropicalBg, setTropicalBg]
+     tropicalBg, setTropicalBg,
+     bgBlur, setBgBlur]
   );
   return <AppCtx.Provider value={value}>{children}</AppCtx.Provider>;
 }
@@ -11543,7 +11563,7 @@ function StatsView() {
 
 // ---------- settings ----------
 function SettingsPanel({ onClose }) {
-  const { palette, mode, setPalette, setMode, apiKey, setApiKey, client, session, pendingSync, syncBusy, syncError, flushSync, volume, setVolume, autoDownloadChapters, setAutoDownloadChapters, autoDownloadAll, setAutoDownloadAll, contributorMode, setContributorMode, tropicalBg, setTropicalBg, files } = useApp();
+  const { palette, mode, setPalette, setMode, apiKey, setApiKey, client, session, pendingSync, syncBusy, syncError, flushSync, volume, setVolume, autoDownloadChapters, setAutoDownloadChapters, autoDownloadAll, setAutoDownloadAll, contributorMode, setContributorMode, tropicalBg, setTropicalBg, bgBlur, setBgBlur, files } = useApp();
   const hasDownloadedChapters = files.some((f) => f.chapter_id);
   const [keyVal, setKeyVal] = useState(apiKey || '');
   const [keyShow, setKeyShow] = useState(false);
@@ -11638,6 +11658,24 @@ function SettingsPanel({ onClose }) {
             </div>
             <input type="checkbox" checked={tropicalBg} onChange={(e) => setTropicalBg(e.target.checked)} className="w-4 h-4 shrink-0" />
           </label>
+          {tropicalBg && (
+            <div className="bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg px-3 py-2.5">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-[var(--text)]">Background blur</span>
+                <span className="text-[var(--text-muted)] tabular-nums">{bgBlur}%</span>
+              </div>
+              <input
+                type="range"
+                min="0"
+                max="100"
+                step="1"
+                value={bgBlur}
+                onChange={(e) => setBgBlur(parseFloat(e.target.value))}
+                className="w-full mt-2 accent-[var(--accent)]"
+              />
+              <div className="text-[11px] text-[var(--text-faint)] mt-1">Softens the scene without dimming it. 0% sharp, 100% dreamy.</div>
+            </div>
+          )}
         </div>
       </div>
 
