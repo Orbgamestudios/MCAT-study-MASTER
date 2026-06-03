@@ -9720,26 +9720,16 @@ function DailyExamCard({ onGoToStudy }) {
   const [state, setState] = useState(cached ? 'ready' : 'idle'); // idle | generating | ready | unavailable | error
   const [err, setErr] = useState('');
 
-  // Chapters the student has mastered: enough reps + high accuracy, and the
-  // chapter still has extraction material to generate from.
+  // Chapters the student has mastered in the Lessons tab — i.e. passed the lesson's
+  // final exam 100% (the lessonGates store). The daily exam can only draw from these;
+  // master more lessons and the pool grows. A chapter also needs extraction material
+  // to generate from.
   const mastered = useMemo(() => {
-    const byChapter = {};
-    for (const a of attempts) {
-      const k = a.file_id;
-      if (!k) continue;
-      if (!byChapter[k]) byChapter[k] = { correct: 0, total: 0 };
-      byChapter[k].total++;
-      if (a.correct) byChapter[k].correct++;
-    }
-    const masteredIds = new Set(
-      Object.entries(byChapter)
-        .filter(([, s]) => s.total >= 5 && s.correct / s.total >= 0.7)
-        .map(([k]) => k)
-    );
+    const g = storage.get(KEYS.lessonGates, {}) || {};
     return files
-      .filter((f) => masteredIds.has(f.file_id) && extractions[f.file_id])
+      .filter((f) => f.chapter_id && g[f.chapter_id]?.mastered && extractions[f.file_id])
       .map((f) => ({ subject: f.subject, chapter: f.chapter, extraction: extractions[f.file_id] }));
-  }, [files, extractions, attempts]);
+  }, [files, extractions]);
 
   // Items the runner can consume, wrapped to the {id, mode, q, file_id, chapter, subject} shape.
   const items = useMemo(() => {
@@ -9858,7 +9848,7 @@ function DailyExamCard({ onGoToStudy }) {
     <div>
       <h2 className="font-semibold text-[var(--text-strong)]">Daily exam</h2>
       <p className="text-sm text-[var(--text-muted)] mt-1">
-        Master a chapter first — answer its questions accurately in the Library tab and your daily {DAILY_EXAM_COUNT}-question exam will appear here.
+        Master a lesson first — pass a chapter's final exam (100%) in the Lessons tab and your daily {DAILY_EXAM_COUNT}-question exam will draw from it. Master more and the pool grows.
       </p>
     </div>
   );
