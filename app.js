@@ -3640,12 +3640,11 @@ function makeClient(getKey) {
             choices: { type: 'ARRAY', items: { type: 'STRING' } },
             correct_index: { type: 'INTEGER' },
             explanation: { type: 'STRING' },
-            subject: { type: 'STRING' },
-            chapter: { type: 'STRING' },
+            source_chapter: { type: 'INTEGER' },
             content_category: { type: 'STRING' },
             sirs_skill: { type: 'INTEGER' },
           },
-          required: ['question', 'choices', 'correct_index', 'explanation', 'subject', 'chapter'],
+          required: ['question', 'choices', 'correct_index', 'explanation', 'source_chapter'],
         },
       },
     },
@@ -3671,9 +3670,10 @@ function makeClient(getKey) {
         'Distractors must be plausible and functional: common misconceptions, right-concept-wrong-scope, ' +
         'reversed relationships, too-extreme statements, or correct-for-a-different-condition — never obviously ' +
         'wrong. All four choices match in length and register so the answer never stands out. ' +
-        'TAGGING: set `subject` and `chapter` to the EXACT chapter the question is drawn from (copy the labels ' +
-        'as given). Best-effort set `content_category` (the AAMC content category, e.g. "1A", "5E") and ' +
-        '`sirs_skill` (1-4) when confident. ' +
+        'TAGGING: set `source_chapter` to the NUMBER of the chapter block the question is drawn from — i.e. the ' +
+        'integer N in the "### Chapter N:" header above the material you used. This MUST be accurate: a question ' +
+        'must only test content found in that exact chapter block. Best-effort set `content_category` (the AAMC ' +
+        'content category, e.g. "1A", "5E") and `sirs_skill` (1-4) when confident. ' +
         'Explanations are 1-2 sentences and justify the correct answer (and ideally why the most tempting ' +
         'distractor is wrong). Do not duplicate questions. Never ask anything not directly supported by the ' +
         'supplied chapter material.\n\n' +
@@ -3684,7 +3684,7 @@ function makeClient(getKey) {
         parts: [{ text:
           `Mastered chapters (${(materials || []).length}):\n\n${blocks}\n\n` +
           `Write today's ${n}-question MCAT-style mini-exam, drawing proportionally across these chapters and ` +
-          `tagging each question with its source subject + chapter.`,
+          `setting each question's source_chapter to the "### Chapter N:" number it came from.`,
         }],
       }],
       responseSchema: DAILY_EXAM_SCHEMA,
@@ -3693,11 +3693,24 @@ function makeClient(getKey) {
     // Scan for formatting errors (wrong choice count, leaked field names like a 5th
     // "correct_index" choice, out-of-range correct_index, dupes) and drop bad items.
     const { questions } = validateMCQuestions(data.questions);
-    return questions.map((q, i) => ({
-      id: `daily_${Date.now()}_${i}`,
-      mode: 'mc',
-      ...q,
-    }));
+    // Don't trust the model to echo subject/chapter text — it drifts. Instead it tells
+    // us which numbered chapter block each question came from, and we apply the
+    // authoritative subject/chapter from our own materials list. Drop any question whose
+    // source_chapter doesn't map to a supplied chapter.
+    return questions.reduce((acc, q) => {
+      const idx = Number(q.source_chapter) - 1;
+      const src = materials[idx];
+      if (!src) return acc; // hallucinated / out-of-range chapter → drop
+      const { source_chapter, ...rest } = q;
+      acc.push({
+        id: `daily_${Date.now()}_${acc.length}`,
+        mode: 'mc',
+        ...rest,
+        subject: src.subject || '',
+        chapter: src.chapter || '',
+      });
+      return acc;
+    }, []);
   }
 
   // ---- short answer generation ----
