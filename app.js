@@ -2599,6 +2599,70 @@ function stripChoiceLabel(s, index) {
   return cleaned;
 }
 
+// Schema field names that sometimes leak into the `choices` array when the model
+// mangles its JSON output (e.g. a 5th "choice" literally named "correct_index").
+const MC_LEAKED_KEYS = new Set([
+  'correct_index', 'explanation', 'question', 'subject', 'chapter',
+  'content_category', 'sirs_skill', 'choices', 'answer', 'category', 'subtype',
+]);
+
+// Scan a generated MC question for formatting errors and repair or reject it.
+// Returns a clean question ({ ...q, choices, correct_index }) or null if it can't
+// be salvaged into a valid 4-choice single-answer item. Mutations are non-destructive.
+function validateMCQuestion(q) {
+  if (!q || typeof q !== 'object') return null;
+  const question = sanitizeText(q.question);
+  if (!question) return null;
+
+  let choices = Array.isArray(q.choices) ? q.choices : [];
+  // Track which originals survive so we can remap correct_index after filtering.
+  const kept = [];
+  choices.forEach((c, i) => {
+    if (typeof c !== 'string') return;
+    const t = sanitizeText(c);
+    if (!t) return;                                   // drop empty/blank
+    if (MC_LEAKED_KEYS.has(t.toLowerCase())) return;  // drop leaked field-name "choices"
+    kept.push({ text: t, origIdx: i });
+  });
+
+  // Deduplicate exact-duplicate choices (another common malformed-output symptom).
+  const seen = new Set();
+  const deduped = kept.filter((k) => {
+    const key = k.text.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  if (deduped.length !== 4) return null; // not a well-formed 4-choice item
+
+  // Remap correct_index through the surviving choices. If the keyed answer was one
+  // of the dropped entries, the item is unsalvageable.
+  let ci = Number(q.correct_index);
+  if (!Number.isInteger(ci)) return null;
+  const newCi = deduped.findIndex((k) => k.origIdx === ci);
+  if (newCi < 0) return null;
+
+  return {
+    ...q,
+    question,
+    choices: deduped.map((k) => k.text),
+    correct_index: newCi,
+    explanation: sanitizeText(q.explanation) || '',
+  };
+}
+
+// Run validateMCQuestion across an array; returns { questions, dropped }.
+function validateMCQuestions(arr) {
+  const questions = [];
+  let dropped = 0;
+  for (const q of (Array.isArray(arr) ? arr : [])) {
+    const ok = validateMCQuestion(q);
+    if (ok) questions.push(ok); else dropped++;
+  }
+  return { questions, dropped };
+}
+
 // Local cache of downloaded CARS payloads so a day opens instantly / offline.
 function getCarsCache() { try { return JSON.parse(localStorage.getItem('mcat:carsCache')) || {}; } catch { return {}; } }
 function getCarsCachePayload(date) { return getCarsCache()[date] || null; }
@@ -3550,8 +3614,9 @@ function makeClient(getKey) {
       responseSchema: MC_SCHEMA,
     });
     const data = extractJson(resp);
-    // tag with ids for tracking
-    return (data.questions || []).map((q, i) => ({
+    // Scan for formatting errors before tagging (see validateMCQuestions).
+    const { questions } = validateMCQuestions(data.questions);
+    return questions.map((q, i) => ({
       id: `mc_${Date.now()}_${i}`,
       mode: 'mc',
       ...q,
@@ -3625,7 +3690,10 @@ function makeClient(getKey) {
       responseSchema: DAILY_EXAM_SCHEMA,
     });
     const data = extractJson(resp);
-    return (data.questions || []).map((q, i) => ({
+    // Scan for formatting errors (wrong choice count, leaked field names like a 5th
+    // "correct_index" choice, out-of-range correct_index, dupes) and drop bad items.
+    const { questions } = validateMCQuestions(data.questions);
+    return questions.map((q, i) => ({
       id: `daily_${Date.now()}_${i}`,
       mode: 'mc',
       ...q,
