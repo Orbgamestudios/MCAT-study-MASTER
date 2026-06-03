@@ -4418,6 +4418,19 @@ function makeApiClient(getToken) {
     deleteMyBank: () => call('/bank', { method: 'DELETE', auth: true }),
     listBanks: () => call('/banks'),
 
+    // ---- shared exam bank (keyed by section/subject/chapter) ----
+    postExamBank: (questions) => call('/exam-bank', { method: 'POST', body: { questions }, auth: true }),
+    examBankStats: () => call('/exam-bank'),
+    examBankQuestions: ({ section, subject, chapter, limit } = {}) => {
+      const p = new URLSearchParams();
+      if (section) p.set('section', section);
+      if (subject) p.set('subject', subject);
+      if (chapter) p.set('chapter', chapter);
+      if (limit) p.set('limit', String(limit));
+      const qs = p.toString();
+      return call(`/exam-bank/questions${qs ? `?${qs}` : ''}`);
+    },
+
     // ---- collaborative chapters ----
     listChapters: () => call('/chapters'),
     getChapter: (id) => call(`/chapters/${encodeURIComponent(id)}`),
@@ -9793,8 +9806,26 @@ function HomeView({ onGoToStudy }) {
 // QuizRunner so attempts record against each question's source chapter — which also
 // seeds the proportional question bank over time.
 const DAILY_EXAM_COUNT = 15;
+
+// Best-effort map from a chapter's subject to its MCAT section, used to key the
+// shared exam bank. Biochemistry spans B/B and C/P on the real exam; we file it
+// under B/B by default. Returns null for unrecognized subjects.
+function sectionForSubject(subject) {
+  const s = (subject || '').toLowerCase();
+  if (/cars|critical analysis/.test(s)) return 'CARS';
+  if (/psych/.test(s)) return 'P/S';
+  if (/soc/.test(s)) return 'P/S';
+  if (/physics/.test(s)) return 'C/P';
+  if (/organic|orgo/.test(s)) return 'C/P';
+  if (/general chem|gen chem|inorganic/.test(s)) return 'C/P';
+  if (/biochem/.test(s)) return 'B/B';
+  if (/chemistry|chem\b/.test(s)) return 'C/P';
+  if (/bio/.test(s)) return 'B/B';
+  return null;
+}
+
 function DailyExamCard({ onGoToStudy }) {
-  const { client, apiKey, files, questions, extractions, attempts } = useApp();
+  const { client, api, session, apiKey, files, questions, extractions, attempts } = useApp();
   const today = todayStr();
   const cached = getDailyExamPayload(today);
   const [payload, setPayload] = useState(cached);
@@ -9856,6 +9887,22 @@ function DailyExamCard({ onGoToStudy }) {
       setDailyExamPayload(today, p);
       setPayload(p);
       setState('ready');
+      // Contribute to the shared bank, keyed by section/subject/chapter. Fire-and-forget:
+      // the bank growing must never block the student starting their exam. Server dedupes.
+      if (session) {
+        const contribution = questionsOut.map((q) => ({
+          section: sectionForSubject(q.subject),
+          subject: q.subject,
+          chapter: q.chapter,
+          content_category: q.content_category,
+          sirs_skill: q.sirs_skill,
+          question: q.question,
+          choices: q.choices,
+          correct_index: q.correct_index,
+          explanation: q.explanation,
+        }));
+        api.postExamBank(contribution).catch(() => {});
+      }
     } catch (e) {
       setErr(e.message || String(e));
       setState('error');
