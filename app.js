@@ -7944,15 +7944,19 @@ function QuizRunner({ items, onExit, onPause }) {
     if (isInterim) return; // two-part items emit interim results between parts; only score the final
     if (answered) return;
     setAnswered(true);
-    addAttempt({
-      question_id: item.id,
-      mode: item.mode,
-      file_id: item.file_id,
-      chapter: item.chapter,
-      subject: item.subject,
-      correct,
-      user_answer,
-    });
+    // Study-only items (e.g. in-lesson term matching) are part of the quiz flow
+    // but record no attempt, so they never affect mastery or chapter stats.
+    if (!item.studyOnly) {
+      addAttempt({
+        question_id: item.id,
+        mode: item.mode,
+        file_id: item.file_id,
+        chapter: item.chapter,
+        subject: item.subject,
+        correct,
+        user_answer,
+      });
+    }
     setResults((r) => [...r, { item, correct, user_answer }]);
   };
 
@@ -9599,39 +9603,78 @@ function HomeView({ onGoToStudy }) {
   // Quote rotates once per page load. useMemo on [] freezes it for the session.
   const quote = useMemo(() => QUOTES[Math.floor(Math.random() * QUOTES.length)], []);
 
-  // Pick 10 questions: missed ones from chapters with the lowest accuracy.
-  const suggested = useMemo(() => {
-    // Per-chapter accuracy from attempts.
+  // Daily 30 — a date-stable mini exam (the "Mode A / Daily Exam" idea). Questions
+  // are drawn from chapters the user has been mastering, with spaced-repetition
+  // priority: past misses first, then never-seen items, then review. The set is
+  // frozen for the calendar day via a date-seeded shuffle, so reloading doesn't
+  // reshuffle it. (Bank-generated proportional exams will come later; for now we
+  // assemble from the existing cached question bank.)
+  const DAILY_COUNT = 30;
+  const today = todayStr();
+  const daily = useMemo(() => {
+    const pool = buildPool({ files, questions, extractions, attempts }, 'mc');
+    if (!pool.length) return [];
+
+    // Per-chapter accuracy → "mastered" proxy (enough reps, high accuracy).
     const byChapter = {};
     for (const a of attempts) {
-      const key = a.file_id;
-      if (!byChapter[key]) byChapter[key] = { correct: 0, total: 0 };
-      byChapter[key].total++;
-      if (a.correct) byChapter[key].correct++;
+      const k = a.file_id;
+      if (!k) continue;
+      if (!byChapter[k]) byChapter[k] = { correct: 0, total: 0 };
+      byChapter[k].total++;
+      if (a.correct) byChapter[k].correct++;
     }
-    const chapterAcc = Object.entries(byChapter).map(([fid, s]) => ({
-      fid, acc: s.total ? s.correct / s.total : 1, total: s.total,
-    }));
-    chapterAcc.sort((a, b) => a.acc - b.acc);
-    const weakestIds = new Set(chapterAcc.slice(0, 3).map((c) => c.fid));
+    const masteredIds = new Set(
+      Object.entries(byChapter)
+        .filter(([, s]) => s.total >= 5 && s.correct / s.total >= 0.7)
+        .map(([k]) => k)
+    );
+    const engagedIds = new Set(Object.keys(byChapter));
 
-    const fullPool = buildPool({ files, questions, extractions, attempts }, 'mc');
-    const wrongIds = new Set();
-    for (const a of attempts) if (!a.correct) wrongIds.add(a.question_id);
+    // Eligibility ladder so the card is never empty once there's a question bank:
+    // mastered chapters → any chapter the user has touched → the whole pool.
+    let eligible = pool.filter((x) => masteredIds.has(x.file_id));
+    if (eligible.length < DAILY_COUNT) {
+      eligible = eligible.concat(pool.filter((x) => engagedIds.has(x.file_id) && !masteredIds.has(x.file_id)));
+    }
+    if (eligible.length < DAILY_COUNT) {
+      eligible = eligible.concat(pool.filter((x) => !engagedIds.has(x.file_id)));
+    }
 
-    // Priority: missed questions from weakest chapters → other misses → weakest chapter fillers
-    const missesFromWeak = fullPool.filter((x) => wrongIds.has(x.id) && weakestIds.has(x.file_id));
-    const otherMisses = fullPool.filter((x) => wrongIds.has(x.id) && !weakestIds.has(x.file_id));
-    const weakFiller = fullPool.filter((x) => weakestIds.has(x.file_id) && !wrongIds.has(x.id));
+    // Spaced-repetition priority from each item's most recent attempt.
+    const latest = {};
+    for (const a of attempts) {
+      const cur = latest[a.question_id];
+      if (!cur || a.ts > cur.ts) latest[a.question_id] = { ts: a.ts, correct: !!a.correct };
+    }
+    const rank = (x) => {
+      const l = latest[x.id];
+      if (l && !l.correct) return 0; // missed → review first
+      if (!l) return 1;              // never attempted
+      return 2;                      // previously correct → lowest priority
+    };
 
-    const combined = [...shuffle(missesFromWeak), ...shuffle(otherMisses), ...shuffle(weakFiller)];
-    return combined.slice(0, 10);
-  }, [files, questions, extractions, attempts]);
+    // Date-stable order, then a STABLE sort by priority (ties keep daily order).
+    const ordered = seededShuffle(eligible, today + ':daily30');
+    ordered.sort((a, b) => rank(a) - rank(b));
+    return ordered.slice(0, DAILY_COUNT);
+  }, [files, questions, extractions, attempts, today]);
+
+  // How many of today's items the user has already answered today (for the done state).
+  const doneToday = useMemo(() => {
+    if (!daily.length) return 0;
+    const ids = new Set(daily.map((x) => x.id));
+    const seen = new Set();
+    for (const a of attempts) {
+      if (ids.has(a.question_id) && a.ts && todayStr(new Date(a.ts)) === today) seen.add(a.question_id);
+    }
+    return seen.size;
+  }, [daily, attempts, today]);
 
   const launch = () => {
-    if (!suggested.length) return;
+    if (!daily.length) return;
     sfxQuizStart();
-    window.dispatchEvent(new CustomEvent('mcat:startQuiz', { detail: { items: suggested } }));
+    window.dispatchEvent(new CustomEvent('mcat:startQuiz', { detail: { items: daily } }));
     onGoToStudy?.();
   };
 
@@ -9646,24 +9689,29 @@ function HomeView({ onGoToStudy }) {
 
       <HomeActivity />
 
-      {suggested.length > 0 ? (
-        <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-5 space-y-3">
+      {daily.length > 0 ? (
+        <div className={`bg-[var(--bg-card)] border rounded-2xl p-4 sm:p-5 space-y-3 ${doneToday >= daily.length ? 'border-[var(--border-soft)]' : 'border-[var(--accent-border)]'}`}>
           <div>
-            <h2 className="font-semibold text-[var(--text-strong)]">Suggested quiz</h2>
+            <div className="flex items-center gap-2">
+              <h2 className="font-semibold text-[var(--text-strong)]">Daily exam</h2>
+              {doneToday < daily.length && <span className="w-2 h-2 rounded-full bg-[var(--danger-border)]" />}
+            </div>
             <p className="text-sm text-[var(--text-muted)]">
-              10 questions you've missed or that come from your weakest chapters. The best way to use ten minutes.
+              {daily.length} questions from chapters you've been mastering — your past misses and unseen items first. A fresh set each day.
+              {doneToday > 0 && doneToday < daily.length && <span className="text-[var(--text)]"> · {doneToday}/{daily.length} done today</span>}
+              {doneToday >= daily.length && <span className="text-[var(--success-text)]"> · completed today ✓</span>}
             </p>
           </div>
           <button
             onClick={launch}
             className="w-full bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] rounded-lg py-3 text-sm font-semibold"
           >
-            Start 10-question quiz →
+            {doneToday >= daily.length ? `Retake today's ${daily.length} →` : `Start ${daily.length}-question exam →`}
           </button>
         </div>
       ) : (
         <div className="bg-[var(--bg-card-soft)] border border-dashed border-[var(--border-soft)] rounded-2xl p-5 text-sm text-[var(--text-muted)]">
-          Process a chapter in the Library tab and answer some questions — once you do, this is where your daily suggested quiz will live.
+          Process a chapter in the Library tab and answer some questions — once you do, your daily 30-question exam will live here.
         </div>
       )}
     </div>
@@ -9726,13 +9774,12 @@ function LessonDrillCard({ term, definition }) {
 function LessonSection({ sec, status, onQuiz, locked }) {
   const { open: openFigure } = useFigureViewer();
   const [open, setOpen] = useState(false);
-  const [matchRound, setMatchRound] = useState(0); // 0 = hidden; bump to (re)start
   const paras = (sec.teach || '').split(/\n\n+/).map((p) => p.trim()).filter(Boolean);
   const drills = Array.isArray(sec.definition_drills) ? sec.definition_drills : [];
-  // Matching practice is built from this section's own key terms — capped at 5
-  // per set to keep it readable. It is study-only (no attempt is recorded) and
-  // is never part of the checkpoint/final exams, which draw from the MC pool.
-  const matchTerms = drills.filter((d) => d && d.term && d.definition).slice(0, 5);
+  // Term matching runs as the lead step of this section's quiz (study-only, no
+  // attempt recorded) rather than as a separate widget here. It needs >=2 drills
+  // with both term and definition.
+  const hasMatch = drills.filter((d) => d && d.term && d.definition).length >= 2;
   const examples = Array.isArray(sec.worked_examples) ? sec.worked_examples : [];
   const figures = (Array.isArray(sec.figures) ? sec.figures : []).map(resolveFigure).filter(Boolean);
   const nChecks = Array.isArray(sec.check_ids) ? sec.check_ids.length : 0;
@@ -9808,51 +9855,18 @@ function LessonSection({ sec, status, onQuiz, locked }) {
             </div>
           )}
 
-          {matchTerms.length >= 2 && (
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <div className="text-xs uppercase tracking-wide text-[var(--text-faint)]">Match terms to definitions</div>
-                {matchRound > 0 && (
-                  <button
-                    onClick={() => setMatchRound((r) => r + 1)}
-                    className="text-xs text-[var(--accent-text)] hover:underline"
-                  >
-                    Shuffle ↺
-                  </button>
-                )}
-              </div>
-              {matchRound === 0 ? (
-                <button
-                  onClick={() => setMatchRound(1)}
-                  className="text-xs px-3 py-1.5 rounded font-medium border border-[var(--border)] hover:bg-[var(--bg-hover)] text-[var(--text)]"
-                >
-                  Practice matching ({matchTerms.length}) →
-                </button>
-              ) : (
-                <MatchingQuestion
-                  key={matchRound}
-                  item={{ id: `lmatch_${sec.id}_${matchRound}`, q: { terms: matchTerms } }}
-                  onAnswer={() => {}}
-                  nextSlot={
-                    <button
-                      onClick={() => setMatchRound((r) => r + 1)}
-                      className="text-xs px-3 py-1.5 rounded font-medium bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)]"
-                    >
-                      Try again ↺
-                    </button>
-                  }
-                />
+          {nChecks > 0 && (
+            <div className="space-y-1">
+              <button
+                onClick={onQuiz}
+                className="text-xs px-3 py-1.5 rounded font-medium bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)]"
+              >
+                {status.mastered ? 'Quiz again' : 'Quiz this section'} ({nChecks}) →
+              </button>
+              {hasMatch && (
+                <div className="text-xs text-[var(--text-faint)]">Starts with a quick term-matching warmup.</div>
               )}
             </div>
-          )}
-
-          {nChecks > 0 && (
-            <button
-              onClick={onQuiz}
-              className="text-xs px-3 py-1.5 rounded font-medium bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)]"
-            >
-              {status.mastered ? 'Quiz again' : 'Quiz this section'} ({nChecks}) →
-            </button>
           )}
         </div>
       )}
@@ -10192,6 +10206,9 @@ function LessonsView({ onGoToStudy }) {
   };
 
   // Start a quiz seeded with exactly this section's check_ids (mc + two_part + short).
+  // The quiz leads with this section's term-matching practice (study-only, no
+  // attempt recorded) so matching is part of the section quiz rather than a
+  // separate widget in the reader.
   const quizSection = (chapterId, sec) => {
     const fid = chapterToFile[chapterId];
     if (!fid) return;
@@ -10201,7 +10218,18 @@ function LessonsView({ onGoToStudy }) {
       ...buildPool(ctx, 'short', { fileIds: new Set([fid]) }),
     ];
     const want = new Set(sec.check_ids || []);
-    const items = shuffle(pool.filter((x) => want.has(x.id)));
+    const checks = shuffle(pool.filter((x) => want.has(x.id)));
+
+    const f = files.find((x) => x.file_id === fid);
+    const meta = { file_id: fid, chapter: f?.chapter, subject: f?.subject };
+    const drills = (Array.isArray(sec.definition_drills) ? sec.definition_drills : [])
+      .filter((d) => d && d.term && d.definition).slice(0, 5);
+    const matchId = `lmatch_${sec.id || sec.concept_id}`;
+    const matchItem = drills.length >= 2
+      ? { id: matchId, mode: 'match', studyOnly: true, q: { id: matchId, terms: drills }, ...meta }
+      : null;
+
+    const items = matchItem ? [matchItem, ...checks] : checks;
     if (!items.length) return;
     sfxQuizStart();
     window.dispatchEvent(new CustomEvent('mcat:startQuiz', { detail: { items } }));

@@ -4,6 +4,8 @@ Generate an **adaptive, chunked lesson** for ONE chapter that already exists in 
 Subjects: every subject in the bank (Biology, Biochemistry, Organic Chemistry, General Chemistry, Physics & Math, Behavioral Science, CARS-adjacent).
 Output: `Generated/<slug>/lesson_ch<N>.json`, then publish to the API as the chapter's `lesson` stage.
 
+Slugs (one per subject, stable): `biochem` (Biochemistry) · `bio` (Biology) · `phys` (Physics and Math) · `behavioral` (Behavioral Science) · `gchem` (General Chemistry) · `orgo` (Organic Chemistry).
+
 This pipeline runs AFTER a chapter's question bank (extraction + mc/two_part/short) already exists. The lesson is built **on top of** that existing material — it teaches the same concepts the questions test, and it reuses the existing question IDs as its embedded mastery checks so the app's adaptive engine can skip what the student already knows.
 
 ---
@@ -33,15 +35,17 @@ Pull the published chapter from the API — do NOT re-OCR the PDF; the work is a
 
 ```
 GET /chapters                      -> find the chapter by subject + title, get its <id>
-GET /chapters/<id>                 -> returns { extraction, questions:{ mc, twoPart, short }, ... }
+GET /chapters/<id>                 -> returns { extraction, mc, two_part, short, ... }
 ```
+
+`GET /chapters` is public (no auth). The per-chapter `GET /chapters/<id>` returns a flat object — `extraction`, `mc`, `two_part`, `short`, `lesson`, `flags`, plus the metadata fields (`id`, `subject`, `title`, `stages`, ...). The question arrays are **top-level keys, not nested under a `questions` object**, and the two-part array is named `two_part` (snake_case), not `twoPart`.
 
 From that payload you have everything you need:
 - `extraction.summary_sentences` — the testable high-yield claims (the spine of the lesson)
 - `extraction.key_terms[]` `{ term, definition }` — the definition-drill source; use the **exact** `term` strings
 - `extraction.equations[]` `{ name, expression, variables, when_to_use, common_pitfalls }`
 - `extraction.context_examples[]`
-- `questions.mc[]`, `questions.twoPart[]`, `questions.short[]` — each has a stable `id`. **These IDs are your `check_ids`.**
+- `mc[]`, `two_part[]`, `short[]` (top-level) — each has a stable `id`. **These IDs are your `check_ids`.**
 
 Group the existing questions by what concept they test (use each MC's `question`/`explanation`, each term-question's `term`, each short item's `key_points`, and the original `practice_bank[].tests_concept` if present) so you can attach the right `check_ids` to each section.
 
@@ -135,7 +139,9 @@ PUT /chapters/<id>/stage/lesson         -> the lesson object (the value of "less
 Auth: `Authorization: Bearer <token>`
 Host: `mcat-api.solitary-sky-76c1.workers.dev`
 
-> **Backend note (one-time):** the worker currently accepts stages `extraction | mc | two_part | short`. Adding lessons requires allowing a new `lesson` stage on `PUT /chapters/<id>/stage/<stage>` and returning it inside `GET /chapters/<id>` (e.g. as `payload.lesson`). The app's Lessons tab reads `lesson.sections` and applies the adaptive skip/resurface logic against the student's local attempts. **The lesson is served only on `GET /chapters/<id>` (the per-chapter fetch), never in the lightweight `GET /chapters` list** — that keeps the list cheap and means a device downloads a body only when the student opens it. Until that route exists, write the file locally to `Generated/<slug>/lesson_ch<N>.json` and the push step is a no-op.
+`GET` routes are public, but every `PUT .../stage/...` requires a valid bearer token (a bad/expired one returns `HTTP 401 {"error":"unauthorized"}`). The token is the **session token**, not any other credential: sign in to the app, then in the browser DevTools console read it with `JSON.parse(localStorage.getItem('mcat:session')).token`. It is issued by `POST /login` ({ username, pin }) and can expire, so re-pull it if a PUT 401s. The generator cannot mint it — ask the user to paste the current token before publishing.
+
+> **Backend note:** the worker accepts the `lesson` stage on `PUT /chapters/<id>/stage/lesson` (a successful PUT returns `{"ok":true,"stage":"lesson",...}`) and serves it back inside `GET /chapters/<id>` as top-level `lesson` (with `stages.lesson.done: true`). The app's Lessons tab reads `lesson.sections` and applies the adaptive skip/resurface logic against the student's local attempts. **The lesson is served only on `GET /chapters/<id>` (the per-chapter fetch), never in the lightweight `GET /chapters` list** — that keeps the list cheap and means a device downloads a body only when the student opens it.
 
 ### Windows shell: strip UTF-8 BOM ONLY if present
 ```bash
@@ -150,6 +156,21 @@ curl -s --ssl-no-revoke -X PUT \
 ```
 
 ---
+
+## Batch generation with parallel agents (recommended for "all subjects at once")
+
+When asked to build several chapters' lessons in one go (e.g. "Chapter 3 for every subject"), do NOT author them serially in the main context — fan out one **subagent per lesson** and run them in parallel. This is how the Chapter 3 batch (6 subjects) was produced.
+
+Workflow:
+1. **Prep once, in the main context:** `GET /chapters` to resolve every `<id>` by subject+title, then `GET /chapters/<id>` for each and cache the raw payloads locally (e.g. `Generated/_raw/<slug>.json`). Agents read these files — they do **not** call the network. (`GET` is public so no token is needed for prep.)
+2. **Write a shared validator once** (e.g. `Generated/_validate.js`) so every agent verifies its own output the same way. It must check, against the cached `_raw/<slug>.json`: every bank `id` referenced as a `check_id` exactly once; every `key_term` drilled exactly once (byte-match); every `equation` introduced exactly once; `order` contiguous 1..n; section count 6–14; and **no Unicode sub/superscript digits or em dashes** in ASCII-only fields. Agents fix ERRORs until it prints OK.
+3. **Spawn one Opus agent per lesson, in a single message (parallel).** Each prompt must be self-contained: subject, chapter title, `chapter_id`, slug, the output path, "read `LESSON_GENERATION_PROMPT.md` and follow it exactly", the path to its cached `_raw/<slug>.json`, the coverage + encoding rules, and "run `node Generated/_validate.js <slug>` until it passes". Tell each agent to touch ONLY its own `Generated/<slug>/` folder and **not** to publish (no token in agents).
+4. **Verify + publish from the main context.** After all agents return, re-run the validator yourself on all outputs (trust but verify), scan for mojibake (`Â°` double-encoded degree signs etc. can appear on Windows — fix by replacing `Â°`→`°` and re-validating), then ask the user for the bearer token and PUT each lesson.
+
+Gotchas learned the hard way:
+- Agents inherit none of the main conversation — restate every path and ID in each prompt.
+- A successful agent run reports validation passed; still re-validate centrally, since an agent describes intent, not guaranteed bytes.
+- Windows `Write` can double-encode non-ASCII (the degree sign is the usual culprit). Grep outputs for `[ÂÃ]` before publishing.
 
 ## Idempotency
 Skip a chapter if `Generated/<slug>/lesson_ch<N>.json` already exists. Re-pushing the lesson stage is safe. Keep `concept_id`s stable across regenerations so student per-section progress is preserved.
