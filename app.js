@@ -2612,6 +2612,20 @@ function setCarsCachePayload(date, payload) {
   try { localStorage.setItem('mcat:carsCache', JSON.stringify(all)); } catch {}
 }
 
+// Local cache of the Gemini-generated daily mini-exam, keyed by date. The set is
+// personalized (drawn from the student's mastered chapters) so it lives only in
+// localStorage — there's no shared backend like CARS has.
+function getDailyExamCache() { try { return JSON.parse(localStorage.getItem('mcat:dailyExamCache')) || {}; } catch { return {}; } }
+function getDailyExamPayload(date) { return getDailyExamCache()[date] || null; }
+function setDailyExamPayload(date, payload) {
+  if (!payload) return;
+  const all = getDailyExamCache();
+  all[date] = payload;
+  const keys = Object.keys(all).sort();
+  while (keys.length > 30) delete all[keys.shift()];
+  try { localStorage.setItem('mcat:dailyExamCache', JSON.stringify(all)); } catch {}
+}
+
 // ---------- daily Connections helpers ----------
 function getConnectionsCache() { try { return JSON.parse(localStorage.getItem('mcat:connectionsCache')) || {}; } catch { return {}; } }
 function getConnectionsCachePayload(date) { return getConnectionsCache()[date] || null; }
@@ -3544,6 +3558,80 @@ function makeClient(getKey) {
     }));
   }
 
+  // ---- daily mini-exam generation ----
+  // A fresh 15-question MCAT-style set written each day from the chapters the
+  // student has already mastered. Every question is tagged with the subject +
+  // chapter it was drawn from (and best-effort AAMC content category / SIRS skill)
+  // so completed items can seed the proportional question bank later.
+  const DAILY_EXAM_SCHEMA = {
+    type: 'OBJECT',
+    properties: {
+      questions: {
+        type: 'ARRAY',
+        items: {
+          type: 'OBJECT',
+          properties: {
+            question: { type: 'STRING' },
+            choices: { type: 'ARRAY', items: { type: 'STRING' } },
+            correct_index: { type: 'INTEGER' },
+            explanation: { type: 'STRING' },
+            subject: { type: 'STRING' },
+            chapter: { type: 'STRING' },
+            content_category: { type: 'STRING' },
+            sirs_skill: { type: 'INTEGER' },
+          },
+          required: ['question', 'choices', 'correct_index', 'explanation', 'subject', 'chapter'],
+        },
+      },
+    },
+    required: ['questions'],
+  };
+
+  async function generateDailyExam(materials, n = 15) {
+    // materials: [{ subject, chapter, extraction }] from the student's mastered chapters.
+    const blocks = (materials || []).map((m, i) =>
+      `### Chapter ${i + 1}: ${m.chapter}${m.subject ? ` (${m.subject})` : ''}\n` +
+      `${JSON.stringify(m.extraction, null, 2).slice(0, 14000)}`
+    ).join('\n\n');
+    const resp = await generate({
+      maxOutputTokens: 32768,
+      disableThinking: true,
+      systemInstruction:
+        'You write a daily MCAT-style mini-exam from the chapters a student has ALREADY MASTERED. ' +
+        `Generate exactly ${n} discrete (standalone) multiple-choice questions, spread as evenly as ` +
+        'possible across the supplied chapters so the set reviews the full breadth of what the student knows. ' +
+        'Every question has exactly 4 choices with `correct_index` (0-3) pointing to the single best answer. ' +
+        'These are genuine MCAT-style items: test application and reasoning, not bare recall — favour ' +
+        '"why/how/predict/which-best-explains" stems over "what is the definition of" stems. ' +
+        'Distractors must be plausible and functional: common misconceptions, right-concept-wrong-scope, ' +
+        'reversed relationships, too-extreme statements, or correct-for-a-different-condition — never obviously ' +
+        'wrong. All four choices match in length and register so the answer never stands out. ' +
+        'TAGGING: set `subject` and `chapter` to the EXACT chapter the question is drawn from (copy the labels ' +
+        'as given). Best-effort set `content_category` (the AAMC content category, e.g. "1A", "5E") and ' +
+        '`sirs_skill` (1-4) when confident. ' +
+        'Explanations are 1-2 sentences and justify the correct answer (and ideally why the most tempting ' +
+        'distractor is wrong). Do not duplicate questions. Never ask anything not directly supported by the ' +
+        'supplied chapter material.\n\n' +
+        'CORRECTNESS CHECK: before finalizing, verify the choice at correct_index is unambiguously the best ' +
+        'answer; if two choices could both be defended, rewrite the stem to disambiguate.',
+      contents: [{
+        role: 'user',
+        parts: [{ text:
+          `Mastered chapters (${(materials || []).length}):\n\n${blocks}\n\n` +
+          `Write today's ${n}-question MCAT-style mini-exam, drawing proportionally across these chapters and ` +
+          `tagging each question with its source subject + chapter.`,
+        }],
+      }],
+      responseSchema: DAILY_EXAM_SCHEMA,
+    });
+    const data = extractJson(resp);
+    return (data.questions || []).map((q, i) => ({
+      id: `daily_${Date.now()}_${i}`,
+      mode: 'mc',
+      ...q,
+    }));
+  }
+
   // ---- short answer generation ----
   const SHORT_SCHEMA = {
     type: 'OBJECT',
@@ -4168,7 +4256,7 @@ function makeClient(getKey) {
   return {
     uploadFile, deleteFile, generate, ping,
     extractFromPdf, generateMCQuestions, generateShortAnswers, generateTermQuestions, generateTwoPartQuestions,
-    fixFlaggedQuestion, auditQuestions, generateDailyCars, generateCarsQuestions,
+    fixFlaggedQuestion, auditQuestions, generateDailyCars, generateCarsQuestions, generateDailyExam,
     generateDailyConnections, generateConnectionExplanation, generateTermDefinition,
     gradeShortAnswer,
   };
@@ -9597,25 +9685,44 @@ function CarsCalendar() {
 
 // ---------- home view ----------
 function HomeView({ onGoToStudy }) {
-  const { session, files, questions, extractions, attempts } = useApp();
+  const { session } = useApp();
   const username = session?.username || 'student';
 
   // Quote rotates once per page load. useMemo on [] freezes it for the session.
   const quote = useMemo(() => QUOTES[Math.floor(Math.random() * QUOTES.length)], []);
 
-  // Daily 30 — a date-stable mini exam (the "Mode A / Daily Exam" idea). Questions
-  // are drawn from chapters the user has been mastering, with spaced-repetition
-  // priority: past misses first, then never-seen items, then review. The set is
-  // frozen for the calendar day via a date-seeded shuffle, so reloading doesn't
-  // reshuffle it. (Bank-generated proportional exams will come later; for now we
-  // assemble from the existing cached question bank.)
-  const DAILY_COUNT = 30;
-  const today = todayStr();
-  const daily = useMemo(() => {
-    const pool = buildPool({ files, questions, extractions, attempts }, 'mc');
-    if (!pool.length) return [];
+  return (
+    <div className="space-y-4">
+      <BirdHero username={username} quote={quote} />
 
-    // Per-chapter accuracy → "mastered" proxy (enough reps, high accuracy).
+      <DailyExamCard onGoToStudy={onGoToStudy} />
+
+      <DailyCarsCard />
+
+      <DailyConnectionsCard />
+
+      <HomeActivity />
+    </div>
+  );
+}
+
+// Daily 15-question MCAT-style mini-exam, generated fresh each day by Gemini from
+// the chapters the student has already mastered (the "Mode A / Daily Exam" idea).
+// Generated once per calendar day and cached locally; launched through the normal
+// QuizRunner so attempts record against each question's source chapter — which also
+// seeds the proportional question bank over time.
+const DAILY_EXAM_COUNT = 15;
+function DailyExamCard({ onGoToStudy }) {
+  const { client, apiKey, files, questions, extractions, attempts } = useApp();
+  const today = todayStr();
+  const cached = getDailyExamPayload(today);
+  const [payload, setPayload] = useState(cached);
+  const [state, setState] = useState(cached ? 'ready' : 'idle'); // idle | generating | ready | unavailable | error
+  const [err, setErr] = useState('');
+
+  // Chapters the student has mastered: enough reps + high accuracy, and the
+  // chapter still has extraction material to generate from.
+  const mastered = useMemo(() => {
     const byChapter = {};
     for (const a of attempts) {
       const k = a.file_id;
@@ -9629,93 +9736,149 @@ function HomeView({ onGoToStudy }) {
         .filter(([, s]) => s.total >= 5 && s.correct / s.total >= 0.7)
         .map(([k]) => k)
     );
-    const engagedIds = new Set(Object.keys(byChapter));
+    return files
+      .filter((f) => masteredIds.has(f.file_id) && extractions[f.file_id])
+      .map((f) => ({ subject: f.subject, chapter: f.chapter, extraction: extractions[f.file_id] }));
+  }, [files, extractions, attempts]);
 
-    // Eligibility ladder so the card is never empty once there's a question bank:
-    // mastered chapters → any chapter the user has touched → the whole pool.
-    let eligible = pool.filter((x) => masteredIds.has(x.file_id));
-    if (eligible.length < DAILY_COUNT) {
-      eligible = eligible.concat(pool.filter((x) => engagedIds.has(x.file_id) && !masteredIds.has(x.file_id)));
-    }
-    if (eligible.length < DAILY_COUNT) {
-      eligible = eligible.concat(pool.filter((x) => !engagedIds.has(x.file_id)));
-    }
+  // Items the runner can consume, wrapped to the {id, mode, q, file_id, chapter, subject} shape.
+  const items = useMemo(() => {
+    const qs = payload?.questions || [];
+    return qs.map((q) => ({
+      id: q.id,
+      mode: 'mc',
+      q: { question: q.question, choices: q.choices, correct_index: q.correct_index, explanation: q.explanation },
+      file_id: `daily_${today}`,
+      chapter: q.chapter || 'Daily exam',
+      subject: q.subject || '',
+    }));
+  }, [payload, today]);
 
-    // Spaced-repetition priority from each item's most recent attempt.
-    const latest = {};
-    for (const a of attempts) {
-      const cur = latest[a.question_id];
-      if (!cur || a.ts > cur.ts) latest[a.question_id] = { ts: a.ts, correct: !!a.correct };
-    }
-    const rank = (x) => {
-      const l = latest[x.id];
-      if (l && !l.correct) return 0; // missed → review first
-      if (!l) return 1;              // never attempted
-      return 2;                      // previously correct → lowest priority
-    };
-
-    // Date-stable order, then a STABLE sort by priority (ties keep daily order).
-    const ordered = seededShuffle(eligible, today + ':daily30');
-    ordered.sort((a, b) => rank(a) - rank(b));
-    return ordered.slice(0, DAILY_COUNT);
-  }, [files, questions, extractions, attempts, today]);
-
-  // How many of today's items the user has already answered today (for the done state).
+  // How many of today's items the student has already answered today.
   const doneToday = useMemo(() => {
-    if (!daily.length) return 0;
-    const ids = new Set(daily.map((x) => x.id));
+    if (!items.length) return 0;
+    const ids = new Set(items.map((x) => x.id));
     const seen = new Set();
     for (const a of attempts) {
       if (ids.has(a.question_id) && a.ts && todayStr(new Date(a.ts)) === today) seen.add(a.question_id);
     }
     return seen.size;
-  }, [daily, attempts, today]);
+  }, [items, attempts, today]);
+
+  // Decide the resting state once we know whether today's set exists / can be made.
+  useEffect(() => {
+    if (payload) { setState('ready'); return; }
+    if (state === 'generating') return;
+    if (!apiKey) { setState('unavailable'); return; }
+    if (!mastered.length) { setState('idle'); return; }
+    setState('idle');
+  }, [payload, apiKey, mastered.length]);
+
+  const generate = async () => {
+    if (!apiKey || !mastered.length) return;
+    setState('generating');
+    setErr('');
+    try {
+      const questionsOut = await client.generateDailyExam(mastered, DAILY_EXAM_COUNT);
+      if (!questionsOut?.length) throw new Error('Generation returned no questions.');
+      const p = { date: today, questions: questionsOut };
+      setDailyExamPayload(today, p);
+      setPayload(p);
+      setState('ready');
+    } catch (e) {
+      setErr(e.message || String(e));
+      setState('error');
+    }
+  };
 
   const launch = () => {
-    if (!daily.length) return;
+    if (!items.length) return;
     sfxQuizStart();
-    window.dispatchEvent(new CustomEvent('mcat:startQuiz', { detail: { items: daily } }));
+    window.dispatchEvent(new CustomEvent('mcat:startQuiz', { detail: { items } }));
     onGoToStudy?.();
   };
 
-  return (
-    <div className="space-y-4">
-      <BirdHero username={username} quote={quote} />
+  const card = (inner, accent) => (
+    <div className={`bg-[var(--bg-card)] border rounded-2xl p-4 sm:p-5 space-y-3 ${accent ? 'border-[var(--accent-border)]' : 'border-[var(--border-soft)]'}`}>{inner}</div>
+  );
 
-
-      <DailyCarsCard />
-
-      <DailyConnectionsCard />
-
-      <HomeActivity />
-
-      {daily.length > 0 ? (
-        <div className={`bg-[var(--bg-card)] border rounded-2xl p-4 sm:p-5 space-y-3 ${doneToday >= daily.length ? 'border-[var(--border-soft)]' : 'border-[var(--accent-border)]'}`}>
-          <div>
-            <div className="flex items-center gap-2">
-              <h2 className="font-semibold text-[var(--text-strong)]">Daily exam</h2>
-              {doneToday < daily.length && <span className="w-2 h-2 rounded-full bg-[var(--danger-border)]" />}
-            </div>
-            <p className="text-sm text-[var(--text-muted)]">
-              {daily.length} questions from chapters you've been mastering — your past misses and unseen items first. A fresh set each day.
-              {doneToday > 0 && doneToday < daily.length && <span className="text-[var(--text)]"> · {doneToday}/{daily.length} done today</span>}
-              {doneToday >= daily.length && <span className="text-[var(--success-text)]"> · completed today ✓</span>}
-            </p>
-          </div>
-          <button
-            onClick={launch}
-            className="w-full bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] rounded-lg py-3 text-sm font-semibold"
-          >
-            {doneToday >= daily.length ? `Retake today's ${daily.length} →` : `Start ${daily.length}-question exam →`}
-          </button>
-        </div>
-      ) : (
-        <div className="bg-[var(--bg-card-soft)] border border-dashed border-[var(--border-soft)] rounded-2xl p-5 text-sm text-[var(--text-muted)]">
-          Process a chapter in the Library tab and answer some questions — once you do, your daily 30-question exam will live here.
-        </div>
-      )}
+  if (state === 'generating') return card(
+    <div>
+      <h2 className="font-semibold text-[var(--text-strong)]">Daily exam</h2>
+      <p className="text-sm text-[var(--text-muted)] mt-1">Writing today's {DAILY_EXAM_COUNT} questions with Gemini — about 20 seconds…</p>
     </div>
   );
+
+  if (state === 'error') return card(
+    <div>
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="font-semibold text-[var(--text-strong)]">Daily exam</h2>
+        <button onClick={generate} className="shrink-0 text-xs px-3 py-1.5 border border-[var(--border)] rounded hover:bg-[var(--bg-hover)]">Retry</button>
+      </div>
+      <p className="text-sm text-[var(--danger-text)] mt-1 break-words whitespace-pre-wrap">{err}</p>
+    </div>
+  );
+
+  if (state === 'unavailable') return card(
+    <div>
+      <h2 className="font-semibold text-[var(--text-strong)]">Daily exam</h2>
+      <p className="text-sm text-[var(--text-muted)] mt-1">
+        Add your Gemini API key in Settings to get a fresh {DAILY_EXAM_COUNT}-question MCAT-style exam each day, written from the chapters you've mastered.
+      </p>
+    </div>
+  );
+
+  if (state === 'ready' && items.length) {
+    const allDone = doneToday >= items.length;
+    return card((
+      <>
+        <div>
+          <div className="flex items-center gap-2">
+            <h2 className="font-semibold text-[var(--text-strong)]">Daily exam</h2>
+            {!allDone && <span className="w-2 h-2 rounded-full bg-[var(--danger-border)]" />}
+          </div>
+          <p className="text-sm text-[var(--text-muted)]">
+            {items.length} fresh MCAT-style questions from chapters you've mastered, written today by Gemini.
+            {doneToday > 0 && !allDone && <span className="text-[var(--text)]"> · {doneToday}/{items.length} done today</span>}
+            {allDone && <span className="text-[var(--success-text)]"> · completed today ✓</span>}
+          </p>
+        </div>
+        <button
+          onClick={launch}
+          className="w-full bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] rounded-lg py-3 text-sm font-semibold"
+        >
+          {allDone ? `Retake today's ${items.length} →` : `Start ${items.length}-question exam →`}
+        </button>
+      </>
+    ), !allDone);
+  }
+
+  // idle — has a key but no set generated yet (or no mastered chapters).
+  if (!mastered.length) return card(
+    <div>
+      <h2 className="font-semibold text-[var(--text-strong)]">Daily exam</h2>
+      <p className="text-sm text-[var(--text-muted)] mt-1">
+        Master a chapter first — answer its questions accurately in the Library tab and your daily {DAILY_EXAM_COUNT}-question exam will appear here.
+      </p>
+    </div>
+  );
+
+  return card((
+    <>
+      <div>
+        <h2 className="font-semibold text-[var(--text-strong)]">Daily exam</h2>
+        <p className="text-sm text-[var(--text-muted)]">
+          A fresh {DAILY_EXAM_COUNT}-question MCAT-style exam, written by Gemini from your {mastered.length} mastered chapter{mastered.length === 1 ? '' : 's'}.
+        </p>
+      </div>
+      <button
+        onClick={generate}
+        className="w-full bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] rounded-lg py-3 text-sm font-semibold"
+      >
+        Generate today's exam →
+      </button>
+    </>
+  ), true);
 }
 
 // ---------- lessons ----------
