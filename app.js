@@ -9939,7 +9939,7 @@ function LessonSection({ sec, status, onQuiz, locked }) {
   const [open, setOpen] = useState(false);
   const paras = (sec.teach || '').split(/\n\n+/).map((p) => p.trim()).filter(Boolean);
   const drills = Array.isArray(sec.definition_drills) ? sec.definition_drills : [];
-  // Term matching runs as the lead step of this section's quiz (study-only, no
+  // Term matching runs as the final step of this section's quiz (study-only, no
   // attempt recorded) rather than as a separate widget here. It needs >=2 drills
   // with both term and definition.
   const hasMatch = drills.filter((d) => d && d.term && d.definition).length >= 2;
@@ -10027,7 +10027,7 @@ function LessonSection({ sec, status, onQuiz, locked }) {
                 {status.mastered ? 'Quiz again' : 'Quiz this section'} ({nChecks}) →
               </button>
               {hasMatch && (
-                <div className="text-xs text-[var(--text-faint)]">Starts with a quick term-matching warmup.</div>
+                <div className="text-xs text-[var(--text-faint)]">Ends with a quick term-matching review.</div>
               )}
             </div>
           )}
@@ -10376,10 +10376,8 @@ function LessonsView({ onGoToStudy }) {
     const fid = chapterToFile[chapterId];
     if (!fid) return;
     const ctx = { files, questions, extractions, attempts };
-    const pool = [
-      ...buildPool(ctx, 'mc', { fileIds: new Set([fid]) }),
-      ...buildPool(ctx, 'short', { fileIds: new Set([fid]) }),
-    ];
+    // MC only — short-answer questions are excluded from lesson section quizzes.
+    const pool = buildPool(ctx, 'mc', { fileIds: new Set([fid]) });
     const want = new Set(sec.check_ids || []);
     const checks = shuffle(pool.filter((x) => want.has(x.id)));
 
@@ -10392,7 +10390,7 @@ function LessonsView({ onGoToStudy }) {
       ? { id: matchId, mode: 'match', studyOnly: true, q: { id: matchId, terms: drills }, ...meta }
       : null;
 
-    const items = matchItem ? [matchItem, ...checks] : checks;
+    const items = matchItem ? [...checks, matchItem] : checks;
     if (!items.length) return;
     sfxQuizStart();
     window.dispatchEvent(new CustomEvent('mcat:startQuiz', { detail: { items } }));
