@@ -8343,7 +8343,12 @@ function StudyView() {
 
   const handleTimerRef = useCallback((ref) => { timerRefHolder.current = ref; }, []);
 
-  if (phase === 'launcher') return <QuizLauncher onStart={start} onStartFlashcards={startFlashcards} />;
+  if (phase === 'launcher') return (
+    <div className="space-y-5">
+      <MiniExamCard />
+      <QuizLauncher onStart={start} onStartFlashcards={startFlashcards} />
+    </div>
+  );
   if (phase === 'flashcards') {
     return <FlashcardReview cards={flashItems} onExit={() => { setFlashItems([]); setPhase('launcher'); }} />;
   }
@@ -9822,6 +9827,217 @@ function sectionForSubject(subject) {
   if (/chemistry|chem\b/.test(s)) return 'C/P';
   if (/bio/.test(s)) return 'B/B';
   return null;
+}
+
+// ---------- full mini exam (4-section, bank-drawn, proportional) ----------
+// Kaplan per-subject chapter abundance (within-subject %, sums to 100). Used to
+// weight chapter selection so the mini exam mirrors the real distribution of
+// content within each subject. Physics & Math only has chapters 1-9.
+const KAPLAN_CHAPTER_ABUNDANCE = {
+  'Behavioral Science': { 1: 8, 2: 6, 3: 14, 4: 7, 5: 6, 6: 7, 7: 4, 8: 9, 9: 7, 10: 10, 11: 13, 12: 9 },
+  'Biochemistry':       { 1: 20, 2: 14, 3: 4, 4: 4, 5: 3, 6: 14, 7: 9, 8: 10, 9: 5, 10: 6, 11: 2, 12: 9 },
+  'Biology':            { 1: 18, 2: 9, 3: 5, 4: 12, 5: 9, 6: 3, 7: 6, 8: 6, 9: 4, 10: 7, 11: 8, 12: 13 },
+  'General Chemistry':  { 1: 7, 2: 10, 3: 12, 4: 7, 5: 11, 6: 4, 7: 7, 8: 9, 9: 8, 10: 15, 11: 4, 12: 6 },
+  'Organic Chemistry':  { 1: 4, 2: 12, 3: 3, 4: 5, 5: 13, 6: 8, 7: 6, 8: 9, 9: 11, 10: 4, 11: 8, 12: 17 },
+  'Physics and Math':   { 1: 6, 2: 11, 3: 9, 4: 10, 5: 7, 6: 16, 7: 11, 8: 14, 9: 16 },
+};
+
+// AAMC section → discipline weights (within-section %, aligned to the Kaplan
+// subject names above so chapter abundance can be applied). CARS has no chapter
+// content. P/S folds psychology + sociology into Kaplan's "Behavioral Science".
+const MINI_EXAM_BLUEPRINT = {
+  'C/P':  { 'General Chemistry': 30, 'Physics and Math': 25, 'Biochemistry': 25, 'Organic Chemistry': 15, 'Biology': 5 },
+  'CARS': {},
+  'B/B':  { 'Biology': 65, 'Biochemistry': 25, 'General Chemistry': 5, 'Organic Chemistry': 5 },
+  'P/S':  { 'Behavioral Science': 95, 'Biology': 5 },
+};
+const MINI_EXAM_SECTIONS = ['C/P', 'CARS', 'B/B', 'P/S'];
+const MINI_EXAM_PER_SECTION = 30;
+
+// Map a free-text bank subject to a canonical Kaplan subject key. Order matters
+// (biochem before bio, organic/general chem before generic chem).
+function canonicalizeSubject(subject) {
+  const s = (subject || '').toLowerCase();
+  if (/behav|psych|soc/.test(s)) return 'Behavioral Science';
+  if (/biochem/.test(s)) return 'Biochemistry';
+  if (/organic|orgo/.test(s)) return 'Organic Chemistry';
+  if (/general chem|gen chem|inorganic/.test(s)) return 'General Chemistry';
+  if (/physics|math/.test(s)) return 'Physics and Math';
+  if (/bio/.test(s)) return 'Biology';
+  if (/chem/.test(s)) return 'General Chemistry';
+  return null;
+}
+
+// Pull the leading chapter number out of a free-text chapter label.
+function chapterNum(chapter) {
+  const m = String(chapter || '').match(/\d+/);
+  return m ? Number(m[0]) : null;
+}
+
+// Largest-remainder allocation of `total` slots across weighted keys.
+function allocateCounts(weights, total) {
+  const entries = Object.entries(weights);
+  const sum = entries.reduce((a, [, w]) => a + w, 0) || 1;
+  const raw = entries.map(([k, w]) => [k, (w / sum) * total]);
+  const out = {};
+  let used = 0;
+  for (const [k, r] of raw) { out[k] = Math.floor(r); used += out[k]; }
+  let rem = total - used;
+  const fracs = raw.map(([k, r]) => [k, r - Math.floor(r)]).sort((a, b) => b[1] - a[1]);
+  for (let i = 0; i < fracs.length && rem > 0; i++, rem--) out[fracs[i][0]]++;
+  return out;
+}
+
+// Weighted sampling without replacement.
+function weightedSample(items, weightFn, k) {
+  const pool = items.slice();
+  const out = [];
+  while (out.length < k && pool.length) {
+    let total = 0;
+    for (const it of pool) total += Math.max(0.0001, weightFn(it));
+    let r = Math.random() * total;
+    let idx = pool.length - 1;
+    for (let i = 0; i < pool.length; i++) {
+      r -= Math.max(0.0001, weightFn(pool[i]));
+      if (r <= 0) { idx = i; break; }
+    }
+    out.push(pool.splice(idx, 1)[0]);
+  }
+  return out;
+}
+
+// Assemble up to `target` questions for one section from its available bank pool,
+// proportional to discipline weights and (within subject) Kaplan chapter abundance.
+// Backfills any shortfall from leftover questions in the same section.
+function assembleSection(section, available, target = MINI_EXAM_PER_SECTION) {
+  const weights = MINI_EXAM_BLUEPRINT[section] || {};
+  const bySubject = {};
+  for (const it of available) {
+    const subj = canonicalizeSubject(it.subject) || 'Other';
+    (bySubject[subj] || (bySubject[subj] = [])).push(it);
+  }
+  const desired = Object.keys(weights).length ? allocateCounts(weights, target) : {};
+  const chosen = [];
+  const used = new Set();
+  for (const [subj, want] of Object.entries(desired)) {
+    const items = (bySubject[subj] || []).filter((it) => !used.has(it.id));
+    const ab = KAPLAN_CHAPTER_ABUNDANCE[subj] || {};
+    const picked = weightedSample(items, (it) => ab[chapterNum(it.chapter)] || 1, Math.min(want, items.length));
+    for (const p of picked) { chosen.push(p); used.add(p.id); }
+  }
+  if (chosen.length < target) {
+    for (const it of shuffle(available.filter((it) => !used.has(it.id)))) {
+      if (chosen.length >= target) break;
+      chosen.push(it); used.add(it.id);
+    }
+  }
+  return shuffle(chosen).slice(0, target);
+}
+
+// Card for launching the proportional, bank-drawn 4-section mini exam. Lives
+// above "Start a quiz" in the study page. Pulls from the shared exam bank, so it
+// works without any locally-processed chapters; shows per-section readiness.
+function MiniExamCard() {
+  const { api } = useApp();
+  const [stats, setStats] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState('');
+
+  useEffect(() => {
+    let alive = true;
+    api.examBankStats().then((s) => { if (alive) setStats(s); }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
+
+  const sectionCounts = useMemo(() => {
+    const m = {};
+    for (const row of (stats?.by_section || [])) if (row.section) m[row.section] = row.n;
+    return m;
+  }, [stats]);
+
+  const readyTotal = MINI_EXAM_SECTIONS.reduce(
+    (a, s) => a + Math.min(MINI_EXAM_PER_SECTION, sectionCounts[s] || 0), 0
+  );
+  const target = MINI_EXAM_SECTIONS.length * MINI_EXAM_PER_SECTION;
+
+  const start = async () => {
+    setLoading(true); setErr('');
+    try {
+      const items = [];
+      for (const section of MINI_EXAM_SECTIONS) {
+        const res = await api.examBankQuestions({ section, limit: 120 }).catch(() => ({ questions: [] }));
+        const picked = assembleSection(section, res?.questions || [], MINI_EXAM_PER_SECTION);
+        for (const q of picked) {
+          items.push({
+            id: q.id,
+            mode: 'mc',
+            q: { question: q.question, choices: q.choices, correct_index: q.correct_index, explanation: q.explanation },
+            chapter: q.chapter,
+            subject: q.subject,
+          });
+        }
+      }
+      if (!items.length) {
+        setErr('The shared exam bank is empty. Generate daily exams to seed it, then try again.');
+        return;
+      }
+      sfxQuizStart();
+      window.dispatchEvent(new CustomEvent('mcat:startQuiz', { detail: { items } }));
+    } catch (e) {
+      setErr('Could not load the exam bank. Try again in a moment.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-5 space-y-3">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h2 className="font-semibold">Full Mini exam</h2>
+          <p className="text-xs text-[var(--text-muted)] mt-0.5">
+            A four-section mini MCAT ({target} questions, 30 per section) drawn from the shared
+            community bank, weighted to match real subject and chapter abundance.
+          </p>
+        </div>
+        <span className="shrink-0 text-xs text-[var(--text-faint)] self-center">{readyTotal}/{target} ready</span>
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        {MINI_EXAM_SECTIONS.map((s) => {
+          const have = Math.min(MINI_EXAM_PER_SECTION, sectionCounts[s] || 0);
+          const full = have >= MINI_EXAM_PER_SECTION;
+          return (
+            <span
+              key={s}
+              className={`text-xs px-2 py-1 rounded border ${full
+                ? 'border-[var(--accent-border)] text-[var(--accent-text)] bg-[var(--accent-soft)]'
+                : 'border-[var(--border)] text-[var(--text-muted)]'}`}
+              title={s === 'CARS' ? 'CARS questions are not yet seeded into the shared bank.' : ''}
+            >
+              {s} {have}/{MINI_EXAM_PER_SECTION}
+            </span>
+          );
+        })}
+      </div>
+
+      {sectionCounts['CARS'] ? null : (
+        <p className="text-xs text-[var(--text-faint)]">
+          CARS isn't seeded into the shared bank yet, so the exam will be short that section.
+        </p>
+      )}
+
+      {err && <p className="text-xs text-red-400">{err}</p>}
+
+      <button
+        onClick={start}
+        disabled={loading || readyTotal === 0}
+        className="w-full bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] disabled:opacity-40 rounded-lg py-3 sm:py-2.5 font-medium"
+      >
+        {loading ? 'Assembling exam…' : readyTotal === 0 ? 'Bank empty — generate daily exams first' : `Start ${readyTotal}-question mini exam`}
+      </button>
+    </div>
+  );
 }
 
 function DailyExamCard({ onGoToStudy }) {
