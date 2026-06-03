@@ -8012,9 +8012,10 @@ function MatchingQuestion({ item, onAnswer, nextSlot }) {
   return (
     <div className="space-y-4">
       <div className="text-sm text-[var(--text-muted)]">Match each term to its definition.</div>
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-2 gap-4 items-start">
         <div className="space-y-2">
           <div className="text-xs uppercase tracking-wide text-[var(--text-faint)]">Terms</div>
+          <div className="space-y-2 max-h-[55vh] overflow-y-auto pr-1">
           {termOrder.map((i) => {
             const paired = pairings[i] !== undefined;
             const correct = submitted && paired && pairings[i] === i;
@@ -8041,9 +8042,11 @@ function MatchingQuestion({ item, onAnswer, nextSlot }) {
               </button>
             );
           })}
+          </div>
         </div>
         <div className="space-y-2">
           <div className="text-xs uppercase tracking-wide text-[var(--text-faint)]">Definitions</div>
+          <div className="space-y-2 max-h-[55vh] overflow-y-auto pr-1">
           {defOrder.map((j, displayIdx) => {
             const used = usedDefs.has(j);
             const termIdx = Object.entries(pairings).find(([, v]) => v === j)?.[0];
@@ -8065,6 +8068,7 @@ function MatchingQuestion({ item, onAnswer, nextSlot }) {
               </button>
             );
           })}
+          </div>
         </div>
       </div>
       {!submitted ? (
@@ -10738,7 +10742,7 @@ function LessonsView({ onGoToStudy }) {
     const f = files.find((x) => x.file_id === fid);
     const meta = { file_id: fid, chapter: f?.chapter, subject: f?.subject };
     const drills = (Array.isArray(sec.definition_drills) ? sec.definition_drills : [])
-      .filter((d) => d && d.term && d.definition).slice(0, 5);
+      .filter((d) => d && d.term && d.definition);
     const matchId = `lmatch_${sec.id || sec.concept_id}`;
     const matchItem = drills.length >= 2
       ? { id: matchId, mode: 'match', studyOnly: true, q: { id: matchId, terms: drills }, ...meta }
