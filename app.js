@@ -4707,6 +4707,69 @@ function AppProvider({ children }) {
     el.style.filter = bgBlur > 0 ? `blur(${(bgBlur / 100) * 32}px)` : '';
   }, [bgBlur, tropicalBg, palette, mode]);
 
+  // ---- per-account settings sync ----
+  // Settings live in localStorage on every device, but for any signed-in user we
+  // also mirror them to the server so theme, volume, blur, toggles etc. follow
+  // the account between devices. Last-write-wins on the server.
+  const syncedSettings = useMemo(() => ({
+    palette, mode, volume, bgBlur, tropicalBg,
+    reaudit: reauditEnabled,
+    autoDownloadChapters, autoDownloadAll, contributorMode,
+  }), [palette, mode, volume, bgBlur, tropicalBg, reauditEnabled,
+      autoDownloadChapters, autoDownloadAll, contributorMode]);
+  const settingsApplyingRef = useRef(false);  // true while we're applying server settings → suppress push
+  const settingsPushAllowedRef = useRef(true); // false during the initial post-login fetch
+  const settingsDebounceRef = useRef(null);
+
+  // On login (or app boot with an existing session): pull this account's settings.
+  useEffect(() => {
+    if (!session?.token) { settingsPushAllowedRef.current = true; return; }
+    settingsPushAllowedRef.current = false;
+    let cancelled = false;
+    api.getSettings().then((res) => {
+      if (cancelled) return;
+      const s = res?.settings;
+      if (s && typeof s === 'object') {
+        settingsApplyingRef.current = true;
+        try {
+          if (s.palette && PALETTES.includes(s.palette)) setPalette(s.palette);
+          if (s.mode && MODES.includes(s.mode)) setMode(s.mode);
+          if (typeof s.volume === 'number') setVolume(s.volume);
+          if (typeof s.bgBlur === 'number') setBgBlur(s.bgBlur);
+          if (typeof s.tropicalBg === 'boolean') setTropicalBg(s.tropicalBg);
+          if (typeof s.reaudit === 'boolean') setReauditEnabled(s.reaudit);
+          if (typeof s.autoDownloadChapters === 'boolean') setAutoDownloadChapters(s.autoDownloadChapters);
+          if (typeof s.autoDownloadAll === 'boolean') setAutoDownloadAll(s.autoDownloadAll);
+          if (typeof s.contributorMode === 'boolean') setContributorMode(s.contributorMode);
+        } finally {
+          // Release after a tick so the re-render's syncedSettings change doesn't trigger a push.
+          setTimeout(() => {
+            settingsApplyingRef.current = false;
+            settingsPushAllowedRef.current = true;
+          }, 80);
+        }
+      } else {
+        // Server has nothing yet — seed it from this device's current settings.
+        settingsPushAllowedRef.current = true;
+        api.putSettings(syncedSettings).catch(() => {});
+      }
+    }).catch(() => { if (!cancelled) settingsPushAllowedRef.current = true; });
+    return () => { cancelled = true; };
+    // Intentionally NOT depending on syncedSettings so this only fires on session change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api, session?.token]);
+
+  // Push any setting change up to the server (debounced).
+  useEffect(() => {
+    if (!session?.token) return;
+    if (settingsApplyingRef.current || !settingsPushAllowedRef.current) return;
+    if (settingsDebounceRef.current) clearTimeout(settingsDebounceRef.current);
+    settingsDebounceRef.current = setTimeout(() => {
+      api.putSettings(syncedSettings).catch(() => {});
+    }, 1500);
+    return () => { if (settingsDebounceRef.current) clearTimeout(settingsDebounceRef.current); };
+  }, [syncedSettings, session?.token, api]);
+
   // One-time cleanup: drop the temporary drag-position key now that the bird
   // is anchored to the speech bubble's bottom.
   useEffect(() => { try { localStorage.removeItem('mcat:birdPos'); } catch {} }, []);
@@ -4972,67 +5035,6 @@ function AppProvider({ children }) {
     });
     return { ok: true, serverDeleted: serverResult?.deleted ?? 0 };
   }, [api]);
-
-  // ---- per-account settings sync ----
-  // Settings live in localStorage on every device, but for any signed-in user we
-  // also mirror them to the server so theme, volume, blur, toggles etc. follow
-  // the account between devices. Last-write-wins on the server.
-  const syncedSettings = useMemo(() => ({
-    palette, mode, volume, bgBlur, tropicalBg,
-    reaudit: reauditEnabled,
-    autoDownloadChapters, autoDownloadAll, contributorMode,
-  }), [palette, mode, volume, bgBlur, tropicalBg, reauditEnabled,
-      autoDownloadChapters, autoDownloadAll, contributorMode]);
-  const settingsApplyingRef = useRef(false);
-  const settingsPushAllowedRef = useRef(true);
-  const settingsDebounceRef = useRef(null);
-
-  // On login (or app boot with an existing session): pull this account's settings.
-  useEffect(() => {
-    if (!session?.token) { settingsPushAllowedRef.current = true; return; }
-    settingsPushAllowedRef.current = false;
-    let cancelled = false;
-    api.getSettings().then((res) => {
-      if (cancelled) return;
-      const s = res?.settings;
-      if (s && typeof s === 'object') {
-        settingsApplyingRef.current = true;
-        try {
-          if (s.palette && PALETTES.includes(s.palette)) setPalette(s.palette);
-          if (s.mode && MODES.includes(s.mode)) setMode(s.mode);
-          if (typeof s.volume === 'number') setVolume(s.volume);
-          if (typeof s.bgBlur === 'number') setBgBlur(s.bgBlur);
-          if (typeof s.tropicalBg === 'boolean') setTropicalBg(s.tropicalBg);
-          if (typeof s.reaudit === 'boolean') setReauditEnabled(s.reaudit);
-          if (typeof s.autoDownloadChapters === 'boolean') setAutoDownloadChapters(s.autoDownloadChapters);
-          if (typeof s.autoDownloadAll === 'boolean') setAutoDownloadAll(s.autoDownloadAll);
-          if (typeof s.contributorMode === 'boolean') setContributorMode(s.contributorMode);
-        } finally {
-          // Release after a tick so the re-render's syncedSettings change doesn't trigger a push.
-          setTimeout(() => {
-            settingsApplyingRef.current = false;
-            settingsPushAllowedRef.current = true;
-          }, 80);
-        }
-      } else {
-        settingsPushAllowedRef.current = true;
-        api.putSettings(syncedSettings).catch(() => {});
-      }
-    }).catch(() => { if (!cancelled) settingsPushAllowedRef.current = true; });
-    return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [api, session?.token]);
-
-  // Push any setting change up to the server (debounced).
-  useEffect(() => {
-    if (!session?.token) return;
-    if (settingsApplyingRef.current || !settingsPushAllowedRef.current) return;
-    if (settingsDebounceRef.current) clearTimeout(settingsDebounceRef.current);
-    settingsDebounceRef.current = setTimeout(() => {
-      api.putSettings(syncedSettings).catch(() => {});
-    }, 1500);
-    return () => { if (settingsDebounceRef.current) clearTimeout(settingsDebounceRef.current); };
-  }, [syncedSettings, session?.token, api]);
 
   // On login or app load with an active session: pull remote attempts, then
   // flush any unsynced local ones. Pull first so a new device sees existing
