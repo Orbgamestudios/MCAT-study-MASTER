@@ -273,8 +273,13 @@ function _initDuo(w, h) {
         intensity: startRaining ? 1 : 0,
         target: startRaining ? 1 : 0,
         nextFlip: startRaining
-          ? Math.floor(30 * _rnd(120, 350))
-          : Math.floor(30 * _rnd(105, 330)),
+          ? Math.floor(30 * _rnd(240, 600))   // 4–10 min wet
+          : Math.floor(30 * _rnd(360, 840)),  // 6–14 min dry
+        stormPower: 0,
+        stormTarget: startRaining ? (Math.random() < 0.4 ? _rnd(0.65, 1.0) : _rnd(0.15, 0.4)) : 0,
+        flash: 0,
+        flashCooldown: 0,
+        bolt: null,
       };
     })(),
   };
@@ -477,8 +482,13 @@ function _initMadison(w, h, isDark) {
         intensity: startRaining ? 1 : 0,
         target: startRaining ? 1 : 0,
         nextFlip: startRaining
-          ? Math.floor(30 * _rnd(100, 250))   // mid-storm
-          : Math.floor(30 * _rnd(135, 450)),  // dry-start
+          ? Math.floor(30 * _rnd(240, 600))   // 4–10 min wet (mid-storm)
+          : Math.floor(30 * _rnd(360, 840)),  // 6–14 min dry
+        stormPower: 0,
+        stormTarget: startRaining ? (Math.random() < 0.4 ? _rnd(0.65, 1.0) : _rnd(0.15, 0.4)) : 0,
+        flash: 0,
+        flashCooldown: 0,
+        bolt: null,
       };
     })(),
     // Fluffy day clouds — drift in whatever direction the wind is blowing.
@@ -569,6 +579,86 @@ function _ridgeHeightAngular(x, seed) {
 // Draw a continuous mountain ridge across the full width. The polygon
 // runs along the top profile, then closes down to a fill baseline so
 // everything below the ridge is solid (mountains sit in front of sky and
+// Storm effects shared by every scene with rain. Applies a darkness overlay
+// proportional to stormPower (how heavy this storm is), then any active
+// lightning bolt and the screen flash.
+function _drawStormFX(ctx, rain, w, h) {
+  if (!rain) return;
+  if (rain.intensity > 0.01 && rain.stormPower > 0.01) {
+    ctx.fillStyle = `rgba(0,0,0,${rain.stormPower * rain.intensity * 0.5})`;
+    ctx.fillRect(0, 0, w, h);
+  }
+  if (rain.bolt && rain.bolt.points && rain.bolt.points.length > 1) {
+    const a = Math.min(1, rain.bolt.life / 6);
+    ctx.save();
+    ctx.strokeStyle = `rgba(245,255,255,${0.9 * a})`;
+    ctx.lineWidth = 2.6;
+    ctx.lineCap = 'round';
+    ctx.shadowColor = 'rgba(220,235,255,0.9)';
+    ctx.shadowBlur = 14;
+    ctx.beginPath();
+    ctx.moveTo(rain.bolt.points[0].x, rain.bolt.points[0].y);
+    for (let i = 1; i < rain.bolt.points.length; i++) {
+      ctx.lineTo(rain.bolt.points[i].x, rain.bolt.points[i].y);
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+  if (rain.flash > 0.001) {
+    ctx.fillStyle = `rgba(240,250,255,${rain.flash * 0.5})`;
+    ctx.fillRect(0, 0, w, h);
+  }
+}
+
+// Storm controller — call once per frame from any rain-bearing scene.
+// Wet stretches now 4–10 min and dry 6–14 min. Eases stormPower toward
+// a random target on each downpour, and rolls for lightning while raining.
+function _stepStorm(rain, w, h) {
+  rain.nextFlip -= 1;
+  if (rain.nextFlip <= 0) {
+    rain.target = rain.target === 0 ? 1 : 0;
+    if (rain.target === 1) {
+      // 40% of storms are heavy and dark; the rest stay mild.
+      rain.stormTarget = Math.random() < 0.4 ? _rnd(0.65, 1.0) : _rnd(0.15, 0.4);
+      rain.nextFlip = Math.floor(30 * _rnd(240, 600));   // 4–10 min wet
+    } else {
+      rain.stormTarget = 0;
+      rain.nextFlip = Math.floor(30 * _rnd(360, 840));   // 6–14 min dry
+    }
+  }
+  if (rain.intensity !== rain.target) {
+    const step = rain.target > rain.intensity ? 1 / 90 : -1 / 120;
+    rain.intensity = Math.max(0, Math.min(1, rain.intensity + step));
+  }
+  if (rain.stormPower == null) rain.stormPower = 0;
+  if (rain.stormTarget == null) rain.stormTarget = 0;
+  if (rain.stormPower !== rain.stormTarget) {
+    const stepSP = rain.stormTarget > rain.stormPower ? 1 / 150 : -1 / 240; // ~5s in / ~8s out
+    rain.stormPower = Math.max(0, Math.min(1, rain.stormPower + stepSP));
+  }
+  if (rain.flash > 0) rain.flash = Math.max(0, rain.flash - 0.08);
+  if (rain.bolt) { rain.bolt.life -= 1; if (rain.bolt.life <= 0) rain.bolt = null; }
+  if (rain.flashCooldown > 0) rain.flashCooldown -= 1;
+  // Lightning only when raining hard and the storm is dark enough.
+  if (rain.intensity > 0.55 && rain.stormPower > 0.35 && rain.flashCooldown <= 0
+      && Math.random() < 1 / 180) {
+    rain.flash = 1;
+    rain.flashCooldown = Math.floor(30 * _rnd(5, 18)); // 5–18 s before the next
+    if (Math.random() < 0.6) {
+      const x0 = _rnd(w * 0.12, w * 0.88);
+      const pts = [{ x: x0, y: 0 }];
+      const segs = 8 + Math.floor(Math.random() * 4);
+      const groundY = h * 0.7;
+      let xCur = x0;
+      for (let i = 1; i <= segs; i++) {
+        xCur += (Math.random() - 0.5) * 36;
+        pts.push({ x: xCur, y: (groundY * i) / segs });
+      }
+      rain.bolt = { points: pts, life: 6 };
+    }
+  }
+}
+
 // behind foreground props). `opts.style: 'angular'` flips the noise from
 // rounded sines to triangle waves for sharp alpine peaks.
 function _drawRidge(ctx, w, baseY, maxH, seed, fillStyle, opts = {}) {
@@ -1181,21 +1271,10 @@ function _drawDuo(ctx, isDark, state, t, py, w, h) {
   _stepWind(state, -2.4, 2.4, [25, 70]);
 
   // ── rain (random downpours with smooth fade in/out) ──
-  // Storms last 10× as long as they used to (2–~6 min each) with longer dry
-  // stretches between them. Tuning request from cgsli.
+  // Storms last 4–10 min, dry stretches 6–14 min. 40% of storms turn dark with
+  // lightning. _stepStorm handles intensity, stormPower, flash, and bolts.
   const rain = state.rain;
-  rain.nextFlip -= 1;
-  if (rain.nextFlip <= 0) {
-    rain.target = rain.target === 0 ? 1 : 0;
-    rain.nextFlip = rain.target === 1
-      ? Math.floor(30 * _rnd(120, 350))  // 2–~6 min wet
-      : Math.floor(30 * _rnd(105, 330)); // ~2–5.5 min dry
-  }
-  // Ease intensity toward target. ~3 s in / 4 s out at 30 fps.
-  if (rain.intensity !== rain.target) {
-    const step = rain.target > rain.intensity ? 1 / 90 : -1 / 120;
-    rain.intensity = Math.max(0, Math.min(1, rain.intensity + step));
-  }
+  _stepStorm(rain, w, h);
 
   if (rain.intensity > 0.01) {
     // Cloud darkening — pull the upper sky toward grey as it rains harder.
@@ -1228,6 +1307,9 @@ function _drawDuo(ctx, isDark, state, t, py, w, h) {
     }
     ctx.globalAlpha = 1;
   }
+
+  // Storm darkening + lightning sit on top of the scene.
+  _drawStormFX(ctx, rain, w, h);
 }
 
 function _drawTropical(ctx, isDark, state, t, py, w, h) {
@@ -1727,23 +1809,16 @@ function _drawMadison(ctx, isDark, state, t, py, w, h) {
   // ── wind: smooth, retargets every few seconds. drives rain tilt. ──
   _stepWind(state, -3.4, 3.4, [25, 65]);
 
-  // Rain controller: storms last 10× as long as they used to (~1.5–4 min) with
-  // longer dry gaps between them. Night stays clear.
+  // Rain controller: 4–10 min wet, 6–14 min dry, with stormPower / lightning
+  // via the shared _stepStorm helper. Night stays clear.
   const rain = state.rain;
   if (!isDark) {
-    rain.nextFlip -= 1;
-    if (rain.nextFlip <= 0) {
-      rain.target = rain.target === 0 ? 1 : 0;
-      rain.nextFlip = rain.target === 1
-        ? Math.floor(30 * _rnd(100, 250))   // ~1.5–4 min wet
-        : Math.floor(30 * _rnd(135, 450));  // ~2.25–7.5 min dry
-    }
-    if (rain.intensity !== rain.target) {
-      const step = rain.target > rain.intensity ? 1 / 90 : -1 / 120;
-      rain.intensity = Math.max(0, Math.min(1, rain.intensity + step));
-    }
+    _stepStorm(rain, w, h);
   } else {
     rain.intensity = 0; // no rain at night
+    rain.stormPower = 0;
+    rain.flash = 0;
+    rain.bolt = null;
   }
 
   // ── sun (day only, dimmed by rain intensity) ──
@@ -2426,6 +2501,9 @@ function _drawMadison(ctx, isDark, state, t, py, w, h) {
     }
     ctx.globalAlpha = 1;
   }
+
+  // Storm darkening + lightning go last so they overlay everything.
+  if (!isDark) _drawStormFX(ctx, rain, w, h);
 }
 
 // ── main entry points ─────────────────────────────────────────────────────────
