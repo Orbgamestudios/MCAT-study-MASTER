@@ -37,7 +37,83 @@ const KEYS = {
   lessonsCache: 'mcat:lessonsCache', // { [chapter_id]: lessonObject } — downloaded lesson bodies
   lessonProgress: 'mcat:lessonProgress', // { [chapter_id]: { completed_at } } — kept after body removed
   lessonGates: 'mcat:lessonGates', // { [chapter_id]: { unlocked, mastered, mastered_at } } — checkpoint gating
+  stateUpdatedAt: 'mcat:stateUpdatedAt', // ms — local clock of the last per-user state push (sync bookkeeping)
 };
+
+// ---------- cross-device state sync ----------
+// The per-user keys that follow the account between devices. Deliberately excludes
+// secrets (apiKey), auth (session), the separately-synced bank/attempts, the heavy
+// lesson-body cache (re-downloadable), and ephemeral queues.
+const SYNC_STATE_KEYS = [
+  'mcat:cars', 'mcat:connectionsResults', 'mcat:lessonProgress', 'mcat:lessonGates',
+  'mcat:theme', 'mcat:volume', 'mcat:tropicalBg', 'mcat:bgBlur',
+  'mcat:autoDownload', 'mcat:autoDownloadAll', 'mcat:contributorMode', 'mcat:reaudit', 'mcat:bankSeen',
+];
+// Keys whose value is a { [id]: entry } map and must be merged per-entry (union,
+// newest-entry-wins) rather than overwritten wholesale — so progress made on two
+// devices for different days/chapters is never lost.
+const MAP_STATE_KEYS = new Set([
+  'mcat:cars', 'mcat:connectionsResults', 'mcat:lessonProgress', 'mcat:lessonGates',
+]);
+
+// How recently an entry was touched, used to pick a winner on a per-id conflict.
+// Progress is monotonic forward (you don't un-complete a day or un-master a chapter),
+// so the larger timestamp is always the one to keep.
+function syncEntryRecency(entry) {
+  if (!entry || typeof entry !== 'object') return 0;
+  return Math.max(0, entry.completed_at || 0, entry.mastered_at || 0, entry.unlocked_at || 0, entry.ts || 0);
+}
+
+// Merge a local and a cloud state blob. Map keys union their entries; scalar
+// settings take the value from whichever blob is newer (cloudNewer decides ties).
+function mergeSyncState(local, cloud, cloudNewer) {
+  local = local || {};
+  cloud = cloud || {};
+  const merged = {};
+  const keys = new Set([...Object.keys(local), ...Object.keys(cloud)]);
+  for (const k of keys) {
+    const lv = local[k];
+    const cv = cloud[k];
+    if (MAP_STATE_KEYS.has(k)) {
+      const lm = (lv && typeof lv === 'object') ? lv : {};
+      const cm = (cv && typeof cv === 'object') ? cv : {};
+      const out = {};
+      for (const id of new Set([...Object.keys(lm), ...Object.keys(cm)])) {
+        if (!(id in lm)) out[id] = cm[id];
+        else if (!(id in cm)) out[id] = lm[id];
+        else out[id] = syncEntryRecency(cm[id]) > syncEntryRecency(lm[id]) ? cm[id] : lm[id];
+      }
+      merged[k] = out;
+    } else {
+      if (cv === undefined) merged[k] = lv;
+      else if (lv === undefined) merged[k] = cv;
+      else merged[k] = cloudNewer ? cv : lv;
+    }
+  }
+  return merged;
+}
+
+// Snapshot the synced keys from localStorage into one object.
+function readSyncState() {
+  const out = {};
+  for (const k of SYNC_STATE_KEYS) {
+    const v = storage.get(k, undefined);
+    if (v !== undefined && v !== null) out[k] = v;
+  }
+  return out;
+}
+
+// Stable serialization (fixed top-level key order) for cheap change-detection.
+function serializeSyncState(obj) {
+  const out = {};
+  for (const k of SYNC_STATE_KEYS) if (obj && obj[k] !== undefined) out[k] = obj[k];
+  return JSON.stringify(out);
+}
+
+// Fired by the progress/result writers so the provider can debounce a push.
+function markStateDirty() {
+  try { window.dispatchEvent(new Event('mcat:stateDirty')); } catch {}
+}
 
 // Sections are studied in groups of this size; each group is gated by a
 // cumulative checkpoint quiz that must be passed 100% to unlock the next group.
@@ -2642,6 +2718,7 @@ function setCarsResult(date, result) {
   const all = getCarsResults();
   all[date] = result;
   try { localStorage.setItem('mcat:cars', JSON.stringify(all)); } catch {}
+  markStateDirty();
 }
 // ---------- text sanitization (defensive cleanup for AI-edited questions) ----------
 // Replace literal escape sequences / entities that sometimes leak into model output,
@@ -2785,6 +2862,7 @@ function setConnectionsResult(date, result) {
   const all = getConnectionsResults();
   all[date] = result;
   try { localStorage.setItem('mcat:connectionsResults', JSON.stringify(all)); } catch {}
+  markStateDirty();
 }
 
 const DEFAULT_GITHUB = {
@@ -4493,6 +4571,10 @@ function makeApiClient(getToken) {
     },
     getMyBank: () => call('/bank', { auth: true }),
     getUserBank: (username) => call(`/bank/${encodeURIComponent(username)}`),
+
+    // ---- per-user synced state (progress + settings) ----
+    getState: () => call('/state', { auth: true }),
+    putState: (state) => call('/state', { method: 'PUT', body: state, auth: true }),
     bankMeta: (username) => call(`/bank/${encodeURIComponent(username)}/meta`),
     deleteMyBank: () => call('/bank', { method: 'DELETE', auth: true }),
     listBanks: () => call('/banks'),
@@ -4979,6 +5061,102 @@ function AppProvider({ children }) {
     })();
   }, [session?.token, pullAttempts, flushSync]);
 
+  // ---- cross-device state sync (progress + settings) ----
+  // Same shape as the attempts sync: pull-and-merge when a session becomes active,
+  // then push local changes (debounced). The merge is per-entry for result maps, so
+  // a passage done on the phone and one done on the laptop both survive; scalar
+  // settings follow whichever device's blob is newer.
+  const [stateRev, setStateRev] = useState(0);
+  const stateHydratedRef = useRef(false);
+  const lastPushedStateRef = useRef(null);
+  const statePushTimerRef = useRef(null);
+
+  const pushState = useCallback(async () => {
+    const s = storage.get(KEYS.session, null);
+    if (!s?.token || !stateHydratedRef.current) return;
+    const blob = serializeSyncState(readSyncState());
+    if (blob === lastPushedStateRef.current) return; // nothing changed since last push
+    try {
+      await api.putState(JSON.parse(blob));
+      lastPushedStateRef.current = blob;
+      storage.set(KEYS.stateUpdatedAt, Date.now());
+    } catch {}
+  }, [api]);
+
+  const scheduleStatePush = useCallback(() => {
+    if (!stateHydratedRef.current) return;
+    if (statePushTimerRef.current) clearTimeout(statePushTimerRef.current);
+    statePushTimerRef.current = setTimeout(() => { pushState(); }, 1500);
+  }, [pushState]);
+
+  const pullState = useCallback(async () => {
+    const s = storage.get(KEYS.session, null);
+    if (!s?.token) return;
+    let resp;
+    try { resp = await api.getState(); }
+    catch { stateHydratedRef.current = true; return; }
+    const cloud = (resp && resp.state && typeof resp.state === 'object') ? resp.state : {};
+    const cloudUpdatedAt = resp?.updated_at || 0;
+    const localUpdatedAt = storage.get(KEYS.stateUpdatedAt, 0) || 0;
+    const cloudNewer = cloudUpdatedAt > localUpdatedAt;
+    const merged = mergeSyncState(readSyncState(), cloud, cloudNewer);
+    // Persist the merged result locally...
+    for (const k of SYNC_STATE_KEYS) {
+      if (merged[k] !== undefined) storage.set(k, merged[k]);
+    }
+    // ...and reflect merged settings in React state so the UI updates without a reload.
+    try {
+      const th = merged['mcat:theme'];
+      if (th && typeof th === 'object') { if (th.palette) setPalette(th.palette); if (th.mode) setMode(th.mode); }
+      if (typeof merged['mcat:volume'] === 'number') setVolume(merged['mcat:volume']);
+      if (typeof merged['mcat:tropicalBg'] === 'boolean') setTropicalBg(merged['mcat:tropicalBg']);
+      if (typeof merged['mcat:bgBlur'] === 'number') setBgBlur(merged['mcat:bgBlur']);
+      if (typeof merged['mcat:autoDownload'] === 'boolean') setAutoDownloadChapters(merged['mcat:autoDownload']);
+      if (typeof merged['mcat:autoDownloadAll'] === 'boolean') setAutoDownloadAll(merged['mcat:autoDownloadAll']);
+      if (typeof merged['mcat:contributorMode'] === 'boolean') setContributorMode(merged['mcat:contributorMode']);
+      if (typeof merged['mcat:reaudit'] === 'boolean') setReauditEnabled(merged['mcat:reaudit']);
+    } catch {}
+    const mergedStr = serializeSyncState(merged);
+    lastPushedStateRef.current = mergedStr;
+    stateHydratedRef.current = true;
+    setStateRev((r) => r + 1); // nudge consumers that read progress inline from storage
+    // If our merge produced anything the cloud lacked, push the union back up.
+    if (mergedStr !== serializeSyncState(cloud)) {
+      try { await api.putState(merged); } catch {}
+    }
+    storage.set(KEYS.stateUpdatedAt, Date.now());
+  }, [api, setPalette, setMode, setVolume, setTropicalBg, setBgBlur, setAutoDownloadChapters, setAutoDownloadAll, setContributorMode, setReauditEnabled]);
+
+  // Pull + reconcile whenever a session becomes active (sign-in or app open).
+  useEffect(() => {
+    if (!session?.token) { stateHydratedRef.current = false; lastPushedStateRef.current = null; return; }
+    (async () => { try { await pullState(); } catch {} })();
+  }, [session?.token, pullState]);
+
+  // Settings changes (these live in React state) → debounced push.
+  useEffect(() => {
+    scheduleStatePush();
+  }, [palette, mode, volume, tropicalBg, bgBlur, autoDownloadChapters, autoDownloadAll, contributorMode, reauditEnabled, scheduleStatePush]);
+
+  // Progress/result writers dispatch mcat:stateDirty → debounced push.
+  useEffect(() => {
+    const onDirty = () => scheduleStatePush();
+    window.addEventListener('mcat:stateDirty', onDirty);
+    return () => window.removeEventListener('mcat:stateDirty', onDirty);
+  }, [scheduleStatePush]);
+
+  // Flush promptly when the tab is hidden or the app is being closed, so a quick
+  // close right after finishing a passage still makes it to the cloud.
+  useEffect(() => {
+    const onHide = () => { if (document.visibilityState === 'hidden') pushState(); };
+    window.addEventListener('visibilitychange', onHide);
+    window.addEventListener('pagehide', pushState);
+    return () => {
+      window.removeEventListener('visibilitychange', onHide);
+      window.removeEventListener('pagehide', pushState);
+    };
+  }, [pushState]);
+
   // Auto-update: when enabled, silently refresh any locally-downloaded chapters
   // whose server updated_at is newer than what we last fetched.
   useEffect(() => {
@@ -5093,6 +5271,7 @@ function AppProvider({ children }) {
       contributorMode, setContributorMode,
       tropicalBg, setTropicalBg,
       bgBlur, setBgBlur,
+      stateRev,
     }),
     [apiKey, setApiKey, files, setFiles, extractions, setExtraction, questions, setQuestionsFor,
      attempts, addAttempt, updateLastAttempt, clearAttempts, eraseStatsFor, pullAttempts, staticBank, useStaticBank, readOnly,
@@ -5104,7 +5283,7 @@ function AppProvider({ children }) {
      autoDownloadAll, setAutoDownloadAll,
      contributorMode, setContributorMode,
      tropicalBg, setTropicalBg,
-     bgBlur, setBgBlur]
+     bgBlur, setBgBlur, stateRev]
   );
   return <AppCtx.Provider value={value}>{children}</AppCtx.Provider>;
 }
@@ -10832,7 +11011,7 @@ function LessonReader({ lesson, latestCorrect, completed, gate, quizPool, onBack
 }
 
 function LessonsView({ onGoToStudy }) {
-  const { api, files, questions, extractions, attempts } = useApp();
+  const { api, files, questions, extractions, attempts, stateRev } = useApp();
   const [showAll, setShowAll] = useState(false);
   const [sortBy, setSortBy] = useState('subject'); // 'weakest' | 'subject'
   const [openSubjects, setOpenSubjects] = useState({}); // subject -> expanded (collapsed by default)
@@ -10875,8 +11054,15 @@ function LessonsView({ onGoToStudy }) {
   const latestCorrect = useMemo(() => lessonLatestCorrect(attempts), [attempts]);
 
   const persistCache = (next) => { setLessonsCache(next); storage.set(KEYS.lessonsCache, next); };
-  const persistProgress = (next) => { setProgress(next); storage.set(KEYS.lessonProgress, next); };
-  const persistGates = (next) => { setGates(next); storage.set(KEYS.lessonGates, next); };
+  const persistProgress = (next) => { setProgress(next); storage.set(KEYS.lessonProgress, next); markStateDirty(); };
+  const persistGates = (next) => { setGates(next); storage.set(KEYS.lessonGates, next); markStateDirty(); };
+
+  // Re-read progress + gates from storage after a cross-device sync merges new data
+  // in (stateRev bumps), since this component caches them in local state.
+  useEffect(() => {
+    setProgress(storage.get(KEYS.lessonProgress, {}) || {});
+    setGates(storage.get(KEYS.lessonGates, {}) || {});
+  }, [stateRev]);
 
   const gateFor = (chapterId) => gates[chapterId] || { unlocked: LESSON_GROUP_SIZE, mastered: false };
   const passCheckpoint = (chapterId, unlockTo) => {
