@@ -8644,6 +8644,117 @@ function CarsQuestion({ q, index, picked, onPick, reveal }) {
   );
 }
 
+// Build a standalone, print-ready HTML document of a finished CARS set and hand it to
+// the browser's print dialog (where "Save as PDF" is a destination). Zero deps — keeps
+// the no-build, CDN-only setup intact and yields a text-selectable PDF. Bundles the
+// passage, every question with the user's pick vs. the correct answer, and all
+// explanations, so it can be dropped straight into a chat with Claude to analyse misses.
+function downloadCarsPdf({ date, payload, questions, picks, score, elapsedMs }) {
+  const letters = ['A', 'B', 'C', 'D'];
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+  const total = questions.length;
+  const timeStr = elapsedMs ? (() => {
+    const s = Math.floor(elapsedMs / 1000);
+    return ` · ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  })() : '';
+
+  const passageHtml = String(payload.passage || '')
+    .split(/\n\s*\n/)
+    .map((p) => `<p>${esc(p.trim())}</p>`)
+    .join('');
+
+  const questionsHtml = questions.map((q, i) => {
+    const picked = picks[q.id];
+    const correct = q.correct_index;
+    const isCorrect = picked === correct;
+    const choices = (q.choices || []).map((c, ci) => {
+      const tags = [];
+      if (ci === correct) tags.push('correct answer');
+      if (ci === picked) tags.push('your answer');
+      const tag = tags.length ? ` <span class="tag">(${tags.join(', ')})</span>` : '';
+      const cls = ci === correct ? 'correct' : (ci === picked ? 'wrong' : '');
+      return `<li class="${cls}"><strong>${letters[ci]}.</strong> ${esc(c)}${tag}</li>`;
+    }).join('');
+    const verdict = picked == null
+      ? `Not answered — correct answer is ${letters[correct]}.`
+      : isCorrect
+        ? `Correct (you chose ${letters[picked]}).`
+        : `Incorrect — you chose ${letters[picked]}; correct answer is ${letters[correct]}.`;
+    const choiceExpl = (Array.isArray(q.choice_explanations) && q.choice_explanations.length)
+      ? `<ul class="cexpl">${q.choice_explanations.map((ce, ci) => `<li><strong>${letters[ci]}.</strong> ${esc(ce)}</li>`).join('')}</ul>`
+      : '';
+    return `<section class="q">
+      <div class="qmeta">Question ${i + 1}${q.category ? ` · ${esc(q.category)}` : ''}${q.subtype ? ` · ${esc(q.subtype)}` : ''}</div>
+      <p class="qtext">${esc(q.question)}</p>
+      <ul class="choices">${choices}</ul>
+      <p class="verdict ${isCorrect ? 'ok' : (picked == null ? '' : 'bad')}">${verdict}</p>
+      ${q.explanation ? `<p class="expl"><strong>Explanation.</strong> ${esc(q.explanation)}</p>` : ''}
+      ${choiceExpl}
+    </section>`;
+  }).join('');
+
+  const heading = esc(payload.title || payload.discipline || 'CARS passage');
+  const sub = `${esc(date)}${payload.discipline ? ` · ${esc(payload.discipline)}` : ''}${payload.source ? ` · ${esc(payload.source)}` : ''}`;
+
+  const html = `<!doctype html><html lang="en"><head><meta charset="utf-8">
+<title>MCAT CARS — ${esc(date)}</title>
+<style>
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  @page { margin: 18mm 16mm; }
+  body { font: 12pt/1.5 Georgia, 'Times New Roman', serif; color: #111; max-width: 720px; margin: 0 auto; padding: 24px; }
+  h1 { font-size: 19pt; margin: 0 0 2px; }
+  .sub { color: #555; font-size: 10pt; margin-bottom: 4px; }
+  .score { font-size: 12pt; font-weight: bold; margin: 8px 0 18px; }
+  h2 { font-size: 13pt; border-bottom: 1px solid #ccc; padding-bottom: 3px; margin: 22px 0 10px; }
+  .passage p { margin: 0 0 10px; }
+  section.q { margin: 0 0 18px; padding: 12px 14px; border: 1px solid #ddd; border-radius: 6px; break-inside: avoid; }
+  .qmeta { font-size: 9pt; text-transform: uppercase; letter-spacing: .04em; color: #777; margin-bottom: 4px; }
+  .qtext { font-weight: bold; margin: 0 0 8px; }
+  ul.choices { list-style: none; padding: 0; margin: 0 0 8px; }
+  ul.choices li { padding: 4px 8px; margin: 2px 0; border-radius: 4px; }
+  ul.choices li.correct { background: #d7f4dd; }
+  ul.choices li.wrong { background: #fbdada; }
+  .tag { font-style: italic; color: #555; font-size: 10pt; }
+  .verdict { font-size: 10.5pt; font-weight: bold; margin: 6px 0; }
+  .verdict.ok { color: #1a7f37; }
+  .verdict.bad { color: #b42318; }
+  .expl { font-size: 11pt; margin: 6px 0; }
+  ul.cexpl { font-size: 10pt; color: #444; padding-left: 18px; margin: 6px 0 0; }
+  ul.cexpl li { margin: 2px 0; }
+  .foot { color: #999; font-size: 9pt; margin-top: 24px; text-align: center; }
+</style></head>
+<body>
+  <h1>${heading}</h1>
+  <div class="sub">Daily CARS · ${sub}</div>
+  <div class="score">Score: ${score}/${total}${timeStr}</div>
+  <h2>Passage</h2>
+  <div class="passage">${passageHtml}</div>
+  <h2>Questions &amp; Answers</h2>
+  ${questionsHtml}
+  <div class="foot">MCAT Study — exported ${esc(new Date().toLocaleString())}</div>
+</body></html>`;
+
+  const frame = document.createElement('iframe');
+  frame.setAttribute('aria-hidden', 'true');
+  frame.style.cssText = 'position:fixed;left:-9999px;top:0;width:794px;height:0;border:0;';
+  document.body.appendChild(frame);
+  const doc = frame.contentWindow.document;
+  doc.open();
+  doc.write(html);
+  doc.close();
+  const win = frame.contentWindow;
+  let fired = false;
+  const go = () => {
+    if (fired) return;
+    fired = true;
+    try { win.focus(); win.print(); } catch (e) {}
+    setTimeout(() => frame.remove(), 2000);
+  };
+  // Give the iframe a tick to lay out before printing; fall back if onload never fires.
+  if (doc.readyState === 'complete') setTimeout(go, 200);
+  else { win.onload = () => setTimeout(go, 200); setTimeout(go, 800); }
+}
+
 function CarsRunner({ date, payload, onClose, alreadyDone }) {
   const { addAttempt, flushSync } = useApp();
   const questions = payload.questions || [];
@@ -8726,6 +8837,8 @@ function CarsRunner({ date, payload, onClose, alreadyDone }) {
 
   const goReview = () => { setPhase('review'); scrollTop(); };
 
+  const exportPdf = () => downloadCarsPdf({ date, payload, questions, picks, score, elapsedMs });
+
   // While the runner is open, lock the underlying page scroll so flick-scrolling
   // doesn't drift the BankTab content behind it (iOS Safari is especially loose
   // about this with nested scroll containers).
@@ -8800,6 +8913,11 @@ function CarsRunner({ date, payload, onClose, alreadyDone }) {
                 </div>
               </>
             )}
+            <div className="pt-1">
+              <button onClick={exportPdf} className="text-xs px-3 py-1.5 border border-[var(--border)] rounded-lg hover:bg-[var(--bg-hover)] text-[var(--text-muted)]">
+                Download PDF
+              </button>
+            </div>
           </div>
         ) : (
           <>
@@ -8841,9 +8959,14 @@ function CarsRunner({ date, payload, onClose, alreadyDone }) {
               </button>
             )}
             {phase === 'review' && (
-              <button onClick={onClose} className="w-full text-sm py-3 bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] rounded-lg font-medium">
-                Done
-              </button>
+              <div className="flex gap-2">
+                <button onClick={exportPdf} className="flex-1 text-sm py-3 border border-[var(--border)] hover:bg-[var(--bg-hover)] rounded-lg font-medium">
+                  Download PDF
+                </button>
+                <button onClick={onClose} className="flex-1 text-sm py-3 bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] rounded-lg font-medium">
+                  Done
+                </button>
+              </div>
             )}
           </>
         )}
