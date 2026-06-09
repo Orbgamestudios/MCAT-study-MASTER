@@ -7826,19 +7826,28 @@ function MCQuestion({ item, onAnswer, nextSlot, onFlag }) {
     return shuffle(arr);
   }, [item.id]);
 
+  // Image-choice MC: the choices are unnamed structure images and the prompt
+  // names the target (e.g. "Click the structure of leucine"). `choice_labels`
+  // carries the hidden name per choice so the recorded answer stays readable.
+  const imageChoices = !!item.q.choice_images;
+
   const submit = (entry) => {
     if (picked !== null) return;
     setPicked(entry);
     const correct = entry.origIdx === item.q.correct_index;
     playSfx(correct ? 'correct' : 'wrong');
     if (correct) vibrateCorrect(); else vibrateWrong();
-    onAnswer({ correct, user_answer: entry.text });
+    const labels = item.q.choice_labels;
+    const ua = Array.isArray(labels) && labels[entry.origIdx] != null ? labels[entry.origIdx] : entry.text;
+    onAnswer({ correct, user_answer: ua });
   };
 
   return (
     <div className="question-card space-y-4">
-      <p className="text-base leading-relaxed"><MoleculeText text={item.q.question} /></p>
-      <div className="space-y-2">
+      {/* Don't link molecule names in an image-choice prompt — that popup would
+          reveal the answer. Plain text there; MoleculeText everywhere else. */}
+      <p className="text-base leading-relaxed">{imageChoices ? item.q.question : <MoleculeText text={item.q.question} />}</p>
+      <div className={imageChoices ? 'grid grid-cols-2 gap-2' : 'space-y-2'}>
         {shuffled.map((entry, i) => {
           const isPicked = picked && entry.origIdx === picked.origIdx;
           const isCorrect = entry.origIdx === item.q.correct_index;
@@ -7847,6 +7856,23 @@ function MCQuestion({ item, onAnswer, nextSlot, onFlag }) {
             if (isCorrect) cls = 'border-[var(--success-border)] bg-[var(--success-bg-strong)]';
             else if (isPicked) cls = 'border-[var(--danger-border)] bg-[var(--danger-bg-strong)]';
             else cls = 'border-[var(--border-soft)] opacity-60';
+          }
+          if (imageChoices) {
+            // PubChem PNGs are black-on-transparent, so each structure sits on white.
+            return (
+              <button
+                key={i}
+                onClick={() => submit(entry)}
+                disabled={picked !== null}
+                data-no-haptic
+                className={`border rounded-lg p-2 transition-colors ${cls}`}
+              >
+                <div className="text-[var(--text-faint)] text-xs mb-1">{String.fromCharCode(65 + i)}.</div>
+                <div className="bg-white rounded-md p-1.5 flex items-center justify-center">
+                  <img src={entry.text} alt="Amino acid structure" loading="lazy" className="max-w-full h-auto" style={{ maxHeight: '150px' }} />
+                </div>
+              </button>
+            );
           }
           // Molecule names are ALWAYS rendered as clickable links inside
           // choice buttons — the molecule span stops propagation so taps on
