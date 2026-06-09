@@ -11405,12 +11405,18 @@ function LessonsView({ onGoToStudy }) {
     );
   };
 
-  const renderRow = (r) => (
+  const renderRow = (r) => {
+    // Mastery lives in the synced `lessonGates` store keyed by chapter_id, so it
+    // survives removing the (re-downloadable) lesson body. Show the badge here
+    // from the gate rather than only inside the reader.
+    const isMastered = !!gates[r.chapterId]?.mastered;
+    return (
     <div key={r.fid} className="space-y-2">
       <StatBar label={`${r.subject} — ${r.chapter}`} correct={r.correct} total={r.total} />
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        <span className="text-xs text-[var(--text-faint)]">
-          {r.need > 0 ? `${r.need} question${r.need === 1 ? '' : 's'} to review` : 'All caught up — nice'}
+        <span className="text-xs text-[var(--text-faint)] flex items-center gap-2">
+          {isMastered && <span className="text-green-500 font-medium">🏆 Mastered</span>}
+          <span>{r.need > 0 ? `${r.need} question${r.need === 1 ? '' : 's'} to review` : 'All caught up — nice'}</span>
         </span>
         <div className="flex items-center gap-2 flex-wrap">
           {lessonButton(r)}
@@ -11424,7 +11430,8 @@ function LessonsView({ onGoToStudy }) {
         </div>
       </div>
     </div>
-  );
+    );
+  };
 
   // Group rows by subject (preserving the subject-sorted order in `rows`).
   const subjectGroups = (() => {
