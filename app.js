@@ -10911,7 +10911,83 @@ function LessonGateQuiz({ kind, pool, need, onPass, onCancel }) {
 // Full-screen lesson reader. Sections are studied in groups of LESSON_GROUP_SIZE;
 // each group is gated behind a cumulative checkpoint quiz (100% to pass) and the
 // whole chapter ends with a 30-question final exam that confers "mastered".
-function LessonReader({ lesson, latestCorrect, completed, gate, quizPool, onBack, onQuizSection, onMarkComplete, onPassCheckpoint, onMaster }) {
+// Override path to "master" a lesson without passing its checkpoints/final exam.
+// Two gates on purpose: a confirm step ("are you sure?") then re-entry of the
+// account PIN (verified server-side via /login) so it can't be a stray tap.
+function ForceMasterModal({ lessonTitle, username, onVerifyPin, onConfirmMaster, onClose }) {
+  const [step, setStep] = useState('confirm'); // 'confirm' | 'password'
+  const [pin, setPin] = useState('');
+  const [err, setErr] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const submitPin = async () => {
+    if (busy) return;
+    if (!/^\d{4}$/.test(pin)) { setErr('Enter your 4-digit PIN.'); return; }
+    setBusy(true); setErr('');
+    try {
+      await onVerifyPin(pin);
+      onConfirmMaster();
+      onClose();
+    } catch (e) {
+      setErr('Incorrect PIN. Try again.');
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-sm flex items-center justify-center p-3" onClick={onClose}>
+      <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-5 max-w-sm w-full" onClick={(e) => e.stopPropagation()}>
+        {step === 'confirm' ? (
+          <>
+            <h3 className="text-base font-semibold text-[var(--text-strong)]">Master without completing?</h3>
+            <p className="text-sm text-[var(--text-muted)] mt-2 leading-relaxed">
+              You haven't passed the checkpoints and final exam for <span className="text-[var(--text-strong)]">"{lessonTitle}"</span>. Are you sure you want to mark it <span className="text-[var(--text-strong)] font-medium">mastered</span> anyway?
+            </p>
+            <div className="flex justify-end gap-2 mt-4">
+              <button onClick={onClose} className="text-sm px-3 py-1.5 rounded border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--bg-hover)]">Cancel</button>
+              <button onClick={() => { setErr(''); setStep('password'); }} className="text-sm px-3 py-1.5 rounded font-medium bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)]">Yes, continue →</button>
+            </div>
+          </>
+        ) : username ? (
+          <>
+            <h3 className="text-base font-semibold text-[var(--text-strong)]">Confirm with your PIN</h3>
+            <p className="text-sm text-[var(--text-muted)] mt-2 leading-relaxed">
+              Enter the account PIN for <span className="font-mono text-[var(--text-strong)]">@{username}</span> to master this lesson.
+            </p>
+            <input
+              type="password"
+              inputMode="numeric"
+              maxLength={4}
+              value={pin}
+              autoFocus
+              onChange={(e) => { setPin(e.target.value.replace(/\D/g, '').slice(0, 4)); setErr(''); }}
+              onKeyDown={(e) => e.key === 'Enter' && submitPin()}
+              placeholder="••••"
+              className="mt-3 w-full bg-[var(--bg-elev)] border border-[var(--border)] rounded-lg px-3 py-2 text-lg font-mono tracking-widest text-center focus:outline-none focus:border-[var(--accent-border)]"
+            />
+            {err && <p className="text-[var(--danger-text)] text-xs mt-2">{err}</p>}
+            <div className="flex justify-end gap-2 mt-4">
+              <button onClick={onClose} className="text-sm px-3 py-1.5 rounded border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--bg-hover)]">Cancel</button>
+              <button onClick={submitPin} disabled={busy || pin.length !== 4} className="text-sm px-3 py-1.5 rounded font-medium bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] disabled:opacity-40">{busy ? 'Checking…' : 'Master ✓'}</button>
+            </div>
+          </>
+        ) : (
+          <>
+            <h3 className="text-base font-semibold text-[var(--text-strong)]">Sign in required</h3>
+            <p className="text-sm text-[var(--text-muted)] mt-2 leading-relaxed">
+              You need to be signed in to your account to master a lesson this way. Open the Account tab, log in, then try again.
+            </p>
+            <div className="flex justify-end mt-4">
+              <button onClick={onClose} className="text-sm px-3 py-1.5 rounded border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--bg-hover)]">Close</button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function LessonReader({ lesson, latestCorrect, completed, gate, quizPool, onBack, onQuizSection, onMarkComplete, onPassCheckpoint, onMaster, username, onVerifyPin }) {
   const sections = [...(lesson.sections || [])].sort((a, b) => (a.order || 0) - (b.order || 0));
   const statuses = sections.map((s) => lessonSectionStatus(s, latestCorrect));
   const masteredCount = statuses.filter((s) => s.mastered).length;
@@ -10924,6 +11000,7 @@ function LessonReader({ lesson, latestCorrect, completed, gate, quizPool, onBack
   const allUnlocked = unlocked >= total;
 
   const [quiz, setQuiz] = useState(null); // { kind, pool, need, unlockTo }
+  const [forceMaster, setForceMaster] = useState(false); // PIN-gated "master anyway" modal
 
   const poolThrough = (end) => {
     const ids = new Set();
@@ -11016,21 +11093,42 @@ function LessonReader({ lesson, latestCorrect, completed, gate, quizPool, onBack
       <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-4 flex items-center justify-between gap-3 flex-wrap">
         {mastered ? (
           <span className="text-sm text-green-500 font-medium">🏆 Chapter mastered — you scored 100% on the final exam.</span>
-        ) : allUnlocked ? (
-          <>
-            <span className="text-sm text-[var(--text-strong)]">Final exam — {LESSON_FINAL_Q} cumulative questions, 100% to master this chapter.</span>
-            <button onClick={startFinal} className="text-xs px-3 py-1.5 rounded font-medium bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] shrink-0">Take final exam →</button>
-          </>
         ) : (
-          <span className="text-sm text-[var(--text-faint)]">🔒 Unlock all sections to take the final exam.</span>
+          <>
+            {allUnlocked ? (
+              <>
+                <span className="text-sm text-[var(--text-strong)]">Final exam — {LESSON_FINAL_Q} cumulative questions, 100% to master this chapter.</span>
+                <button onClick={startFinal} className="text-xs px-3 py-1.5 rounded font-medium bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] shrink-0">Take final exam →</button>
+              </>
+            ) : (
+              <span className="text-sm text-[var(--text-faint)]">🔒 Unlock all sections to take the final exam.</span>
+            )}
+            <button
+              onClick={() => setForceMaster(true)}
+              title="Mark this lesson mastered without taking the exam (requires your account PIN)"
+              className="text-xs px-3 py-1.5 rounded border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-strong)] shrink-0"
+            >
+              Master without the exam
+            </button>
+          </>
         )}
       </div>
+
+      {forceMaster && (
+        <ForceMasterModal
+          lessonTitle={lesson.title}
+          username={username}
+          onVerifyPin={onVerifyPin}
+          onConfirmMaster={onMaster}
+          onClose={() => setForceMaster(false)}
+        />
+      )}
     </div>
   );
 }
 
 function LessonsView({ onGoToStudy }) {
-  const { api, files, questions, extractions, attempts, stateRev } = useApp();
+  const { api, session, files, questions, extractions, attempts, stateRev } = useApp();
   const [showAll, setShowAll] = useState(false);
   const [sortBy, setSortBy] = useState('subject'); // 'weakest' | 'subject'
   const [openSubjects, setOpenSubjects] = useState({}); // subject -> expanded (collapsed by default)
@@ -11091,6 +11189,12 @@ function LessonsView({ onGoToStudy }) {
   const masterChapter = (chapterId) => {
     const g = gateFor(chapterId);
     persistGates({ ...gates, [chapterId]: { ...g, mastered: true, mastered_at: Date.now() } });
+  };
+  // Re-verify the signed-in account's PIN against the server. Rejects on a wrong
+  // PIN (api.login throws on 401), which gates the "master without the exam" flow.
+  const verifyPin = async (pin) => {
+    if (!session?.username) throw new Error('Not signed in');
+    await api.login({ username: session.username, pin });
   };
 
   // Full MC pool (regular MC only — pure multiple choice) for one chapter's file.
@@ -11241,6 +11345,8 @@ function LessonsView({ onGoToStudy }) {
         onMarkComplete={() => markComplete(openId)}
         onPassCheckpoint={(unlockTo) => passCheckpoint(openId, unlockTo)}
         onMaster={() => masterChapter(openId)}
+        username={session?.username}
+        onVerifyPin={verifyPin}
       />
     );
   }
