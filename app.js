@@ -8131,12 +8131,20 @@ function TwoPartQuestion({ item, onAnswer, nextSlot, onFlag }) {
       {parts.slice(0, partIdx + 1).map((p, i) => (
         <div key={i} className="space-y-2">
           <span className="block text-xs text-[var(--text-faint)]">Part {i + 1} of {parts.length}</span>
-          <SinglePart
-            part={p}
-            onAnswer={handlePartAnswer}
-            nextSlot={done && i === parts.length - 1 ? nextSlot : null}
-            continueLabel={i === parts.length - 1 ? null : 'Continue →'}
-          />
+          {p.draw ? (
+            <DrawPart
+              part={p}
+              onAnswer={handlePartAnswer}
+              nextSlot={done && i === parts.length - 1 ? nextSlot : null}
+            />
+          ) : (
+            <SinglePart
+              part={p}
+              onAnswer={handlePartAnswer}
+              nextSlot={done && i === parts.length - 1 ? nextSlot : null}
+              continueLabel={i === parts.length - 1 ? null : 'Continue →'}
+            />
+          )}
         </div>
       ))}
       {done && onFlag && (
@@ -8245,6 +8253,110 @@ function SinglePart({ part, onAnswer, nextSlot, continueLabel }) {
             <MoleculeText text={part.explanation} />
           </div>
         </>
+      )}
+    </div>
+  );
+}
+
+// A "draw it" part for a two-part question: the prompt names an amino acid, the
+// user sketches it on a canvas, then reveals the real structure and self-grades.
+// Mirrors SinglePart's contract (onAnswer + nextSlot) so TwoPartQuestion can mix
+// draw parts and multiple-choice parts in the same question.
+function DrawPart({ part, onAnswer, nextSlot }) {
+  const canvasRef = useRef(null);
+  const drawing = useRef(false);
+  const last = useRef(null);
+  const [revealed, setRevealed] = useState(false);
+  const [graded, setGraded] = useState(null); // null | true | false
+
+  useEffect(() => {
+    const c = canvasRef.current;
+    if (!c) return;
+    const ratio = window.devicePixelRatio || 1;
+    const w = c.clientWidth || 300;
+    const h = 240;
+    c.width = w * ratio;
+    c.height = h * ratio;
+    const ctx = c.getContext('2d');
+    ctx.scale(ratio, ratio);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 2.5;
+    ctx.strokeStyle = '#111827'; // dark ink on the white pad, theme-independent
+  }, []);
+
+  const posOf = (e) => {
+    const r = canvasRef.current.getBoundingClientRect();
+    return { x: e.clientX - r.left, y: e.clientY - r.top };
+  };
+  const down = (e) => { e.preventDefault(); e.currentTarget.setPointerCapture?.(e.pointerId); drawing.current = true; last.current = posOf(e); };
+  const move = (e) => {
+    if (!drawing.current) return;
+    e.preventDefault();
+    const ctx = canvasRef.current.getContext('2d');
+    const p = posOf(e);
+    ctx.beginPath();
+    ctx.moveTo(last.current.x, last.current.y);
+    ctx.lineTo(p.x, p.y);
+    ctx.stroke();
+    last.current = p;
+  };
+  const up = () => { drawing.current = false; last.current = null; };
+  const clear = () => { const c = canvasRef.current; c.getContext('2d').clearRect(0, 0, c.width, c.height); };
+
+  const grade = (correct) => {
+    if (graded !== null) return;
+    setGraded(correct);
+    playSfx(correct ? 'correct' : 'wrong');
+    if (correct) vibrateCorrect(); else vibrateWrong();
+    onAnswer({ correct, user_answer: correct ? 'drew it (self-graded)' : 'missed (self-graded)' });
+  };
+
+  return (
+    <div className="question-card space-y-3">
+      <p className="text-base leading-relaxed">{part.question}</p>
+      <div className="rounded-lg overflow-hidden border border-[var(--border)] bg-white">
+        <canvas
+          ref={canvasRef}
+          className="block w-full"
+          style={{ height: '240px', touchAction: 'none', cursor: 'crosshair' }}
+          onPointerDown={down}
+          onPointerMove={move}
+          onPointerUp={up}
+          onPointerLeave={up}
+          onPointerCancel={up}
+        />
+      </div>
+      <div className="flex items-center gap-2">
+        <button onClick={clear} className="text-xs px-3 py-1.5 rounded border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--bg-hover)]">Clear</button>
+        {!revealed && (
+          <button onClick={() => setRevealed(true)} className="ml-auto text-xs px-3 py-1.5 rounded font-medium bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)]">Reveal structure →</button>
+        )}
+      </div>
+      {revealed && (
+        <div className="space-y-3">
+          <div className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Actual structure</div>
+          {part.image && (
+            <div className="bg-white rounded-lg p-3 flex items-center justify-center border border-[var(--border-soft)]">
+              <img src={part.image} alt="Correct structure" loading="lazy" className="max-w-full h-auto" style={{ maxHeight: '220px' }} />
+            </div>
+          )}
+          {part.explanation && (
+            <div className="answer-reveal bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg p-3 text-sm text-[var(--text)]"><MoleculeText text={part.explanation} /></div>
+          )}
+          {graded === null ? (
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs text-[var(--text-muted)] mr-auto">Did your drawing match?</span>
+              <button onClick={() => grade(false)} className="text-sm px-3 py-1.5 border border-[var(--danger-border)] text-[var(--danger-text)] hover:bg-[var(--danger-bg)] rounded">Missed it</button>
+              <button onClick={() => grade(true)} className="text-sm px-3 py-1.5 border border-[var(--success-border)] text-[var(--success-text)] hover:bg-[var(--success-bg)] rounded">Got it</button>
+            </div>
+          ) : (
+            <div className="flex items-center justify-between gap-3">
+              <span className={graded ? 'text-[var(--success-text)] font-medium text-sm' : 'text-[var(--danger-text)] font-medium text-sm'}>{graded ? 'Marked correct' : 'Marked missed'}</span>
+              {nextSlot}
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
