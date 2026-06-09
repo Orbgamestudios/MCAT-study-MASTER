@@ -8151,8 +8151,26 @@ function SinglePart({ part, onAnswer, nextSlot, continueLabel }) {
     onAnswer({ correct, user_answer: picked.text });
   };
 
+  // A structure-identification part shows a 2D structure (e.g. a PubChem PNG
+  // by name) with the answer hidden. PubChem renders black-on-transparent, so
+  // the image must sit on white to stay visible in dark themes. When an image
+  // is present we also render the choices as PLAIN text rather than linked
+  // MoleculeText — otherwise tapping a choice would open that molecule's
+  // structure and turn a recall question into visual matching.
+  const hasImage = typeof part.image === 'string' && part.image;
   return (
     <div className="question-card space-y-4">
+      {hasImage && (
+        <div className="bg-white rounded-lg p-3 flex items-center justify-center">
+          <img
+            src={part.image}
+            alt="Molecular structure"
+            loading="lazy"
+            className="max-w-full h-auto"
+            style={{ maxHeight: '240px' }}
+          />
+        </div>
+      )}
       <p className="text-base leading-relaxed"><MoleculeText text={part.question} /></p>
       <div className="space-y-2">
         {shuffled.map((entry, i) => {
@@ -8166,6 +8184,7 @@ function SinglePart({ part, onAnswer, nextSlot, continueLabel }) {
           }
           // Same molecule-always-linked pattern as MCQuestion — molecule
           // span clicks stop propagation, rest of the button still picks.
+          // (Suppressed for structure-ID parts so the answer can't be peeked.)
           return (
             <button
               key={i}
@@ -8175,7 +8194,7 @@ function SinglePart({ part, onAnswer, nextSlot, continueLabel }) {
               className={`w-full text-left border rounded-lg px-3 py-2.5 text-sm transition-colors ${cls}`}
             >
               <span className="text-[var(--text-faint)] mr-2">{String.fromCharCode(65 + i)}.</span>
-              <MoleculeText text={entry.text} />
+              {hasImage ? entry.text : <MoleculeText text={entry.text} />}
             </button>
           );
         })}
