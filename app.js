@@ -8595,6 +8595,133 @@ function QuizSummary({ results, elapsedTime, onRestart, onDrillMisses }) {
 }
 
 // ---------- quiz: top-level view ----------
+// ---------- study: weak-spot quiz (mastered chapters only) ----------
+// Builds a quiz weighted toward the LOWEST-accuracy chapters you've mastered:
+// the worse you score in a chapter, the more of its questions appear. Only
+// mastered chapters (lessonGates) that have recorded attempts are eligible.
+const WEAK_SPOT_COUNTS = [5, 10, 20, 50];
+
+function WeakSpotQuiz() {
+  const ctx = useApp();
+  const { files, attempts, stateRev } = ctx;
+  const [count, setCount] = useState(10);
+
+  // Mastered chapters that have attempts, ranked worst-accuracy first.
+  const weak = useMemo(() => {
+    const gates = storage.get(KEYS.lessonGates, {}) || {};
+    const fileById = {};
+    for (const f of files) fileById[f.file_id] = f;
+    const stat = {};
+    for (const a of attempts) {
+      const f = fileById[a.file_id];
+      if (!f || !f.chapter_id || !gates[f.chapter_id]?.mastered) continue;
+      const s = stat[a.file_id] || (stat[a.file_id] = { fid: a.file_id, correct: 0, total: 0, chapter: f.chapter, subject: f.subject });
+      s.total++; if (a.correct) s.correct++;
+    }
+    return Object.values(stat)
+      .filter((s) => s.total > 0)
+      .map((s) => ({ ...s, acc: s.correct / s.total }))
+      .sort((a, b) => a.acc - b.acc);
+  }, [files, attempts, stateRev]);
+
+  // Weight a chapter by how far its accuracy sits below perfect, so a lower
+  // score pulls proportionally more questions (50% acc weighs 2x a 75% chapter).
+  const weights = useMemo(() => {
+    const w = {};
+    for (const c of weak) w[c.fid] = Math.max(0.0001, 1 - c.acc);
+    return w;
+  }, [weak]);
+
+  const available = useMemo(() => {
+    if (!weak.length) return 0;
+    return buildPool(ctx, 'mc', { fileIds: new Set(weak.map((c) => c.fid)) }).length;
+  }, [weak, ctx]);
+
+  const start = () => {
+    const total = Math.min(count, available);
+    if (total <= 0) return;
+    const want = allocateCounts(weights, total);
+    const chosen = [];
+    const used = new Set();
+    for (const c of weak) {
+      const n = want[c.fid] || 0;
+      if (n <= 0) continue;
+      const pool = buildPool(ctx, 'mc', { fileIds: new Set([c.fid]) }).filter((x) => !used.has(x.id));
+      for (const p of shuffle(pool).slice(0, n)) { chosen.push(p); used.add(p.id); }
+    }
+    // A chapter may run out of questions before filling its slots; backfill the
+    // shortfall from the remaining pool, still weighted toward weaker chapters.
+    if (chosen.length < total) {
+      const rest = buildPool(ctx, 'mc', { fileIds: new Set(weak.map((c) => c.fid)) }).filter((x) => !used.has(x.id));
+      const extra = weightedSample(rest, (it) => weights[it.file_id] || 0.0001, Math.min(total - chosen.length, rest.length));
+      for (const p of extra) { chosen.push(p); used.add(p.id); }
+    }
+    const items = shuffle(chosen).slice(0, total);
+    if (!items.length) return;
+    sfxQuizStart();
+    window.dispatchEvent(new CustomEvent('mcat:startQuiz', { detail: { items } }));
+  };
+
+  return (
+    <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-5 space-y-4">
+      <div>
+        <h2 className="font-semibold text-[var(--text-strong)]">Target your weak spots</h2>
+        <p className="text-sm text-[var(--text-muted)] mt-1">
+          A quiz weighted toward your lowest-accuracy mastered chapters — the worse you score in a chapter, the more of its questions show up here.
+        </p>
+      </div>
+
+      {weak.length === 0 ? (
+        <div className="text-sm text-[var(--text-muted)] bg-[var(--bg-elev-soft)] border border-dashed border-[var(--border-soft)] rounded-lg p-3">
+          No eligible chapters yet. Master a chapter (in the Lessons tab) and answer some of its questions — your weakest mastered chapters will show up here.
+        </div>
+      ) : (
+        <>
+          <div className="space-y-1.5">
+            <div className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Pulling mostly from</div>
+            {weak.slice(0, 4).map((c) => (
+              <div key={c.fid} className="flex items-center justify-between gap-3 text-sm">
+                <span className="text-[var(--text)] truncate">{c.chapter}</span>
+                <span className={`shrink-0 font-medium ${c.acc < 0.6 ? 'text-[var(--danger-text)]' : c.acc < 0.8 ? 'text-[var(--warning-text-strong)]' : 'text-[var(--text-muted)]'}`}>
+                  {Math.round(c.acc * 100)}%
+                </span>
+              </div>
+            ))}
+            {weak.length > 4 && (
+              <div className="text-xs text-[var(--text-faint)]">+{weak.length - 4} more mastered chapter{weak.length - 4 === 1 ? '' : 's'} (fewer questions each)</div>
+            )}
+          </div>
+
+          <div>
+            <div className="text-xs uppercase tracking-wide text-[var(--text-muted)] mb-2">Questions</div>
+            <div className="grid grid-cols-4 gap-2">
+              {WEAK_SPOT_COUNTS.map((n) => (
+                <button
+                  key={n}
+                  onClick={() => setCount(n)}
+                  className={`text-sm py-2 rounded border ${count === n
+                    ? 'bg-[var(--accent)] text-white border-[var(--accent-border)]'
+                    : 'border-[var(--border)] hover:bg-[var(--bg-hover)] text-[var(--text)]'}`}
+                >
+                  {n}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <button
+            onClick={start}
+            disabled={available === 0}
+            className="w-full bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] disabled:opacity-40 rounded-lg py-2.5 text-sm font-medium"
+          >
+            {available === 0 ? 'No questions available' : `Start ${Math.min(count, available)}-question weak-spot quiz`}
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
 function StudyView() {
   // 'launcher' | 'active' | 'summary' | 'flashcards'
   const [phase, setPhase] = useState('launcher');
@@ -8647,6 +8774,7 @@ function StudyView() {
     <div className="space-y-5">
       <MiniExamCard />
       <QuizLauncher onStart={start} onStartFlashcards={startFlashcards} />
+      <WeakSpotQuiz />
     </div>
   );
   if (phase === 'flashcards') {
