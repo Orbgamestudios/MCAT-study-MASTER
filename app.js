@@ -7857,6 +7857,7 @@ function MCQuestion({ item, onAnswer, nextSlot, onFlag }) {
   // names the target (e.g. "Click the structure of leucine"). `choice_labels`
   // carries the hidden name per choice so the recorded answer stays readable.
   const imageChoices = !!item.q.choice_images;
+  const promptImage = item.q.image; // a structure shown above an "identify it" prompt
 
   const submit = (entry) => {
     if (picked !== null) return;
@@ -7871,9 +7872,15 @@ function MCQuestion({ item, onAnswer, nextSlot, onFlag }) {
 
   return (
     <div className="question-card space-y-4">
-      {/* Don't link molecule names in an image-choice prompt — that popup would
-          reveal the answer. Plain text there; MoleculeText everywhere else. */}
-      <p className="text-base leading-relaxed">{imageChoices ? item.q.question : <MoleculeText text={item.q.question} />}</p>
+      {/* A structure shown above an "identify it" prompt (same self-hosted PNGs). */}
+      {promptImage && (
+        <div className="bg-white rounded-lg p-3 flex items-center justify-center">
+          <img src={localStructure(promptImage)} alt="Amino acid structure" loading="lazy" className="max-w-full h-auto" style={{ maxHeight: '220px' }} />
+        </div>
+      )}
+      {/* Don't molecule-link the prompt or, when a structure is shown, the name
+          choices — those popups would reveal the answer. */}
+      <p className="text-base leading-relaxed">{imageChoices || promptImage ? item.q.question : <MoleculeText text={item.q.question} />}</p>
       <div className={imageChoices ? 'grid grid-cols-2 gap-2' : 'space-y-2'}>
         {shuffled.map((entry, i) => {
           const isPicked = picked && entry.origIdx === picked.origIdx;
@@ -7916,7 +7923,7 @@ function MCQuestion({ item, onAnswer, nextSlot, onFlag }) {
               className={`w-full text-left border rounded-lg px-3 py-2.5 text-sm transition-colors ${cls}`}
             >
               <span className="text-[var(--text-faint)] mr-2">{String.fromCharCode(65 + i)}.</span>
-              <MoleculeText text={entry.text} />
+              {promptImage ? entry.text : <MoleculeText text={entry.text} />}
             </button>
           );
         })}
