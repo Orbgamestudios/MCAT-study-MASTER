@@ -8025,10 +8025,27 @@ function ShortAnswerQuestion({ item, onAnswer, onAnswerOverride, nextSlot }) {
   const [auto, setAuto] = useState(null);
   const [autoBusy, setAutoBusy] = useState(false);
 
+  // Exact-match questions (e.g. amino-acid abbreviations) grade deterministically
+  // with no Gemini key, since the answer is one short string. Accept the ideal
+  // answer plus any key_points / explicit accept list, case-insensitively.
+  const exact = !!item.q.exact;
+  const norm = (s) => (s || '').trim().toLowerCase().replace(/\.+$/, '');
+  const accepted = exact
+    ? [item.q.ideal_answer, ...(item.q.key_points || []), ...(item.q.accept || [])].map(norm).filter(Boolean)
+    : null;
+  const [exactCorrect, setExactCorrect] = useState(null);
+
   const submit = async () => {
     setRevealed(true);
-    // Only run auto-grade when the user has a Gemini key configured.
-    // Otherwise fall back to manual Got it / Missed it as before.
+    // Exact match: grade locally and finalize immediately (no Gemini).
+    if (exact) {
+      const ok = accepted.includes(norm(text));
+      setExactCorrect(ok);
+      finalize(ok);
+      return;
+    }
+    // Otherwise auto-grade only when a Gemini key is configured; else fall back
+    // to manual Got it / Missed it.
     if (!apiKey || !text.trim()) return;
     setAutoBusy(true);
     try {
@@ -8096,12 +8113,20 @@ function ShortAnswerQuestion({ item, onAnswer, onAnswerOverride, nextSlot }) {
           disabled={!text.trim()}
           className="bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] disabled:opacity-40 rounded-lg px-4 py-2 text-sm font-medium"
         >
-          {apiKey ? 'Submit answer' : 'Reveal answer'}
+          {apiKey || exact ? 'Submit answer' : 'Reveal answer'}
         </button>
       ) : (
         <div className="bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg p-4 space-y-3">
+          {/* Exact-match verdict (deterministic, no Gemini). */}
+          {exact && (
+            <div className={`text-xs uppercase tracking-wide font-semibold px-2 py-0.5 rounded inline-block ${exactCorrect
+              ? 'bg-[var(--success-bg)] text-[var(--success-text)]'
+              : 'bg-[var(--danger-bg)] text-[var(--danger-text)]'}`}>
+              {exactCorrect ? '✓ Correct' : '✗ Incorrect'}
+            </div>
+          )}
           {/* Auto-grade panel (only when an API key is configured) */}
-          {apiKey && (
+          {apiKey && !exact && (
             <div className="border-b border-[var(--border-soft)] pb-3 -mt-1">
               {autoBusy ? (
                 <div className="flex items-center gap-2 text-sm text-[var(--accent-text)]">
@@ -8142,7 +8167,7 @@ function ShortAnswerQuestion({ item, onAnswer, onAnswerOverride, nextSlot }) {
             <div className="text-xs uppercase tracking-wide text-[var(--success-text)] mb-1">Ideal answer</div>
             <div className="text-sm text-[var(--text-strong)]"><MoleculeText text={item.q.ideal_answer} /></div>
           </div>
-          {item.q.key_points?.length > 0 && (
+          {!exact && item.q.key_points?.length > 0 && (
             <div>
               <div className="text-xs uppercase tracking-wide text-[var(--accent-text)] mb-1">Key points</div>
               <ul className="text-sm text-[var(--text)] list-disc pl-5 space-y-0.5">
@@ -8174,7 +8199,7 @@ function ShortAnswerQuestion({ item, onAnswer, onAnswerOverride, nextSlot }) {
           ) : (
             <div className="flex items-center justify-between gap-3 pt-2 border-t border-[var(--border-soft)]">
               <div className="text-xs text-[var(--text-faint)]">
-                {auto && typeof auto.passes === 'boolean' ? 'Auto-graded.' : 'Graded.'}
+                {exact || (auto && typeof auto.passes === 'boolean') ? 'Auto-graded.' : 'Graded.'}
               </div>
               {nextSlot}
             </div>

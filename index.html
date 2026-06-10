@@ -534,25 +534,33 @@
   :root[data-exp="on"][data-glass="on"] {
     --glass-filter: blur(10px) saturate(170%);
     --glass-btn-filter: blur(8px) saturate(170%);
-    --glass-inner: inset 0 -16px 32px -24px rgb(2 6 23 / 0.10);
-    --glass-ring: linear-gradient(135deg, rgb(255 255 255 / 0.55), rgb(255 255 255 / 0.10) 30%, rgb(255 255 255 / 0.02) 55%, rgb(255 255 255 / 0.22));
-    --glass-sheen: linear-gradient(115deg, rgb(255 255 255 / 0.16), rgb(255 255 255 / 0.05) 20%, transparent 45%, transparent 75%, rgb(255 255 255 / 0.07));
+    --glass-inner:
+      inset 0 -16px 32px -24px rgb(2 6 23 / 0.10),
+      inset 0 0 14px -6px rgb(255 255 255 / 0.22);
+    --glass-ring: linear-gradient(135deg, rgb(255 255 255 / 0.65), rgb(255 255 255 / 0.12) 30%, rgb(255 255 255 / 0.03) 55%, rgb(255 255 255 / 0.30));
+    --glass-sheen:
+      linear-gradient(115deg, rgb(255 255 255 / 0.18), rgb(255 255 255 / 0.05) 20%, transparent 45%, transparent 75%, rgb(255 255 255 / 0.08)),
+      radial-gradient(120% 60% at 50% -10%, rgb(255 255 255 / 0.12), transparent 60%),
+      radial-gradient(80% 50% at 8% 108%, rgb(255 255 255 / 0.07), transparent 55%);
   }
   :root[data-exp="on"][data-glass="on"][data-theme^="dark"] {
-    --glass-inner: inset 0 -16px 32px -24px rgb(0 0 0 / 0.45);
-    --glass-ring: linear-gradient(135deg, rgb(255 255 255 / 0.28), rgb(255 255 255 / 0.06) 30%, rgb(255 255 255 / 0.01) 55%, rgb(255 255 255 / 0.12));
-    --glass-sheen: linear-gradient(115deg, rgb(255 255 255 / 0.09), rgb(255 255 255 / 0.03) 20%, transparent 45%, transparent 75%, rgb(255 255 255 / 0.04));
+    --glass-inner:
+      inset 0 -16px 32px -24px rgb(0 0 0 / 0.45),
+      inset 0 0 14px -6px rgb(255 255 255 / 0.10);
+    --glass-ring: linear-gradient(135deg, rgb(255 255 255 / 0.35), rgb(255 255 255 / 0.07) 30%, rgb(255 255 255 / 0.02) 55%, rgb(255 255 255 / 0.16));
+    --glass-sheen:
+      linear-gradient(115deg, rgb(255 255 255 / 0.10), rgb(255 255 255 / 0.03) 20%, transparent 45%, transparent 75%, rgb(255 255 255 / 0.05)),
+      radial-gradient(120% 60% at 50% -10%, rgb(255 255 255 / 0.07), transparent 60%),
+      radial-gradient(80% 50% at 8% 108%, rgb(255 255 255 / 0.04), transparent 55%);
   }
-  /* Refraction: feDisplacementMap over the backdrop. Safari and Firefox
-     drop the entire backdrop-filter when a url() reference is present,
-     so this only upgrades on Chromium (not iOS: -webkit-touch-callout;
-     not Safari/macOS: -apple-system-body). */
-  @supports (not (-webkit-touch-callout: none)) and (not (font: -apple-system-body)) {
-    :root[data-exp="on"][data-glass="on"] {
-      --glass-filter: blur(10px) saturate(170%) url(#lg-dist);
-      --glass-btn-filter: blur(8px) saturate(170%) url(#lg-dist);
-    }
-  }
+  /* NOTE on real refraction: backdrop-filter: url(#feDisplacementMap)
+     was tried and reverted — Chromium composites SVG backdrop filters
+     in software, so over the animated canvas background even a single
+     small surface forced whole-page re-renders (measured: seconds-long
+     frames), and Safari/iOS drop the entire backdrop-filter when a
+     url() is present. The refraction look below is faked with static
+     optics instead: gradient edge ring, corner light bloom, and a
+     refractive inner edge glow. */
 
   :root[data-exp="on"][data-glass="on"] .rounded-2xl.bg-\[var\(--bg-card\)\],
   :root[data-exp="on"][data-glass="on"] .rounded-2xl.bg-\[var\(--bg-card-strong\)\],
@@ -667,17 +675,6 @@
 </style>
 </head>
 <body>
-<!-- Liquid-glass refraction filter (experimental UI). Referenced from CSS as
-     backdrop-filter: url(#lg-dist) on Chromium only — Safari/Firefox drop the
-     whole backdrop-filter when an SVG reference is present, so the CSS gates
-     it behind @supports (see the Part 2 glass block). -->
-<svg aria-hidden="true" focusable="false" style="position:absolute;width:0;height:0">
-  <filter id="lg-dist" x="-5%" y="-5%" width="110%" height="110%" color-interpolation-filters="sRGB">
-    <feTurbulence type="fractalNoise" baseFrequency="0.012 0.012" numOctaves="2" seed="7" result="noise"/>
-    <feGaussianBlur in="noise" stdDeviation="1.5" result="soft"/>
-    <feDisplacementMap in="SourceGraphic" in2="soft" scale="28" xChannelSelector="R" yChannelSelector="G"/>
-  </filter>
-</svg>
 <div id="root"></div>
 <script>
   // Crash diagnostics — installed BEFORE Babel/React so iOS Safari users (no devtools)
@@ -773,6 +770,6 @@
     });
   })();
 </script>
-<script type="text/babel" data-presets="react" src="app.js?v=171"></script>
+<script type="text/babel" data-presets="react" src="app.js?v=172"></script>
 </body>
 </html>
