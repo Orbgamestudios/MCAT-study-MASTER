@@ -522,6 +522,66 @@
   /* 44px minimum tap height on the primary tab bar. */
   :root[data-exp="on"] header nav button { min-height: 44px; }
 
+  /* ══ Experimental UI · Part 2: liquid glass ══════════════════════════
+     Frosted translucent skin, only when BOTH toggles are on. Applied to
+     top-level cards (.rounded-2xl with a --bg-card* background) and the
+     fixed header only — backdrop-filter is GPU-heavy on iOS Safari, so
+     nested boxes (rounded-xl/lg) stay solid. color-mix against
+     transparent scales each theme's own card alpha down, so all
+     palettes tune themselves without per-theme blocks. */
+  :root[data-exp="on"][data-glass="on"] {
+    --glass-filter: blur(20px) saturate(180%);
+    --glass-highlight: inset 0 1px 0 rgb(255 255 255 / 0.45);
+    --glass-inner: inset 0 -16px 32px -24px rgb(2 6 23 / 0.10);
+  }
+  :root[data-exp="on"][data-glass="on"][data-theme^="dark"] {
+    --glass-highlight: inset 0 1px 0 rgb(255 255 255 / 0.09);
+    --glass-inner: inset 0 -16px 32px -24px rgb(0 0 0 / 0.45);
+  }
+
+  :root[data-exp="on"][data-glass="on"] .rounded-2xl.bg-\[var\(--bg-card\)\],
+  :root[data-exp="on"][data-glass="on"] .rounded-2xl.bg-\[var\(--bg-card-strong\)\],
+  :root[data-exp="on"][data-glass="on"] .rounded-2xl.bg-\[var\(--bg-card-soft\)\] {
+    -webkit-backdrop-filter: var(--glass-filter);
+    backdrop-filter: var(--glass-filter);
+    border-color: color-mix(in srgb, var(--border-soft) 60%, transparent);
+    box-shadow: var(--glass-highlight), var(--glass-inner), var(--exp-card-shadow);
+  }
+  :root[data-exp="on"][data-glass="on"] .rounded-2xl.bg-\[var\(--bg-card\)\] {
+    background-color: color-mix(in srgb, var(--bg-card) 72%, transparent);
+  }
+  :root[data-exp="on"][data-glass="on"] .rounded-2xl.bg-\[var\(--bg-card-strong\)\] {
+    background-color: color-mix(in srgb, var(--bg-card-strong) 85%, transparent);
+  }
+  :root[data-exp="on"][data-glass="on"] .rounded-2xl.bg-\[var\(--bg-card-soft\)\] {
+    background-color: color-mix(in srgb, var(--bg-card-soft) 65%, transparent);
+  }
+
+  /* Frosted fixed header — content scrolls beneath it. */
+  :root[data-exp="on"][data-glass="on"] header.fixed {
+    background-color: color-mix(in srgb, var(--bg) 70%, transparent);
+    -webkit-backdrop-filter: var(--glass-filter);
+    backdrop-filter: var(--glass-filter);
+  }
+
+  /* A11y: Reduce Transparency → solid cards, no blur. Browsers that
+     don't know this media feature simply skip the block (glass stays). */
+  @media (prefers-reduced-transparency: reduce) {
+    :root[data-exp="on"][data-glass="on"] .rounded-2xl.bg-\[var\(--bg-card\)\],
+    :root[data-exp="on"][data-glass="on"] .rounded-2xl.bg-\[var\(--bg-card-strong\)\],
+    :root[data-exp="on"][data-glass="on"] .rounded-2xl.bg-\[var\(--bg-card-soft\)\] {
+      background-color: var(--bg-card-strong);
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
+      box-shadow: var(--exp-card-shadow);
+    }
+    :root[data-exp="on"][data-glass="on"] header.fixed {
+      background-color: var(--bg);
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
+    }
+  }
+
 </style>
 </head>
 <body>

@@ -132,9 +132,19 @@ follow the existing `tropicalBg` / `bgBlur` pattern exactly:
       Bank, CARS.
 
 **Part 2 — Liquid glass (under `[data-exp="on"][data-glass="on"]`)**
-- [ ] Author glass CSS (cards, highlights, shadows, alpha tuning per palette).
-- [ ] Add `prefers-reduced-transparency` fallback.
+- [x] Author glass CSS (cards, highlights, shadows, alpha tuning per palette).
+      Landed in `index.html`: blur(20px) saturate(180%) on top-level cards
+      (`.rounded-2xl` with a `--bg-card*` background) and the fixed header only —
+      nested boxes stay solid for iOS GPU headroom. Per-palette alpha tuning is
+      automatic: `color-mix(… 72%/85%/65%, transparent)` scales each theme's own
+      card alpha. Hairline top highlight + soft inner shadow, dimmer on dark.
+- [x] Add `prefers-reduced-transparency` fallback (solid `--bg-card-strong`,
+      blur off; browsers without the media feature keep glass).
 - [ ] Verify legibility on a CARS reading passage; check iOS Safari perf.
+      Legibility verified in preview: CARS passage ~16:1 (runner overlays solid
+      `--bg`, so glass never sits on the busy canvas there); dark mode card over
+      the dynamic night background ≈13:1. iOS Safari perf still needs an
+      on-device check.
 
 - [ ] Bump `app.js?v=` cache-bust.
 
