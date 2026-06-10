@@ -553,14 +553,21 @@
       radial-gradient(120% 60% at 50% -10%, rgb(255 255 255 / 0.07), transparent 60%),
       radial-gradient(80% 50% at 8% 108%, rgb(255 255 255 / 0.04), transparent 55%);
   }
-  /* NOTE on real refraction: backdrop-filter: url(#feDisplacementMap)
-     was tried and reverted — Chromium composites SVG backdrop filters
-     in software, so over the animated canvas background even a single
-     small surface forced whole-page re-renders (measured: seconds-long
-     frames), and Safari/iOS drop the entire backdrop-filter when a
-     url() is present. The refraction look below is faked with static
-     optics instead: gradient edge ring, corner light bloom, and a
-     refractive inner edge glow. */
+  /* Real refraction (feDisplacementMap over the backdrop) is Chromium-
+     only: Safari/iOS and Firefox drop the entire backdrop-filter when a
+     url() reference is present, hence the @supports gate (excludes iOS
+     via -webkit-touch-callout, macOS Safari via -apple-system-body).
+     Chromium composites SVG backdrop filters in software, so the ripple
+     is limited to SMALL surfaces (header chips, accent buttons); cards
+     and the header fake refraction with static optics instead (gradient
+     edge ring, corner bloom, refractive inner edge glow). If desktop
+     scrolling ever feels heavy with the dynamic background on, delete
+     this @supports block — everything else stands alone. */
+  @supports (not (-webkit-touch-callout: none)) and (not (font: -apple-system-body)) {
+    :root[data-exp="on"][data-glass="on"] {
+      --glass-btn-filter: blur(8px) saturate(170%) url(#lg-dist);
+    }
+  }
 
   :root[data-exp="on"][data-glass="on"] .rounded-2xl.bg-\[var\(--bg-card\)\],
   :root[data-exp="on"][data-glass="on"] .rounded-2xl.bg-\[var\(--bg-card-strong\)\],
@@ -675,6 +682,15 @@
 </style>
 </head>
 <body>
+<!-- Liquid-glass refraction filter — referenced as backdrop-filter url(#lg-dist)
+     from the Part 2 glass CSS, Chromium-only via @supports (see that block). -->
+<svg aria-hidden="true" focusable="false" style="position:absolute;width:0;height:0">
+  <filter id="lg-dist" x="-5%" y="-5%" width="110%" height="110%" color-interpolation-filters="sRGB">
+    <feTurbulence type="fractalNoise" baseFrequency="0.012 0.012" numOctaves="1" seed="7" result="noise"/>
+    <feGaussianBlur in="noise" stdDeviation="1.5" result="soft"/>
+    <feDisplacementMap in="SourceGraphic" in2="soft" scale="24" xChannelSelector="R" yChannelSelector="G"/>
+  </filter>
+</svg>
 <div id="root"></div>
 <script>
   // Crash diagnostics — installed BEFORE Babel/React so iOS Safari users (no devtools)

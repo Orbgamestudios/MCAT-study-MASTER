@@ -133,11 +133,17 @@ follow the existing `tropicalBg` / `bgBlur` pattern exactly:
 
 **Part 2 — Liquid glass (under `[data-exp="on"][data-glass="on"]`)**
 - [x] Author glass CSS (cards, highlights, shadows, alpha tuning per palette).
-      Landed in `index.html`: blur(20px) saturate(180%) on top-level cards
-      (`.rounded-2xl` with a `--bg-card*` background) and the fixed header only —
-      nested boxes stay solid for iOS GPU headroom. Per-palette alpha tuning is
-      automatic: `color-mix(… 72%/85%/65%, transparent)` scales each theme's own
-      card alpha. Hairline top highlight + soft inner shadow, dimmer on dark.
+      v2 ("clear glass", after feedback that v1 read frosted-plastic): cards
+      drop to blur(10px) + lower alpha (58/76/48% of each theme's own card
+      alpha via color-mix); every glass surface gets a gradient hairline ring
+      (::before), diagonal specular sheen + corner bloom (::after), and a
+      refractive inner edge glow. Header goes properly transparent (52% of
+      --bg); active nav tab, header buttons, and accent CTAs become
+      translucent glass chips with specular top edges. Real refraction
+      (feDisplacementMap via backdrop-filter: url(#lg-dist)) is Chromium-only
+      and software-composited, so it's @supports-gated off Apple browsers and
+      limited to small surfaces (header chips + accent buttons) — cards fake
+      it with the static optics. Nested boxes stay solid for iOS GPU headroom.
 - [x] Add `prefers-reduced-transparency` fallback (solid `--bg-card-strong`,
       blur off; browsers without the media feature keep glass).
 - [ ] Verify legibility on a CARS reading passage; check iOS Safari perf.
