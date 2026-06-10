@@ -8290,7 +8290,7 @@ function DrawPart({ part, onAnswer, nextSlot }) {
   const drawing = useRef(false);
   const last = useRef(null);
   const [revealed, setRevealed] = useState(false);
-  const [graded, setGraded] = useState(null); // null | true | false
+  const [advanced, setAdvanced] = useState(false); // true once skipped or continued
 
   useEffect(() => {
     const c = canvasRef.current;
