@@ -11295,7 +11295,10 @@ function LessonReader({ lesson, latestCorrect, completed, gate, quizPool, onBack
   const poolThrough = (end) => {
     const ids = new Set();
     for (let k = 0; k < end; k++) for (const id of (sections[k].check_ids || [])) ids.add(id);
-    return quizPool.filter((x) => ids.has(x.id));
+    // Draw-it-yourself items are self-graded, so they don't belong in the
+    // auto-graded, 100%-to-pass checkpoint and final pools (they stay available
+    // in per-section study quizzes).
+    return quizPool.filter((x) => ids.has(x.id) && !(x.mode === 'two_part' && (x.q?.parts || []).some((p) => p && p.draw)));
   };
   const startCheckpoint = (groupEndIndex) => {
     const pool = poolThrough(groupEndIndex);
