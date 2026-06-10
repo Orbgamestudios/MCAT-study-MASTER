@@ -452,6 +452,76 @@
   /* Dynamic background is applied entirely via JS (see app.js tropicalBg/getDynamicBg)
      so it works correctly for all colour palettes in both light and dark mode. */
 
+  /* ══ Experimental UI · Part 1: clean visual refresh ══════════════════
+     Everything below is scoped under :root[data-exp="on"] (Settings →
+     Experimental UI) and cannot affect the default look. The scope
+     prefix also outranks Tailwind's responsive/state variants, so any
+     variant whose value must survive the refresh is re-asserted inside
+     the media block / leading rules below. */
+
+  /* Type scale: 12 / 14 / 16 / 20 / 28, plus an untouched display tier
+     (text-4xl/5xl hero numerals). Micro 10/11px labels move up to 12px;
+     lg joins xl at 20px; 2xl/3xl collapse to 28px. The periodic table's
+     7/8px cell text is intentionally left alone. */
+  :root[data-exp="on"] .text-\[10px\],
+  :root[data-exp="on"] .text-\[11px\],
+  :root[data-exp="on"] .text-\[12px\] { font-size: 0.75rem; line-height: 1.3; }
+  :root[data-exp="on"] .text-xs   { line-height: 1.35; }
+  :root[data-exp="on"] .text-sm   { line-height: 1.45; }
+  :root[data-exp="on"] .text-base { line-height: 1.5; }
+  :root[data-exp="on"] .text-lg,
+  :root[data-exp="on"] .text-xl   { font-size: 1.25rem; line-height: 1.35; }
+  :root[data-exp="on"] .text-2xl,
+  :root[data-exp="on"] .text-3xl  { font-size: 1.75rem; line-height: 1.2; letter-spacing: -0.015em; }
+  :root[data-exp="on"] .text-4xl,
+  :root[data-exp="on"] .text-5xl  { letter-spacing: -0.02em; }
+  @media (min-width: 640px) {
+    :root[data-exp="on"] .sm\:text-xs   { font-size: 0.75rem; }
+    :root[data-exp="on"] .sm\:text-sm   { font-size: 0.875rem; }
+    :root[data-exp="on"] .sm\:text-base { font-size: 1rem; line-height: 1.5; }
+    :root[data-exp="on"] .sm\:text-lg   { font-size: 1.25rem; line-height: 1.35; }
+    :root[data-exp="on"] .sm\:text-3xl  { font-size: 1.75rem; line-height: 1.2; }
+    :root[data-exp="on"] .sm\:text-4xl  { font-size: 2.25rem; line-height: 1.1; }
+    :root[data-exp="on"] .sm\:text-5xl  { font-size: 3rem; line-height: 1.05; }
+  }
+  /* Deliberate leadings keep winning over the scale defaults above. */
+  :root[data-exp="on"] .leading-none    { line-height: 1; }
+  :root[data-exp="on"] .leading-tight   { line-height: 1.25; }
+  :root[data-exp="on"] .leading-snug    { line-height: 1.375; }
+  :root[data-exp="on"] .leading-relaxed { line-height: 1.625; }
+
+  /* Two UI weights: bold folds into semibold (500 / 600 only). */
+  :root[data-exp="on"] .font-bold { font-weight: 600; }
+
+  /* One control radius: the 4px tier (bare rounded on nav tabs, chips,
+     header buttons) and stray rounded-sm/md join rounded-lg at 8px.
+     Cards stay rounded-2xl, nested boxes stay rounded-xl. */
+  :root[data-exp="on"] .rounded,
+  :root[data-exp="on"] .rounded-sm,
+  :root[data-exp="on"] .rounded-md { border-radius: 0.5rem; }
+
+  /* One card surface: soft elevation everywhere, quiet borders on
+     containers. Interactive controls (buttons, inputs, selects) keep
+     the stronger --border for affordance. */
+  :root[data-exp="on"] { --exp-card-shadow: 0 1px 2px rgb(2 6 23 / 0.05), 0 12px 32px -16px rgb(2 6 23 / 0.18); }
+  :root[data-exp="on"][data-theme^="dark"] { --exp-card-shadow: 0 1px 2px rgb(0 0 0 / 0.35), 0 12px 32px -16px rgb(0 0 0 / 0.55); }
+  :root[data-exp="on"] .rounded-2xl { box-shadow: var(--exp-card-shadow); }
+  :root[data-exp="on"] div.border-\[var\(--border\)\] { border-color: var(--border-soft); }
+
+  /* Card padding collapses to one tier: p-6 cards step down to 20px so
+     every top-level card reads 16px mobile / 20px desktop. */
+  :root[data-exp="on"] .rounded-2xl.p-6 { padding: 1.25rem; }
+  @media (min-width: 640px) {
+    :root[data-exp="on"] .rounded-2xl.sm\:p-6 { padding: 1.25rem; }
+  }
+
+  /* Calmer accent: one tint strength across palettes (was 10–18%). */
+  :root[data-exp="on"] { --accent-soft: color-mix(in srgb, var(--accent) 10%, transparent); }
+  :root[data-exp="on"][data-theme^="dark"] { --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent); }
+
+  /* 44px minimum tap height on the primary tab bar. */
+  :root[data-exp="on"] header nav button { min-height: 44px; }
+
 </style>
 </head>
 <body>
@@ -550,6 +620,6 @@
     });
   })();
 </script>
-<script type="text/babel" data-presets="react" src="app.js?v=169"></script>
+<script type="text/babel" data-presets="react" src="app.js?v=170"></script>
 </body>
 </html>

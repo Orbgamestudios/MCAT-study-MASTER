@@ -31,6 +31,8 @@ const KEYS = {
   contributorMode: 'mcat:contributorMode', // boolean — show upload/publish/export panels in Library
   tropicalBg: 'mcat:tropicalBg',    // boolean — tropical island background
   bgBlur:     'mcat:bgBlur',        // 0-100 % — blur applied to the dynamic background canvas
+  experimentalUI: 'mcat:experimentalUI', // boolean — opt-in redesigned UI (sets data-exp on <html>)
+  glass:      'mcat:glass',         // boolean — liquid-glass skin; only applies when experimentalUI is on
   bankSeen: 'mcat:bankSeen', // timestamp — last time the user reviewed the Bank tab
   cars: 'mcat:cars', // { [date]: { score, total, completed_at } } — daily CARS results
   connectionsResults: 'mcat:connectionsResults', // { [date]: { solved, mistakes, completed_at } }
@@ -47,6 +49,7 @@ const KEYS = {
 const SYNC_STATE_KEYS = [
   'mcat:cars', 'mcat:connectionsResults', 'mcat:lessonProgress', 'mcat:lessonGates',
   'mcat:theme', 'mcat:volume', 'mcat:tropicalBg', 'mcat:bgBlur',
+  'mcat:experimentalUI', 'mcat:glass',
   'mcat:autoDownload', 'mcat:autoDownloadAll', 'mcat:contributorMode', 'mcat:reaudit', 'mcat:bankSeen',
 ];
 // Keys whose value is a { [id]: entry } map and must be merged per-entry (union,
@@ -4713,6 +4716,18 @@ function AppProvider({ children }) {
     storage.set(KEYS.bgBlur, clamped);
     setBgBlurState(clamped);
   }, []);
+  // Master switch for the redesigned UI. Off = the app renders exactly as before.
+  const [experimentalUI, setExperimentalUIState] = useState(() => !!storage.get(KEYS.experimentalUI, false));
+  const setExperimentalUI = useCallback((v) => {
+    storage.set(KEYS.experimentalUI, !!v);
+    setExperimentalUIState(!!v);
+  }, []);
+  // Liquid-glass skin. Only has any effect while experimentalUI is on.
+  const [glass, setGlassState] = useState(() => !!storage.get(KEYS.glass, false));
+  const setGlass = useCallback((v) => {
+    storage.set(KEYS.glass, !!v);
+    setGlassState(!!v);
+  }, []);
   const [volume, setVolumeState] = useState(() => {
     const v = storage.get(KEYS.volume, 1);
     return typeof v === 'number' && v >= 0 && v <= 1 ? v : 1;
@@ -4763,6 +4778,16 @@ function AppProvider({ children }) {
       return () => mq.removeEventListener('change', onChange);
     }
   }, [palette, mode]);
+
+  // Experimental UI: gate all redesigned visuals behind data-exp / data-glass on <html>.
+  // When off, the attributes are absent so none of the experimental CSS can match.
+  useEffect(() => {
+    const root = document.documentElement;
+    if (experimentalUI) root.setAttribute('data-exp', 'on');
+    else root.removeAttribute('data-exp');
+    if (experimentalUI && glass) root.setAttribute('data-glass', 'on');
+    else root.removeAttribute('data-glass');
+  }, [experimentalUI, glass]);
 
   // Dynamic background: animated fixed DOM layer behind #root.
   // Re-runs whenever the toggle, palette, or mode changes so the gradient
@@ -5111,6 +5136,8 @@ function AppProvider({ children }) {
       if (typeof merged['mcat:volume'] === 'number') setVolume(merged['mcat:volume']);
       if (typeof merged['mcat:tropicalBg'] === 'boolean') setTropicalBg(merged['mcat:tropicalBg']);
       if (typeof merged['mcat:bgBlur'] === 'number') setBgBlur(merged['mcat:bgBlur']);
+      if (typeof merged['mcat:experimentalUI'] === 'boolean') setExperimentalUI(merged['mcat:experimentalUI']);
+      if (typeof merged['mcat:glass'] === 'boolean') setGlass(merged['mcat:glass']);
       if (typeof merged['mcat:autoDownload'] === 'boolean') setAutoDownloadChapters(merged['mcat:autoDownload']);
       if (typeof merged['mcat:autoDownloadAll'] === 'boolean') setAutoDownloadAll(merged['mcat:autoDownloadAll']);
       if (typeof merged['mcat:contributorMode'] === 'boolean') setContributorMode(merged['mcat:contributorMode']);
@@ -5125,7 +5152,7 @@ function AppProvider({ children }) {
       try { await api.putState(merged); } catch {}
     }
     storage.set(KEYS.stateUpdatedAt, Date.now());
-  }, [api, setPalette, setMode, setVolume, setTropicalBg, setBgBlur, setAutoDownloadChapters, setAutoDownloadAll, setContributorMode, setReauditEnabled]);
+  }, [api, setPalette, setMode, setVolume, setTropicalBg, setBgBlur, setExperimentalUI, setGlass, setAutoDownloadChapters, setAutoDownloadAll, setContributorMode, setReauditEnabled]);
 
   // Pull + reconcile whenever a session becomes active (sign-in or app open).
   useEffect(() => {
@@ -5136,7 +5163,7 @@ function AppProvider({ children }) {
   // Settings changes (these live in React state) → debounced push.
   useEffect(() => {
     scheduleStatePush();
-  }, [palette, mode, volume, tropicalBg, bgBlur, autoDownloadChapters, autoDownloadAll, contributorMode, reauditEnabled, scheduleStatePush]);
+  }, [palette, mode, volume, tropicalBg, bgBlur, experimentalUI, glass, autoDownloadChapters, autoDownloadAll, contributorMode, reauditEnabled, scheduleStatePush]);
 
   // Progress/result writers dispatch mcat:stateDirty → debounced push.
   useEffect(() => {
@@ -5271,6 +5298,8 @@ function AppProvider({ children }) {
       contributorMode, setContributorMode,
       tropicalBg, setTropicalBg,
       bgBlur, setBgBlur,
+      experimentalUI, setExperimentalUI,
+      glass, setGlass,
       stateRev,
     }),
     [apiKey, setApiKey, files, setFiles, extractions, setExtraction, questions, setQuestionsFor,
@@ -5283,7 +5312,8 @@ function AppProvider({ children }) {
      autoDownloadAll, setAutoDownloadAll,
      contributorMode, setContributorMode,
      tropicalBg, setTropicalBg,
-     bgBlur, setBgBlur, stateRev]
+     bgBlur, setBgBlur,
+     experimentalUI, setExperimentalUI, glass, setGlass, stateRev]
   );
   return <AppCtx.Provider value={value}>{children}</AppCtx.Provider>;
 }
@@ -12424,7 +12454,7 @@ function StatsView() {
 
 // ---------- settings ----------
 function SettingsPanel({ onClose }) {
-  const { palette, mode, setPalette, setMode, apiKey, setApiKey, client, session, pendingSync, syncBusy, syncError, flushSync, volume, setVolume, autoDownloadChapters, setAutoDownloadChapters, autoDownloadAll, setAutoDownloadAll, contributorMode, setContributorMode, tropicalBg, setTropicalBg, bgBlur, setBgBlur, files } = useApp();
+  const { palette, mode, setPalette, setMode, apiKey, setApiKey, client, session, pendingSync, syncBusy, syncError, flushSync, volume, setVolume, autoDownloadChapters, setAutoDownloadChapters, autoDownloadAll, setAutoDownloadAll, contributorMode, setContributorMode, tropicalBg, setTropicalBg, bgBlur, setBgBlur, experimentalUI, setExperimentalUI, glass, setGlass, files } = useApp();
   const hasDownloadedChapters = files.some((f) => f.chapter_id);
   const [keyVal, setKeyVal] = useState(apiKey || '');
   const [keyShow, setKeyShow] = useState(false);
@@ -12536,6 +12566,32 @@ function SettingsPanel({ onClose }) {
               />
               <div className="text-[11px] text-[var(--text-faint)] mt-1">Softens the scene without dimming it. 0% sharp, 100% dreamy.</div>
             </div>
+          )}
+        </div>
+      </div>
+
+      <div>
+        <div className="text-xs uppercase tracking-wide text-[var(--text-muted)] mb-2">Experimental</div>
+        <div className="space-y-2">
+          <label className="flex items-center justify-between gap-3 bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg px-3 py-2.5 cursor-pointer">
+            <div className="text-sm min-w-0">
+              <div className="text-[var(--text)]">🧪 Experimental UI</div>
+              <div className="text-[11px] text-[var(--text-faint)] mt-0.5">
+                A cleaner, redesigned look. If anything seems off, turn this back off to return to the normal app.
+              </div>
+            </div>
+            <input type="checkbox" checked={experimentalUI} onChange={(e) => setExperimentalUI(e.target.checked)} className="w-4 h-4 shrink-0" />
+          </label>
+          {experimentalUI && (
+            <label className="flex items-center justify-between gap-3 bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg px-3 py-2.5 cursor-pointer">
+              <div className="text-sm min-w-0">
+                <div className="text-[var(--text)]">🫧 Liquid glass</div>
+                <div className="text-[11px] text-[var(--text-faint)] mt-0.5">
+                  Frosted translucent cards. Heavier on older phones — turn off if scrolling feels sluggish.
+                </div>
+              </div>
+              <input type="checkbox" checked={glass} onChange={(e) => setGlass(e.target.checked)} className="w-4 h-4 shrink-0" />
+            </label>
           )}
         </div>
       </div>
