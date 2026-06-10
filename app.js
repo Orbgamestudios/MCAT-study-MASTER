@@ -7845,6 +7845,11 @@ function localStructure(url) {
   }
   return url;
 }
+// True when an MC choice's value is an image (a structure) rather than text.
+function isImagePath(s) {
+  return typeof s === 'string' &&
+    (s.startsWith('assets/') || /pubchem\.ncbi/i.test(s) || /\.(png|jpe?g|svg|gif|webp)(\?|$)/i.test(s));
+}
 
 function MCQuestion({ item, onAnswer, nextSlot, onFlag }) {
   const [picked, setPicked] = useState(null);
@@ -7853,11 +7858,10 @@ function MCQuestion({ item, onAnswer, nextSlot, onFlag }) {
     return shuffle(arr);
   }, [item.id]);
 
-  // Image-choice MC: the choices are unnamed structure images and the prompt
-  // names the target (e.g. "Click the structure of leucine"). `choice_labels`
-  // carries the hidden name per choice so the recorded answer stays readable.
-  const imageChoices = !!item.q.choice_images;
-  const promptImage = item.q.image; // a structure shown above an "identify it" prompt
+  // Like a regular MC question, but any choice whose value is an image path
+  // (assets/aa/<cid>.png) renders as a molecule image instead of text.
+  const promptImage = item.q.image; // optional structure shown above the prompt
+  const choicesAreImages = (item.q.choices || []).some(isImagePath);
 
   const submit = (entry) => {
     if (picked !== null) return;
@@ -7872,16 +7876,17 @@ function MCQuestion({ item, onAnswer, nextSlot, onFlag }) {
 
   return (
     <div className="question-card space-y-4">
-      {/* A structure shown above an "identify it" prompt (same self-hosted PNGs). */}
+      {/* Optional structure shown above the prompt. PNGs are dark-on-transparent,
+          so they sit on white to stay visible in dark themes. */}
       {promptImage && (
         <div className="bg-white rounded-lg p-3 flex items-center justify-center">
-          <img src={localStructure(promptImage)} alt="Amino acid structure" loading="lazy" className="max-w-full h-auto" style={{ maxHeight: '220px' }} />
+          <img src={localStructure(promptImage)} alt="Molecule structure" loading="lazy" className="max-w-full h-auto" style={{ maxHeight: '220px' }} />
         </div>
       )}
-      {/* Don't molecule-link the prompt or, when a structure is shown, the name
-          choices — those popups would reveal the answer. */}
-      <p className="text-base leading-relaxed">{imageChoices || promptImage ? item.q.question : <MoleculeText text={item.q.question} />}</p>
-      <div className={imageChoices ? 'grid grid-cols-2 gap-2' : 'space-y-2'}>
+      {/* Plain prompt when the answers are structures, so the molecule named in
+          the prompt can't be tapped to reveal the answer. */}
+      <p className="text-base leading-relaxed">{promptImage || choicesAreImages ? item.q.question : <MoleculeText text={item.q.question} />}</p>
+      <div className="space-y-2">
         {shuffled.map((entry, i) => {
           const isPicked = picked && entry.origIdx === picked.origIdx;
           const isCorrect = entry.origIdx === item.q.correct_index;
@@ -7891,29 +7896,8 @@ function MCQuestion({ item, onAnswer, nextSlot, onFlag }) {
             else if (isPicked) cls = 'border-[var(--danger-border)] bg-[var(--danger-bg-strong)]';
             else cls = 'border-[var(--border-soft)] opacity-60';
           }
-          if (imageChoices) {
-            // PubChem PNGs are black-on-transparent, so each structure sits on white.
-            return (
-              <button
-                key={i}
-                onClick={() => submit(entry)}
-                disabled={picked !== null}
-                data-no-haptic
-                className={`border rounded-lg p-2 transition-colors ${cls}`}
-              >
-                <div className="text-[var(--text-faint)] text-xs mb-1">{String.fromCharCode(65 + i)}.</div>
-                <div className="bg-white rounded-md p-1.5 flex items-center justify-center">
-                  <img src={localStructure(entry.text)} alt="Amino acid structure" loading="lazy" className="max-w-full h-auto" style={{ maxHeight: '150px' }} />
-                </div>
-              </button>
-            );
-          }
-          // Molecule names are ALWAYS rendered as clickable links inside
-          // choice buttons — the molecule span stops propagation so taps on
-          // it open the structure popup, while taps on any other part of
-          // the button (the A./B. letter, surrounding words) still pick the
-          // choice. For choices that are nothing but a single molecule
-          // name, the letter prefix is the pick target.
+          // A regular MC choice button: an image when the choice is a structure,
+          // otherwise text (molecule names stay tappable to open the viewer).
           return (
             <button
               key={i}
@@ -7922,8 +7906,10 @@ function MCQuestion({ item, onAnswer, nextSlot, onFlag }) {
               data-no-haptic
               className={`w-full text-left border rounded-lg px-3 py-2.5 text-sm transition-colors ${cls}`}
             >
-              <span className="text-[var(--text-faint)] mr-2">{String.fromCharCode(65 + i)}.</span>
-              {promptImage ? entry.text : <MoleculeText text={entry.text} />}
+              <span className="text-[var(--text-faint)] mr-2 align-middle">{String.fromCharCode(65 + i)}.</span>
+              {isImagePath(entry.text)
+                ? <span className="bg-white rounded-md p-1 inline-flex align-middle"><img src={localStructure(entry.text)} alt="Molecule structure" loading="lazy" className="h-auto" style={{ maxHeight: '120px', maxWidth: '100%' }} /></span>
+                : <MoleculeText text={entry.text} />}
             </button>
           );
         })}
