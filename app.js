@@ -11193,7 +11193,10 @@ function LessonGateQuiz({ kind, pool, need, onPass, onCancel }) {
         <div className="h-full bg-[var(--accent-hover)] transition-all" style={{ width: `${((index + (answered ? 1 : 0)) / total) * 100}%` }} />
       </div>
       <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-5">
-        <MCQuestion key={item.id} item={item} onAnswer={handleAnswer} nextSlot={nextBtn} />
+        {/* Render by mode — a two-part item rendered as plain MC shows a blank card. */}
+        {item.mode === 'two_part'
+          ? <TwoPartQuestion key={item.id} item={item} onAnswer={handleAnswer} nextSlot={nextBtn} />
+          : <MCQuestion key={item.id} item={item} onAnswer={handleAnswer} nextSlot={nextBtn} />}
       </div>
       {showCalc && (
         <CalculatorModal
@@ -11498,12 +11501,13 @@ function LessonsView({ onGoToStudy }) {
     await api.login({ username: session.username, pin });
   };
 
-  // Full MC pool (regular MC only — pure multiple choice) for one chapter's file.
+  // Quiz pool for one chapter's lessons: MC plus two-part items (the gate quiz
+  // now renders each by mode). Short answer isn't auto-gradeable for a 100%
+  // checkpoint, so it stays excluded (buildPool 'mc' already omits it).
   const mcPoolFor = (chapterId) => {
     const fid = chapterToFile[chapterId];
     if (!fid) return [];
-    return buildPool({ files, questions, extractions, attempts }, 'mc', { fileIds: new Set([fid]) })
-      .filter((x) => x.mode === 'mc');
+    return buildPool({ files, questions, extractions, attempts }, 'mc', { fileIds: new Set([fid]) });
   };
 
   const downloadLesson = async (chapterId) => {
