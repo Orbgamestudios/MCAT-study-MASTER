@@ -11256,7 +11256,9 @@ function LessonGateQuiz({ kind, pool, need, onPass, onCancel }) {
         {/* Render by mode — a two-part item rendered as plain MC shows a blank card. */}
         {item.mode === 'two_part'
           ? <TwoPartQuestion key={item.id} item={item} onAnswer={handleAnswer} nextSlot={nextBtn} />
-          : <MCQuestion key={item.id} item={item} onAnswer={handleAnswer} nextSlot={nextBtn} />}
+          : item.mode === 'short'
+            ? <ShortAnswerQuestion key={item.id} item={item} onAnswer={handleAnswer} nextSlot={nextBtn} />
+            : <MCQuestion key={item.id} item={item} onAnswer={handleAnswer} nextSlot={nextBtn} />}
       </div>
       {showCalc && (
         <CalculatorModal
@@ -11567,10 +11569,16 @@ function LessonsView({ onGoToStudy }) {
   // Quiz pool for one chapter's lessons: MC plus two-part items (the gate quiz
   // now renders each by mode). Short answer isn't auto-gradeable for a 100%
   // checkpoint, so it stays excluded (buildPool 'mc' already omits it).
-  const mcPoolFor = (chapterId) => {
+  // The lesson quiz pool feeds the checkpoint and final-exam gates. It mixes the
+  // chapter's MC/two-part items with its short-answer items so sections whose
+  // checks are short-answer (e.g. the abbreviation drills) are gated too, and so
+  // short questions get randomly pulled into checkpoints and the final exam.
+  const lessonQuizPoolFor = (chapterId) => {
     const fid = chapterToFile[chapterId];
     if (!fid) return [];
-    return buildPool({ files, questions, extractions, attempts }, 'mc', { fileIds: new Set([fid]) });
+    const scope = { fileIds: new Set([fid]) };
+    const ctx = { files, questions, extractions, attempts };
+    return [...buildPool(ctx, 'mc', scope), ...buildPool(ctx, 'short', scope)];
   };
 
   const downloadLesson = async (chapterId) => {
@@ -11612,8 +11620,10 @@ function LessonsView({ onGoToStudy }) {
     const fid = chapterToFile[chapterId];
     if (!fid) return;
     const ctx = { files, questions, extractions, attempts };
-    // MC only — short-answer questions are excluded from lesson section quizzes.
-    const pool = buildPool(ctx, 'mc', { fileIds: new Set([fid]) });
+    // MC/two-part plus short-answer items, so a section whose checks are
+    // short-answer questions (the abbreviation drills) can be quizzed too.
+    const scope = { fileIds: new Set([fid]) };
+    const pool = [...buildPool(ctx, 'mc', scope), ...buildPool(ctx, 'short', scope)];
     const want = new Set(sec.check_ids || []);
     const checks = shuffle(pool.filter((x) => want.has(x.id)));
 
@@ -11707,7 +11717,7 @@ function LessonsView({ onGoToStudy }) {
         latestCorrect={latestCorrect}
         completed={!!progress[openId]}
         gate={gateFor(openId)}
-        quizPool={mcPoolFor(openId)}
+        quizPool={lessonQuizPoolFor(openId)}
         onBack={() => setOpenId(null)}
         onQuizSection={(sec) => quizSection(openId, sec)}
         onMarkComplete={() => markComplete(openId)}
