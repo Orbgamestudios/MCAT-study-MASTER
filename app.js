@@ -6051,11 +6051,14 @@ function buildPool({ files, questions, extractions, attempts }, mode, scope) {
     const meta = { file_id: f.file_id, chapter: f.chapter, subject: f.subject };
     if (mode === 'mc') {
       // Regular MC + two-part items share the same pool — two-part items keep their
-      // own mode so the runner dispatches them to TwoPartQuestion.
-      for (const q of (Array.isArray(questions[f.file_id].mc) ? questions[f.file_id].mc : [])) pool.push({ id: q.id, mode: 'mc', q, ...meta });
-      for (const q of (Array.isArray(questions[f.file_id].twoPart) ? questions[f.file_id].twoPart : [])) pool.push({ id: q.id, mode: 'two_part', q, ...meta });
+      // own mode so the runner dispatches them to TwoPartQuestion. A question may
+      // carry its own `subject` (e.g. a physics equation living in the cross-subject
+      // "Lab Techniques and Equations" chapter credits Physics); fall back to the
+      // chapter's subject. This per-item subject is what attempts are recorded under.
+      for (const q of (Array.isArray(questions[f.file_id].mc) ? questions[f.file_id].mc : [])) pool.push({ id: q.id, mode: 'mc', q, ...meta, subject: q.subject || f.subject });
+      for (const q of (Array.isArray(questions[f.file_id].twoPart) ? questions[f.file_id].twoPart : [])) pool.push({ id: q.id, mode: 'two_part', q, ...meta, subject: q.subject || f.subject });
     } else if (mode === 'short') {
-      for (const q of (Array.isArray(questions[f.file_id].short) ? questions[f.file_id].short : [])) pool.push({ id: q.id, mode, q, ...meta });
+      for (const q of (Array.isArray(questions[f.file_id].short) ? questions[f.file_id].short : [])) pool.push({ id: q.id, mode, q, ...meta, subject: q.subject || f.subject });
     } else if (mode === 'match') {
       const terms = (extractions[f.file_id].key_terms || []).slice();
       const GROUP = 5;
@@ -6078,6 +6081,12 @@ function buildPool({ files, questions, extractions, attempts }, mode, scope) {
     pool = pool.filter((x) => wrong.has(x.id));
   } else if (scope?.fileIds instanceof Set) {
     pool = pool.filter((x) => scope.fileIds.has(x.file_id));
+  }
+  // Optional per-question subject filter: lets "study Physics" pull only the
+  // physics-credited items out of a mixed-subject chapter. Match items are
+  // term-matching (no per-question subject), so they bypass this filter.
+  if (scope?.subjects instanceof Set && scope.subjects.size && mode !== 'match') {
+    pool = pool.filter((x) => scope.subjects.has(x.subject));
   }
   return pool;
 }
@@ -6118,34 +6127,55 @@ function QuizLauncher({ onStart, onStartFlashcards }) {
     [files, extractions, questions]
   );
 
-  // Tree: { [subject]: { chapters: [file] } }
+  // A chapter credits one or more subjects: a normal chapter credits only its own
+  // f.subject, but a cross-subject chapter (e.g. "Lab Techniques and Equations")
+  // credits the per-question subjects of its items. We list the chapter under each
+  // credited subject so "study Physics" surfaces its physics-credited questions.
+  const SEP = '';
+  const selKey = (subject, fileId) => `${subject}${SEP}${fileId}`;
+  const fileSubjects = useCallback((f) => {
+    const qb = questions[f.file_id] || {};
+    const subs = new Set();
+    for (const arr of [qb.mc, qb.twoPart, qb.short]) {
+      if (Array.isArray(arr)) for (const q of arr) subs.add(q.subject || f.subject);
+    }
+    if (!subs.size) subs.add(f.subject);
+    return subs;
+  }, [questions]);
+
+  // Tree: { [creditSubject]: [file, ...] }
   const grouped = useMemo(() => {
     const g = {};
     for (const f of readyChapters) {
-      if (!g[f.subject]) g[f.subject] = [];
-      g[f.subject].push(f);
+      for (const subj of fileSubjects(f)) (g[subj] = g[subj] || []).push(f);
     }
-    for (const k of Object.keys(g)) {
-      g[k].sort((a, b) => a.chapter.localeCompare(b.chapter, undefined, { numeric: true }));
+    for (const key of Object.keys(g)) {
+      g[key].sort((a, b) => a.chapter.localeCompare(b.chapter, undefined, { numeric: true }));
     }
     return g;
-  }, [readyChapters]);
+  }, [readyChapters, fileSubjects]);
 
-  // Selected file_ids — default to all ready chapters.
-  const [selected, setSelected] = useState(() => new Set(readyChapters.map((f) => f.file_id)));
+  // Every valid (subject, file) selection key for the current ready chapters.
+  const allKeys = useMemo(() => {
+    const s = new Set();
+    for (const f of readyChapters) for (const subj of fileSubjects(f)) s.add(selKey(subj, f.file_id));
+    return s;
+  }, [readyChapters, fileSubjects]);
+
+  // Selected (subject, file) pairs. Default (empty) is filled to "all" by the
+  // re-sync effect below.
+  const [selected, setSelected] = useState(() => new Set());
   // Subjects collapsed by default — open to drill down into individual chapters.
   const [openSubjects, setOpenSubjects] = useState({});
-  // Re-sync selection if the set of ready chapters changes (e.g. user pulled a new bank).
+  // Re-sync selection when the ready set changes: drop stale keys, and default to
+  // everything when nothing valid remains (first load / new bank pulled).
   useEffect(() => {
     setSelected((prev) => {
-      const valid = new Set(readyChapters.map((f) => f.file_id));
       const next = new Set();
-      for (const id of prev) if (valid.has(id)) next.add(id);
-      // If nothing is left selected (e.g. first load), default to all.
-      if (next.size === 0) for (const id of valid) next.add(id);
-      return next;
+      for (const key of prev) if (allKeys.has(key)) next.add(key);
+      return next.size ? next : new Set(allKeys);
     });
-  }, [readyChapters]);
+  }, [allKeys]);
 
   const wrongCount = useMemo(() => {
     const w = new Set();
@@ -6153,7 +6183,19 @@ function QuizLauncher({ onStart, onStartFlashcards }) {
     return w.size;
   }, [attempts]);
 
-  const scope = drillMisses ? { misses: true } : { fileIds: selected };
+  // Split the selected (subject, file) pairs into the file and subject filter sets
+  // that buildPool consumes (file ∈ fileIds AND credited-subject ∈ subjects).
+  const { selFiles, selSubjects } = useMemo(() => {
+    const fileSet = new Set(), subjSet = new Set();
+    for (const key of selected) {
+      const i = key.indexOf(SEP);
+      subjSet.add(key.slice(0, i));
+      fileSet.add(key.slice(i + 1));
+    }
+    return { selFiles: fileSet, selSubjects: subjSet };
+  }, [selected]);
+
+  const scope = drillMisses ? { misses: true } : { fileIds: selFiles, subjects: selSubjects };
   const pool = useMemo(() => buildPool(ctx, mode, scope), [ctx, mode, drillMisses, selected]);
 
   if (!readyChapters.length) {
@@ -6170,37 +6212,39 @@ function QuizLauncher({ onStart, onStartFlashcards }) {
     ['match', 'Matching'],
   ];
 
-  const subjectFileIds = (subject) => grouped[subject].map((f) => f.file_id);
-  const isSubjectFully = (subject) => subjectFileIds(subject).every((id) => selected.has(id));
-  const isSubjectPartial = (subject) => !isSubjectFully(subject) && subjectFileIds(subject).some((id) => selected.has(id));
-  const toggleChapter = (fileId) => {
+  const subjectKeys = (subject) => (grouped[subject] || []).map((f) => selKey(subject, f.file_id));
+  const isSubjectFully = (subject) => subjectKeys(subject).every((key) => selected.has(key));
+  const isSubjectPartial = (subject) => !isSubjectFully(subject) && subjectKeys(subject).some((key) => selected.has(key));
+  const toggleChapter = (subject, fileId) => {
     setSelected((prev) => {
       const next = new Set(prev);
-      if (next.has(fileId)) next.delete(fileId); else next.add(fileId);
+      const key = selKey(subject, fileId);
+      if (next.has(key)) next.delete(key); else next.add(key);
       return next;
     });
   };
   const toggleSubject = (subject) => {
     setSelected((prev) => {
       const next = new Set(prev);
-      const ids = subjectFileIds(subject);
-      const allOn = ids.every((id) => next.has(id));
-      if (allOn) for (const id of ids) next.delete(id);
-      else for (const id of ids) next.add(id);
+      const keys = subjectKeys(subject);
+      const allOn = keys.every((key) => next.has(key));
+      if (allOn) for (const key of keys) next.delete(key);
+      else for (const key of keys) next.add(key);
       return next;
     });
   };
-  const selectAll = () => setSelected(new Set(readyChapters.map((f) => f.file_id)));
+  const selectAll = () => setSelected(new Set(allKeys));
   const selectNone = () => setSelected(new Set());
-  // Chapters whose lesson final exam was passed 100% (mastered), from the
-  // lesson gating store. Lets the student drill only material they've mastered.
-  const masteredFileIds = useMemo(() => {
+  // Chapters whose lesson final exam was passed 100% (mastered), from the lesson
+  // gating store. Lets the student drill only material they've mastered. Keyed by
+  // (subject, file) so a cross-subject chapter is selectable per credited subject.
+  const masteredKeys = useMemo(() => {
     const g = storage.get(KEYS.lessonGates, {}) || {};
     const out = new Set();
-    for (const f of readyChapters) if (f.chapter_id && g[f.chapter_id]?.mastered) out.add(f.file_id);
+    for (const f of readyChapters) if (f.chapter_id && g[f.chapter_id]?.mastered) for (const subj of fileSubjects(f)) out.add(selKey(subj, f.file_id));
     return out;
-  }, [readyChapters]);
-  const selectMastered = () => setSelected(new Set(masteredFileIds));
+  }, [readyChapters, fileSubjects]);
+  const selectMastered = () => setSelected(new Set(masteredKeys));
 
   return (
     <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-5 space-y-5">
@@ -6232,7 +6276,7 @@ function QuizLauncher({ onStart, onStartFlashcards }) {
               <span className="text-[var(--text-fainter)]">·</span>
               <button onClick={selectNone} className="text-[var(--text-muted)] hover:underline">None</button>
               <span className="text-[var(--text-fainter)]">·</span>
-              {masteredFileIds.size > 0 ? (
+              {masteredKeys.size > 0 ? (
                 <button onClick={selectMastered} className="text-[var(--accent-text)] hover:underline" title="Select only chapters you've mastered (100% on the final exam)">Mastered only</button>
               ) : (
                 <span className="text-[var(--text-fainter)] cursor-not-allowed" title="No mastered chapters yet — pass a lesson's final exam (100%) to master it">Mastered only</span>
@@ -6249,7 +6293,7 @@ function QuizLauncher({ onStart, onStartFlashcards }) {
           <div className="border border-[var(--border-soft)] rounded-lg divide-y divide-[var(--border-soft)] max-h-96 overflow-y-auto">
             {Object.entries(grouped).map(([subject, items]) => {
               const open = !!openSubjects[subject];
-              const subjectSelectedCount = items.filter((f) => selected.has(f.file_id)).length;
+              const subjectSelectedCount = items.filter((f) => selected.has(selKey(subject, f.file_id))).length;
               return (
                 <div key={subject}>
                   <div className="flex items-center gap-2 px-3 py-2 hover:bg-[var(--bg-hover-soft)]">
@@ -6284,8 +6328,8 @@ function QuizLauncher({ onStart, onStartFlashcards }) {
                         <label key={f.file_id} className="flex items-center gap-3 px-3 py-1.5 cursor-pointer hover:bg-[var(--bg-hover-soft)] rounded">
                           <input
                             type="checkbox"
-                            checked={selected.has(f.file_id)}
-                            onChange={() => toggleChapter(f.file_id)}
+                            checked={selected.has(selKey(subject, f.file_id))}
+                            onChange={() => toggleChapter(subject, f.file_id)}
                             className="w-4 h-4 accent-[var(--accent)]"
                           />
                           <span className="text-sm text-[var(--text)] flex-1">{f.chapter}</span>
@@ -6351,7 +6395,7 @@ function QuizLauncher({ onStart, onStartFlashcards }) {
           practice. Disabled when no selected chapter has key_terms (or
           while drillMisses is on — flashcards don't have a "missed" set). */}
       {(() => {
-        const flashPool = drillMisses ? [] : buildFlashcardPool(ctx, selected);
+        const flashPool = drillMisses ? [] : buildFlashcardPool(ctx, selFiles);
         return (
           <button
             onClick={() => {
