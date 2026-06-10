@@ -7819,6 +7819,33 @@ function RelatedFlashcards({ item }) {
   );
 }
 
+// Amino-acid structures are served from same-origin PNGs under assets/aa/<cid>.png
+// (committed in this repo) so they always load. This maps any structure URL a
+// question might carry -- the new relative path, or a PubChem URL baked into an
+// already-downloaded chapter bank -- to that local file, so cached question banks
+// keep working without a re-download. Unknown URLs are returned unchanged.
+const AA_NAME_TO_CID = {
+  glycine: 750, 'l-alanine': 5950, 'l-valine': 6287, 'l-leucine': 6106,
+  'l-isoleucine': 6306, 'l-proline': 145742, 'l-methionine': 6137,
+  'l-phenylalanine': 6140, 'l-tyrosine': 6057, 'l-tryptophan': 6305,
+  'l-serine': 5951, 'l-threonine': 6288, 'l-cysteine': 5862,
+  'l-asparagine': 6267, 'l-glutamine': 5961, 'l-aspartic acid': 5960,
+  'l-glutamic acid': 33032, 'l-lysine': 5962, 'l-arginine': 6322,
+  'l-histidine': 6274,
+};
+function localStructure(url) {
+  if (typeof url !== 'string' || !url) return url;
+  if (url.startsWith('assets/')) return url; // already local
+  let m = url.match(/[?&]cid=(\d+)/) || url.match(/\/cid\/(\d+)/);
+  if (m) return `assets/aa/${m[1]}.png`;
+  m = url.match(/\/name\/([^/]+)\/PNG/i);
+  if (m) {
+    const cid = AA_NAME_TO_CID[decodeURIComponent(m[1]).toLowerCase()];
+    if (cid) return `assets/aa/${cid}.png`;
+  }
+  return url;
+}
+
 function MCQuestion({ item, onAnswer, nextSlot, onFlag }) {
   const [picked, setPicked] = useState(null);
   const shuffled = useMemo(() => {
@@ -7869,7 +7896,7 @@ function MCQuestion({ item, onAnswer, nextSlot, onFlag }) {
               >
                 <div className="text-[var(--text-faint)] text-xs mb-1">{String.fromCharCode(65 + i)}.</div>
                 <div className="bg-white rounded-md p-1.5 flex items-center justify-center">
-                  <img src={entry.text} alt="Amino acid structure" loading="lazy" className="max-w-full h-auto" style={{ maxHeight: '150px' }} />
+                  <img src={localStructure(entry.text)} alt="Amino acid structure" loading="lazy" className="max-w-full h-auto" style={{ maxHeight: '150px' }} />
                 </div>
               </button>
             );
@@ -8200,7 +8227,7 @@ function SinglePart({ part, onAnswer, nextSlot, continueLabel }) {
       {hasImage && (
         <div className="bg-white rounded-lg p-3 flex items-center justify-center">
           <img
-            src={part.image}
+            src={localStructure(part.image)}
             alt="Molecular structure"
             loading="lazy"
             className="max-w-full h-auto"
@@ -8345,7 +8372,7 @@ function DrawPart({ part, onAnswer, nextSlot }) {
           <div className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Actual structure</div>
           {part.image && (
             <div className="bg-white rounded-lg p-3 flex items-center justify-center border border-[var(--border-soft)]">
-              <img src={part.image} alt="Correct structure" loading="lazy" className="max-w-full h-auto" style={{ maxHeight: '220px' }} />
+              <img src={localStructure(part.image)} alt="Correct structure" loading="lazy" className="max-w-full h-auto" style={{ maxHeight: '220px' }} />
             </div>
           )}
           {part.explanation && (
