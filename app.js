@@ -8110,7 +8110,10 @@ function TwoPartQuestion({ item, onAnswer, nextSlot, onFlag }) {
       onAnswer({ ...res, isInterim: true });
       setPartIdx((i) => i + 1);
     } else {
-      const allCorrect = nextResults.every((r) => r.correct);
+      // Parts flagged noScore (e.g. the practice drawing) don't count toward the
+      // combined result, so skipping or attempting them can't change your score.
+      const scored = nextResults.filter((r) => !r.noScore);
+      const allCorrect = scored.length ? scored.every((r) => r.correct) : true;
       setDone(true);
       onAnswer({
         correct: allCorrect,
@@ -8304,17 +8307,20 @@ function DrawPart({ part, onAnswer, nextSlot }) {
   const up = () => { drawing.current = false; last.current = null; };
   const clear = () => { const c = canvasRef.current; c.getContext('2d').clearRect(0, 0, c.width, c.height); };
 
-  const grade = (correct) => {
-    if (graded !== null) return;
-    setGraded(correct);
-    playSfx(correct ? 'correct' : 'wrong');
-    if (correct) vibrateCorrect(); else vibrateWrong();
-    onAnswer({ correct, user_answer: correct ? 'drew it (self-graded)' : 'missed (self-graded)' });
+  // The drawing is practice only — it is never scored. `noScore` tells
+  // TwoPartQuestion to leave this part out of the combined correct/incorrect,
+  // so skipping (or attempting) the sketch can't help or hurt your score.
+  const finish = (userAnswer) => {
+    if (advanced) return;
+    setAdvanced(true);
+    onAnswer({ correct: true, noScore: true, user_answer: userAnswer });
   };
 
   return (
     <div className="question-card space-y-3">
-      <p className="text-base leading-relaxed">{part.question}</p>
+      <p className="text-base leading-relaxed">
+        {part.question} <span className="text-xs text-[var(--text-faint)] whitespace-nowrap">(practice — not scored)</span>
+      </p>
       <div className="rounded-lg overflow-hidden border border-[var(--border)] bg-white">
         <canvas
           ref={canvasRef}
@@ -8327,12 +8333,13 @@ function DrawPart({ part, onAnswer, nextSlot }) {
           onPointerCancel={up}
         />
       </div>
-      <div className="flex items-center gap-2">
-        <button onClick={clear} className="text-xs px-3 py-1.5 rounded border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--bg-hover)]">Clear</button>
-        {!revealed && (
-          <button onClick={() => setRevealed(true)} className="ml-auto text-xs px-3 py-1.5 rounded font-medium bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)]">Reveal structure →</button>
-        )}
-      </div>
+      {!revealed && !advanced && (
+        <div className="flex items-center gap-2 flex-wrap">
+          <button onClick={clear} className="text-xs px-3 py-1.5 rounded border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--bg-hover)]">Clear</button>
+          <button onClick={() => finish('skipped drawing')} className="ml-auto text-xs px-3 py-1.5 rounded border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--bg-hover)]">Skip</button>
+          <button onClick={() => setRevealed(true)} className="text-xs px-3 py-1.5 rounded font-medium bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)]">Reveal structure →</button>
+        </div>
+      )}
       {revealed && (
         <div className="space-y-3">
           <div className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Actual structure</div>
@@ -8344,20 +8351,14 @@ function DrawPart({ part, onAnswer, nextSlot }) {
           {part.explanation && (
             <div className="answer-reveal bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg p-3 text-sm text-[var(--text)]"><MoleculeText text={part.explanation} /></div>
           )}
-          {graded === null ? (
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-xs text-[var(--text-muted)] mr-auto">Did your drawing match?</span>
-              <button onClick={() => grade(false)} className="text-sm px-3 py-1.5 border border-[var(--danger-border)] text-[var(--danger-text)] hover:bg-[var(--danger-bg)] rounded">Missed it</button>
-              <button onClick={() => grade(true)} className="text-sm px-3 py-1.5 border border-[var(--success-border)] text-[var(--success-text)] hover:bg-[var(--success-bg)] rounded">Got it</button>
-            </div>
-          ) : (
-            <div className="flex items-center justify-between gap-3">
-              <span className={graded ? 'text-[var(--success-text)] font-medium text-sm' : 'text-[var(--danger-text)] font-medium text-sm'}>{graded ? 'Marked correct' : 'Marked missed'}</span>
-              {nextSlot}
+          {!advanced && (
+            <div className="flex justify-end">
+              <button onClick={() => finish('drew it')} className="text-sm px-4 py-2 rounded font-medium bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)]">Continue →</button>
             </div>
           )}
         </div>
       )}
+      {advanced && nextSlot}
     </div>
   );
 }
