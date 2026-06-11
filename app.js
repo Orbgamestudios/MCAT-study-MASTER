@@ -3121,53 +3121,22 @@ function vibrateWrong() { vibrate(220); }
 // HUD click helper — pairs the tap sound with a subtle vibration.
 function hudClick() { sfxTap(); vibrateTap(); }
 
-// ---------- dynamic favicon (matches the in-app gradient logo per theme) ----------
-const THEME_ICON_COLORS = {
-  dark:      { accent: '#4f46e5', accent2: '#d946ef' },
-  light:     { accent: '#4f46e5', accent2: '#a21caf' },
-  warm:      { accent: '#c2410c', accent2: '#b45309' },
-  darkwarm:  { accent: '#e8833a', accent2: '#d99a3a' },
-  green:     { accent: '#58cc02', accent2: '#1cb0f6' },
-  darkgreen: { accent: '#58cc02', accent2: '#1cb0f6' },
-};
-function updateFavicon(theme) {
+// ---------- app icon ----------
+// The brand icon is the static chrome "M" (icon-512-v2.png / apple-touch-icon-v2.png,
+// linked from index.html). This re-asserts those links after each theme change so no
+// stale icon is left behind — it no longer generates a per-theme gradient (that older
+// behaviour is what kept overriding the home-screen icon on iOS).
+function updateFavicon() {
   try {
-    const pal = THEME_ICON_COLORS[theme] || THEME_ICON_COLORS.dark;
-    const SIZE = 64;
-    const canvas = document.createElement('canvas');
-    canvas.width = SIZE; canvas.height = SIZE;
-    const ctx = canvas.getContext('2d');
-    const r = 14;
-    // Rounded-square gradient (mirrors the header logo)
-    ctx.beginPath();
-    ctx.moveTo(r, 0);
-    ctx.arcTo(SIZE, 0, SIZE, SIZE, r);
-    ctx.arcTo(SIZE, SIZE, 0, SIZE, r);
-    ctx.arcTo(0, SIZE, 0, 0, r);
-    ctx.arcTo(0, 0, SIZE, 0, r);
-    ctx.closePath();
-    const grad = ctx.createLinearGradient(0, 0, SIZE, SIZE);
-    grad.addColorStop(0, pal.accent);
-    grad.addColorStop(1, pal.accent2);
-    ctx.fillStyle = grad;
-    ctx.fill();
-    // "M" inset for recognizability
-    ctx.fillStyle = 'rgba(255,255,255,0.92)';
-    ctx.font = 'bold 38px ui-sans-serif, system-ui, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('M', SIZE / 2, SIZE / 2 + 2);
-    const dataUrl = canvas.toDataURL('image/png');
-    // Replace existing icon links with our generated one.
     document.querySelectorAll('link[rel="icon"], link[rel="apple-touch-icon"]').forEach((el) => el.parentNode.removeChild(el));
     const link = document.createElement('link');
     link.rel = 'icon';
     link.type = 'image/png';
-    link.href = dataUrl;
+    link.href = 'icon-512-v2.png';
     document.head.appendChild(link);
     const apple = document.createElement('link');
     apple.rel = 'apple-touch-icon';
-    apple.href = dataUrl;
+    apple.href = 'apple-touch-icon-v2.png';
     document.head.appendChild(apple);
   } catch {}
 }
