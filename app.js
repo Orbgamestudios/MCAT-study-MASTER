@@ -9041,7 +9041,7 @@ function BirdHero({ username, quote }) {
 
       {/* Bird — in flow, so the card grows to contain it and the gap above stays constant. */}
       <img
-        src="assets/bird.webp"
+        src="assets/bird.png"
         alt=""
         draggable="false"
         className="block select-none pointer-events-none"
