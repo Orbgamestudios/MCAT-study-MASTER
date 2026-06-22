@@ -22,6 +22,8 @@
       if (palette === 'warm') return dark ? 'darkwarm' : 'warm';
       if (palette === 'duo') return dark ? 'darkgreen' : 'green';
       if (palette === 'tropical') return dark ? 'darktropical' : 'tropical';
+      if (palette === 'madison') return dark ? 'darkmadison' : 'madison';
+      if (palette === 'gambit') return dark ? 'darkgambit' : 'gambit';
       return dark ? 'dark' : 'light';
     }
     try {
@@ -35,6 +37,7 @@
           dark: ['cold', 'dark'], light: ['cold', 'light'], system: ['cold', 'system'],
           warm: ['warm', 'light'], darkwarm: ['warm', 'dark'],
           green: ['duo', 'light'], darkgreen: ['duo', 'dark'],
+          gambit: ['gambit', 'light'], darkgambit: ['gambit', 'dark'],
         };
         var m = map[raw] || ['cold', 'system'];
         palette = m[0]; mode = m[1];
@@ -401,6 +404,80 @@
     --danger-bg-strong: rgba(127,29,29,0.35);
     --danger-text: #fca5a5;
     --danger-border: #ef4444;
+    --warning-bg: rgba(120,53,15,0.45);
+    --warning-text: #fcd34d;
+    --warning-text-strong: #fbbf24;
+  }
+
+  :root[data-theme="gambit"] {
+    --bg: #f7e8ff;
+    --bg-card: rgba(255,255,255,0.82);
+    --bg-card-strong: rgba(255,255,255,0.94);
+    --bg-card-soft: rgba(250,232,255,0.62);
+    --bg-elev: rgba(243,214,255,0.82);
+    --bg-elev-soft: rgba(252,244,255,0.66);
+    --bg-hover: rgba(226,196,255,0.72);
+    --bg-hover-soft: rgba(243,214,255,0.50);
+    --border: #c084fc;
+    --border-soft: #e9d5ff;
+    --border-strong: #a855f7;
+    --text: #26113f;
+    --text-strong: #17052b;
+    --text-muted: #5b367f;
+    --text-faint: #7e4fa3;
+    --text-fainter: #a977ca;
+    --accent: #8b5cf6;
+    --accent-hover: #7c3aed;
+    --accent-text: #6d28d9;
+    --accent-border: #a855f7;
+    --accent-soft: rgba(168,85,247,0.16);
+    --accent-2: #db2777;
+    --accent-2-text: #be185d;
+    --success-bg: rgba(209,250,229,0.82);
+    --success-bg-strong: rgba(167,243,208,0.9);
+    --success-text: #065f46;
+    --success-border: #10b981;
+    --danger-bg: rgba(254,226,226,0.82);
+    --danger-bg-strong: rgba(254,202,202,0.9);
+    --danger-text: #991b1b;
+    --danger-border: #dc2626;
+    --warning-bg: rgba(254,243,199,0.82);
+    --warning-text: #92400e;
+    --warning-text-strong: #b45309;
+  }
+
+  :root[data-theme="darkgambit"] {
+    --bg: #07030f;
+    --bg-card: rgba(22,8,38,0.82);
+    --bg-card-strong: rgba(27,10,48,0.94);
+    --bg-card-soft: rgba(22,8,38,0.55);
+    --bg-elev: rgba(8,3,18,0.92);
+    --bg-elev-soft: rgba(16,5,32,0.66);
+    --bg-hover: rgba(51,17,82,0.72);
+    --bg-hover-soft: rgba(38,12,66,0.52);
+    --border: #5b21b6;
+    --border-soft: #331155;
+    --border-strong: #a855f7;
+    --text: #efe4ff;
+    --text-strong: #fff7ff;
+    --text-muted: #c4a3f5;
+    --text-faint: #9367c8;
+    --text-fainter: #68438d;
+    --accent: #a855f7;
+    --accent-hover: #c084fc;
+    --accent-text: #d8b4fe;
+    --accent-border: #d946ef;
+    --accent-soft: rgba(168,85,247,0.19);
+    --accent-2: #f472b6;
+    --accent-2-text: #f9a8d4;
+    --success-bg: rgba(6,78,59,0.45);
+    --success-bg-strong: rgba(6,95,70,0.35);
+    --success-text: #34d399;
+    --success-border: #10b981;
+    --danger-bg: rgba(127,29,75,0.45);
+    --danger-bg-strong: rgba(127,29,75,0.35);
+    --danger-text: #f9a8d4;
+    --danger-border: #ec4899;
     --warning-bg: rgba(120,53,15,0.45);
     --warning-text: #fcd34d;
     --warning-text-strong: #fbbf24;
@@ -786,6 +863,6 @@
     });
   })();
 </script>
-<script type="text/babel" data-presets="react" src="app.js?v=180"></script>
+<script type="text/babel" data-presets="react" src="app.js?v=181"></script>
 </body>
 </html>

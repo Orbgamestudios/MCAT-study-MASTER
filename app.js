@@ -127,7 +127,7 @@ const LESSON_FINAL_Q = 30;      // cumulative MC questions for the final exam
 // Theme is a (palette, mode) pair. Palette picks the colour family; mode picks
 // light/dark, or follows the OS when 'system'. The pair resolves to one of the
 // six concrete data-theme values the CSS defines.
-const PALETTES = ['cold', 'warm', 'duo', 'tropical', 'madison'];
+const PALETTES = ['cold', 'warm', 'duo', 'tropical', 'madison', 'gambit'];
 const MODES = ['light', 'dark', 'system'];
 function systemPrefersDark() {
   try { return window.matchMedia('(prefers-color-scheme: dark)').matches; }
@@ -139,6 +139,7 @@ function dataThemeFor(palette, mode) {
   if (palette === 'duo') return dark ? 'darkgreen' : 'green';
   if (palette === 'tropical') return dark ? 'darktropical' : 'tropical';
   if (palette === 'madison') return dark ? 'darkmadison' : 'madison';
+  if (palette === 'gambit') return dark ? 'darkgambit' : 'gambit';
   return dark ? 'dark' : 'light'; // cold
 }
 // ---------- dynamic background — Canvas 2D renderer ----------
@@ -635,6 +636,42 @@ function _initMadison(w, h, isDark) {
 
 // Sum-of-sines pseudo-noise — deterministic given (x, seed) so a ridge
 // silhouette is stable across frames. Returns a 0..1 height factor.
+function _initGambit(w, h, isDark) {
+  return {
+    cards: Array.from({ length: 9 }, (_, i) => ({
+      x: _rnd(-w * 0.15, w * 1.15),
+      y: _rnd(h * 0.08, h * 0.86),
+      w: _rnd(28, 46),
+      rot: _rnd(-0.9, 0.9),
+      spin: _rnd(-0.012, 0.012),
+      drift: _rnd(0.18, 0.48),
+      bob: _rnd(5, 18),
+      ph: _pi2(),
+      suit: ['♦', '♣', '♥', '♠'][i % 4],
+      hot: Math.random() < 0.58,
+    })),
+    sparks: Array.from({ length: isDark ? 150 : 115 }, () => ({
+      x: _rnd(0, w),
+      y: _rnd(0, h),
+      r: _rnd(0.7, 2.5),
+      vx: _rnd(-0.25, 0.9),
+      vy: _rnd(-0.75, -0.08),
+      ph: _pi2(),
+      hue: _rnd(272, 322),
+      op: _rnd(0.26, 0.86),
+    })),
+    bands: Array.from({ length: 7 }, (_, i) => ({
+      y: h * _rnd(0.08, 0.92),
+      amp: _rnd(16, 48),
+      width: _rnd(20, 64),
+      sp: _rnd(0.004, 0.012),
+      ph: _pi2(),
+      hue: i % 3 === 0 ? 292 : (i % 3 === 1 ? 266 : 186),
+      alpha: _rnd(0.10, 0.26),
+    })),
+  };
+}
+
 function _ridgeHeight(x, seed) {
   return (
     0.50 * (0.5 + 0.5 * Math.sin(x * 0.0042 + seed)) +
@@ -2585,6 +2622,103 @@ function _drawMadison(ctx, isDark, state, t, py, w, h) {
   if (!isDark) _drawStormFX(ctx, rain, w, h);
 }
 
+function _drawGambit(ctx, isDark, state, t, py, w, h) {
+  const bg = ctx.createLinearGradient(0, 0, w, h);
+  if (isDark) {
+    bg.addColorStop(0, '#07030f');
+    bg.addColorStop(0.28, '#17052d');
+    bg.addColorStop(0.58, '#270943');
+    bg.addColorStop(1, '#050814');
+  } else {
+    bg.addColorStop(0, '#fff5ff');
+    bg.addColorStop(0.28, '#f4dcff');
+    bg.addColorStop(0.62, '#ddc3ff');
+    bg.addColorStop(1, '#e8f8ff');
+  }
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, w, h);
+
+  const core = ctx.createRadialGradient(w * 0.72, h * 0.18 + py * 0.25, 0, w * 0.72, h * 0.18 + py * 0.25, Math.max(w, h) * 0.62);
+  core.addColorStop(0, isDark ? 'rgba(210,70,255,0.34)' : 'rgba(168,85,247,0.28)');
+  core.addColorStop(0.45, isDark ? 'rgba(89,39,180,0.18)' : 'rgba(236,72,153,0.14)');
+  core.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = core;
+  ctx.fillRect(0, 0, w, h);
+
+  ctx.save();
+  ctx.globalCompositeOperation = isDark ? 'lighter' : 'source-over';
+  for (const b of state.bands) {
+    const y = b.y + py * 0.35 + Math.sin(t * b.sp + b.ph) * b.amp;
+    const grad = ctx.createLinearGradient(0, y - b.width, w, y + b.width);
+    grad.addColorStop(0, `hsla(${b.hue}, 95%, ${isDark ? 56 : 48}%, 0)`);
+    grad.addColorStop(0.45, `hsla(${b.hue}, 95%, ${isDark ? 62 : 44}%, ${b.alpha})`);
+    grad.addColorStop(0.55, `hsla(${b.hue + 24}, 100%, ${isDark ? 70 : 54}%, ${b.alpha * 1.35})`);
+    grad.addColorStop(1, `hsla(${b.hue}, 95%, ${isDark ? 56 : 48}%, 0)`);
+    ctx.strokeStyle = grad;
+    ctx.lineWidth = b.width;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(-80, y + h * 0.16);
+    ctx.bezierCurveTo(w * 0.24, y - h * 0.10, w * 0.68, y + h * 0.24, w + 80, y - h * 0.12);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  for (const s of state.sparks) {
+    s.x += s.vx;
+    s.y += s.vy;
+    if (s.x > w + 10) s.x = -10;
+    if (s.x < -10) s.x = w + 10;
+    if (s.y < -12) { s.y = h + 12; s.x = _rnd(0, w); }
+    const tw = 0.55 + 0.45 * Math.sin(t * 0.05 + s.ph);
+    ctx.beginPath();
+    ctx.arc(s.x, s.y + py * 0.18, s.r * tw, 0, Math.PI * 2);
+    ctx.fillStyle = `hsla(${s.hue}, 100%, ${isDark ? 68 : 44}%, ${s.op * tw})`;
+    ctx.fill();
+  }
+
+  for (const c of state.cards) {
+    c.x += c.drift;
+    c.rot += c.spin;
+    if (c.x > w + c.w * 2) {
+      c.x = -c.w * 2;
+      c.y = _rnd(h * 0.08, h * 0.86);
+    }
+    const cw = c.w;
+    const ch = cw * 1.42;
+    const cy = c.y + Math.sin(t * 0.025 + c.ph) * c.bob + py * 0.22;
+    ctx.save();
+    ctx.translate(c.x, cy);
+    ctx.rotate(c.rot + Math.sin(t * 0.01 + c.ph) * 0.08);
+    if (c.hot) {
+      ctx.globalCompositeOperation = 'lighter';
+      const halo = ctx.createRadialGradient(0, 0, 0, 0, 0, cw * 1.7);
+      halo.addColorStop(0, isDark ? 'rgba(230,88,255,0.62)' : 'rgba(168,85,247,0.30)');
+      halo.addColorStop(0.45, isDark ? 'rgba(236,72,153,0.22)' : 'rgba(236,72,153,0.13)');
+      halo.addColorStop(1, 'rgba(236,72,153,0)');
+      ctx.fillStyle = halo;
+      ctx.fillRect(-cw * 1.8, -cw * 1.8, cw * 3.6, cw * 3.6);
+      ctx.globalCompositeOperation = 'source-over';
+    }
+    ctx.fillStyle = isDark ? 'rgba(255,245,255,0.92)' : 'rgba(255,255,255,0.96)';
+    ctx.strokeStyle = c.hot ? '#d946ef' : (isDark ? '#7c3aed' : '#9333ea');
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.roundRect(-cw / 2, -ch / 2, cw, ch, Math.max(4, cw * 0.12));
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = (c.suit === '♥' || c.suit === '♦') ? '#be123c' : '#2e1065';
+    ctx.font = `${Math.max(13, cw * 0.42)}px Georgia, serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(c.suit, 0, 0);
+    ctx.restore();
+  }
+
+  ctx.fillStyle = isDark ? 'rgba(3,0,10,0.20)' : 'rgba(255,255,255,0.16)';
+  ctx.fillRect(0, h * 0.78, w, h * 0.22);
+}
+
 // ── main entry points ─────────────────────────────────────────────────────────
 function applyDynamicBg(palette, isDark) {
   stopDynamicBg();
@@ -2599,6 +2733,7 @@ function applyDynamicBg(palette, isDark) {
     duo:   { day:'#3e9e20', night:'#010d01' },
     tropical: { day:'#34a2cc', night:'#020810' },
     madison: { day:'#9ec9e8', night:'#020414' },
+    gambit: { day:'#f4dcff', night:'#07030f' },
   };
   const edge = (edgeColors[palette] || edgeColors.tropical)[isDark ? 'night' : 'day'];
   document.documentElement.style.background = edge;
@@ -2624,6 +2759,7 @@ function applyDynamicBg(palette, isDark) {
     if (palette === 'warm')     return _initWarm(w(), h());
     if (palette === 'duo')      return _initDuo(w(), h());
     if (palette === 'madison')  return _initMadison(w(), h(), isDark);
+    if (palette === 'gambit')   return _initGambit(w(), h(), isDark);
     return _initTropical(w(), h(), isDark);
   };
   state = buildState();
@@ -2640,6 +2776,7 @@ function applyDynamicBg(palette, isDark) {
     else if (palette === 'warm')    _drawWarm(ctx, isDark, state, t, py, cw, ch);
     else if (palette === 'duo')     _drawDuo(ctx, isDark, state, t, py, cw, ch);
     else if (palette === 'madison') _drawMadison(ctx, isDark, state, t, py, cw, ch);
+    else if (palette === 'gambit')  _drawGambit(ctx, isDark, state, t, py, cw, ch);
     else                            _drawTropical(ctx, isDark, state, t, py, cw, ch);
   };
   animId = requestAnimationFrame(draw);
@@ -2676,6 +2813,8 @@ function parseStoredTheme() {
     darkwarm: { palette: 'warm', mode: 'dark' },
     green: { palette: 'duo', mode: 'light' },
     darkgreen: { palette: 'duo', mode: 'dark' },
+    gambit: { palette: 'gambit', mode: 'light' },
+    darkgambit: { palette: 'gambit', mode: 'dark' },
   };
   return legacy[raw] || { palette: 'cold', mode: 'system' };
 }
@@ -12528,6 +12667,7 @@ function SettingsPanel({ onClose }) {
     ['duo', '🗿', 'Rio'],
     ['tropical', '🌴', 'Tropical'],
     ['madison', '🏛️', 'Madison'],
+    ['gambit', '🃏', 'Gambit'],
   ];
   const modeOpts = [
     ['light', '☀️', 'Light'],
@@ -12577,13 +12717,14 @@ function SettingsPanel({ onClose }) {
           <label className="flex items-center justify-between gap-3 bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg px-3 py-2.5 cursor-pointer">
             <div className="text-sm min-w-0">
               <div className="text-[var(--text)]">
-                {palette === 'cold' ? '❄️' : palette === 'warm' ? '🍂' : palette === 'duo' ? '⛰️' : palette === 'madison' ? '🏛️' : '🌴'} Dynamic background
+                {palette === 'cold' ? '❄️' : palette === 'warm' ? '🍂' : palette === 'duo' ? '⛰️' : palette === 'madison' ? '🏛️' : palette === 'gambit' ? '🃏' : '🌴'} Dynamic background
               </div>
               <div className="text-[11px] text-[var(--text-faint)] mt-0.5">
                 {palette === 'cold' ? 'Winter snow + mountain range background.'
                   : palette === 'warm' ? 'Fall trees + mountain range background.'
                   : palette === 'duo' ? 'Rio de Janeiro with Christ the Redeemer.'
                   : palette === 'madison' ? 'Madison, WI skyline at night with the Capitol dome over Lake Monona — lit windows, occasional shooting stars, cars on Lakeshore Drive, and slow drifting clouds.'
+                  : palette === 'gambit' ? 'Charged playing cards, violet kinetic energy, and drifting neon sparks.'
                   : 'Tropical beach with palm trees, breaking waves, and a crab that wanders past once in a while.'}{' '}
                 Follows your light/dark mode.
               </div>
