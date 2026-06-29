@@ -6,7 +6,8 @@ const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta';
 const UPLOAD_BASE = 'https://generativelanguage.googleapis.com/upload/v1beta';
 
 // Cloudflare Worker backend (accounts, attempt sync, stats, leaderboard).
-const API_BASE = 'https://mcat-api.solitary-sky-76c1.workers.dev';
+const API_DIRECT_BASE = 'https://mcat-api.solitary-sky-76c1.workers.dev';
+const API_BASE = window.__MCAT_LEGACY_BOOT__ ? '/api' : API_DIRECT_BASE;
 
 // How many of each item to pre-generate per chapter. Tune freely.
 const DEFAULT_MC_COUNT = 15;
