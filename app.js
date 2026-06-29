@@ -9177,9 +9177,6 @@ function FreePassagePractice() {
     setSelectedKey(key);
     storage.set('mcat:freePassageSection', key);
   };
-  const openFullscreen = () => {
-    window.location.href = selected.url;
-  };
 
   return (
     <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-5 space-y-4">
@@ -9217,33 +9214,19 @@ function FreePassagePractice() {
             <div className="text-sm font-medium text-[var(--text-strong)] truncate">{selected.label}: {selected.title}</div>
             <div className="text-[11px] text-[var(--text-faint)] truncate">{selected.url}</div>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <button
-              onClick={openFullscreen}
-              className="text-xs px-3 py-1.5 rounded font-medium bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)]"
-            >
-              Fullscreen
-            </button>
-            <a
-              href={selected.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-xs px-3 py-1.5 border border-[var(--border)] rounded text-[var(--text-muted)] hover:bg-[var(--bg-hover)]"
-            >
-              Open tab
-            </a>
-          </div>
+          <a
+            href={selected.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="shrink-0 text-xs px-3 py-1.5 border border-[var(--border)] rounded text-[var(--text-muted)] hover:bg-[var(--bg-hover)]"
+          >
+            Open tab
+          </a>
         </div>
         <div className="min-h-[18rem] flex items-center justify-center p-5 text-center">
           <div className="max-w-md space-y-3">
             <div className="text-sm font-medium text-[var(--text-strong)]">Embedded view is blocked by Khan Academy.</div>
-            <div className="text-sm text-[var(--text-muted)]">Use Fullscreen to replace this app window with the practice page, or Open tab to keep the app open separately.</div>
-            <button
-              onClick={openFullscreen}
-              className="inline-flex px-4 py-2 rounded font-medium bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)]"
-            >
-              Open {selected.label} fullscreen
-            </button>
+            <div className="text-sm text-[var(--text-muted)]">Use Open tab to launch the selected practice page while keeping the app open.</div>
           </div>
         </div>
       </div>
