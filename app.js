@@ -2849,12 +2849,26 @@ const CARS_DISCIPLINES = [
 function todayStr(d = new Date()) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
+const CARS_DAILY_COUNT = 2;
+function carsDateKey(dateStr, slot = 1) {
+  return slot === 1 ? dateStr : `${dateStr}-${slot}`;
+}
+function carsBaseDate(dateKey) {
+  return String(dateKey || '').replace(/-\d+$/, '');
+}
+function carsSlotFor(dateKey) {
+  const m = /-(\d+)$/.exec(String(dateKey || ''));
+  return m ? Math.max(1, Number(m[1]) || 1) : 1;
+}
+function carsSlotLabel(slot) {
+  return `Passage ${slot}`;
+}
 // Rotate discipline by day-of-year so consecutive days differ.
-function carsDisciplineFor(dateStr) {
-  const d = new Date(dateStr + 'T00:00:00');
+function carsDisciplineFor(dateStr, slot = 1) {
+  const d = new Date(carsBaseDate(dateStr) + 'T00:00:00');
   const start = new Date(d.getFullYear(), 0, 0);
   const dayOfYear = Math.floor((d - start) / 86400000);
-  return CARS_DISCIPLINES[dayOfYear % CARS_DISCIPLINES.length];
+  return CARS_DISCIPLINES[(dayOfYear + slot - 1) % CARS_DISCIPLINES.length];
 }
 function getCarsResults() { try { return JSON.parse(localStorage.getItem('mcat:cars')) || {}; } catch { return {}; } }
 function setCarsResult(date, result) {
@@ -9695,24 +9709,24 @@ function CarsRunner({ date, payload, onClose, alreadyDone }) {
 }
 
 // Home card — today's CARS. Generates the set if nobody has yet (and the user has a key).
-function DailyCarsCard() {
+function DailyCarsSlotCard({ date, slot }) {
   const { api, client, apiKey, session } = useApp();
-  const today = todayStr();
+  const slotLabel = carsSlotLabel(slot);
   // Seed from the local cache so the card shows instantly if today was already downloaded.
-  const cached = getCarsCachePayload(today);
+  const cached = getCarsCachePayload(date);
   const [state, setState] = useState(cached ? 'ready' : 'loading'); // loading | ready | generating | unavailable | error
   const [payload, setPayload] = useState(cached);
   const [err, setErr] = useState('');
   const [running, setRunning] = useState(false);
   const [tick, setTick] = useState(0);
-  const result = getCarsResults()[today];
+  const result = getCarsResults()[date];
 
   useEffect(() => {
     let cancelled = false;
-    if (!getCarsCachePayload(today)) { setState('loading'); }
+    if (!getCarsCachePayload(date)) { setState('loading'); }
     setErr('');
-    api.getCars(today)
-      .then((d) => { if (!cancelled) { setCarsCachePayload(today, d.payload); setPayload(d.payload); setState('ready'); } })
+    api.getCars(date)
+      .then((d) => { if (!cancelled) { setCarsCachePayload(date, d.payload); setPayload(d.payload); setState('ready'); } })
       .catch(async (e) => {
         if (cancelled) return;
         if (e.status !== 404) { setErr(e.message); setState('error'); return; }
@@ -9724,7 +9738,7 @@ function DailyCarsCard() {
           // then have Gemini write only the (hard) questions about it.
           let gen = null;
           try {
-            const src = await api.getCarsPassage(today);
+            const src = await api.getCarsPassage(date);
             if (src?.passage) {
               const questions = await client.generateCarsQuestions(src.passage, src.discipline);
               if (questions?.length) {
@@ -9740,23 +9754,23 @@ function DailyCarsCard() {
           } catch { /* fall through to full generation */ }
           // Fallback: Gemini writes the passage too (if Gutenberg fetch failed).
           if (!gen) {
-            const discipline = carsDisciplineFor(today);
+            const discipline = carsDisciplineFor(date, slot);
             gen = await client.generateDailyCars(discipline);
           }
           if (!gen?.questions?.length) throw new Error('Generation returned no questions.');
-          await api.postCars({ date: today, discipline: gen.discipline || carsDisciplineFor(today), title: gen.title || '', payload: gen });
-          if (!cancelled) { setCarsCachePayload(today, gen); setPayload(gen); setState('ready'); }
+          await api.postCars({ date, discipline: gen.discipline || carsDisciplineFor(date, slot), title: gen.title || '', payload: gen });
+          if (!cancelled) { setCarsCachePayload(date, gen); setPayload(gen); setState('ready'); }
         } catch (ge) {
           // Someone else may have generated it in the meantime — try one more fetch.
           try {
-            const d2 = await api.getCars(today);
-            if (!cancelled) { setCarsCachePayload(today, d2.payload); setPayload(d2.payload); setState('ready'); return; }
+            const d2 = await api.getCars(date);
+            if (!cancelled) { setCarsCachePayload(date, d2.payload); setPayload(d2.payload); setState('ready'); return; }
           } catch {}
           if (!cancelled) { setErr(ge.message); setState('error'); }
         }
       });
     return () => { cancelled = true; };
-  }, [api, today, tick, apiKey, session]);
+  }, [api, date, slot, tick, apiKey, session]);
 
   const card = (inner) => (
     <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-5">{inner}</div>
@@ -9765,13 +9779,13 @@ function DailyCarsCard() {
   if (state === 'loading') return card(<div className="text-sm text-[var(--text-muted)]">Checking today's CARS…</div>);
   if (state === 'generating') return card(
     <div>
-      <h2 className="font-semibold text-[var(--text-strong)]">Daily CARS</h2>
+      <h2 className="font-semibold text-[var(--text-strong)]">Daily CARS · {slotLabel}</h2>
       <p className="text-sm text-[var(--text-muted)] mt-1">Generating today's passage with Gemini — about 20 seconds…</p>
     </div>
   );
   if (state === 'unavailable') return card(
     <div>
-      <h2 className="font-semibold text-[var(--text-strong)]">Daily CARS</h2>
+      <h2 className="font-semibold text-[var(--text-strong)]">Daily CARS · {slotLabel}</h2>
       <p className="text-sm text-[var(--text-muted)] mt-1">
         Today's CARS hasn't been generated yet. It appears once someone signed in with a Gemini API key opens the app.
       </p>
@@ -9780,7 +9794,7 @@ function DailyCarsCard() {
   if (state === 'error') return card(
     <div>
       <div className="flex items-center justify-between gap-3">
-        <h2 className="font-semibold text-[var(--text-strong)]">Daily CARS</h2>
+        <h2 className="font-semibold text-[var(--text-strong)]">Daily CARS · {slotLabel}</h2>
         <button onClick={() => setTick((t) => t + 1)} className="shrink-0 text-xs px-3 py-1.5 border border-[var(--border)] rounded hover:bg-[var(--bg-hover)]">Retry</button>
       </div>
       <p className="text-sm text-[var(--danger-text)] mt-1 break-words whitespace-pre-wrap">{err}</p>
@@ -9794,7 +9808,7 @@ function DailyCarsCard() {
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <h2 className="font-semibold text-[var(--text-strong)]">Today's CARS</h2>
+              <h2 className="font-semibold text-[var(--text-strong)]">Today's CARS · {slotLabel}</h2>
               {!result && <span className="w-2 h-2 rounded-full bg-[var(--danger-border)]" />}
             </div>
             <div className="text-sm text-[var(--text)] mt-0.5">{payload?.title}</div>
@@ -9813,7 +9827,7 @@ function DailyCarsCard() {
       </div>
       {running && payload && (
         <CarsRunner
-          date={today}
+          date={date}
           payload={payload}
           alreadyDone={!!result}
           onClose={() => { setRunning(false); setTick((t) => t + 1); }}
@@ -9824,6 +9838,18 @@ function DailyCarsCard() {
 }
 
 // CARS archive — every past day, openable from the Bank tab.
+// Home card — today's CARS. Generates two sets if nobody has yet (and the user has a key).
+function DailyCarsCard() {
+  const today = todayStr();
+  return (
+    <div className="space-y-3">
+      {Array.from({ length: CARS_DAILY_COUNT }).map((_, i) => (
+        <DailyCarsSlotCard key={i + 1} date={carsDateKey(today, i + 1)} slot={i + 1} />
+      ))}
+    </div>
+  );
+}
+
 function CarsArchive() {
   const { api } = useApp();
   const [days, setDays] = useState(null);
@@ -9879,11 +9905,13 @@ function CarsArchive() {
         <ul className="divide-y divide-[var(--border-soft)]">
           {visibleDays.map((d) => {
             const r = results[d.date];
+            const baseDate = carsBaseDate(d.date);
+            const slot = carsSlotFor(d.date);
             return (
               <li key={d.date} className="py-2.5 flex items-center gap-3">
                 <div className="min-w-0 flex-1">
                   <div className="text-sm text-[var(--text)]">
-                    <span className="font-medium">{d.date}{d.date === today ? ' · today' : ''}</span>
+                    <span className="font-medium">{baseDate}{baseDate === today ? ' · today' : ''}{slot > 1 ? ` · ${carsSlotLabel(slot)}` : ''}</span>
                     {d.title && <span className="text-[var(--text-muted)]"> — {d.title}</span>}
                   </div>
                   <div className="text-xs text-[var(--text-faint)]">
@@ -14900,9 +14928,12 @@ function Shell() {
   const [carsReady, setCarsReady] = useState(false);
   const recheckCars = useCallback(() => {
     const d = todayStr();
-    api.getCars(d)
-      .then((res) => { setCarsCachePayload(d, res.payload); setCarsReady(!getCarsResults()[d]); })
-      .catch(() => { setCarsReady(false); });
+    const keys = Array.from({ length: CARS_DAILY_COUNT }).map((_, i) => carsDateKey(d, i + 1));
+    Promise.all(keys.map((key) =>
+      api.getCars(key)
+        .then((res) => { setCarsCachePayload(key, res.payload); return !getCarsResults()[key]; })
+        .catch(() => false)
+    )).then((ready) => setCarsReady(ready.some(Boolean)));
   }, [api]);
   useEffect(() => { recheckCars(); }, [recheckCars]);
   useEffect(() => {

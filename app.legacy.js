@@ -2812,11 +2812,31 @@ function todayStr(d) {
   }
   return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, '0') + "-" + String(d.getDate()).padStart(2, '0');
 }
-function carsDisciplineFor(dateStr) {
-  var d = new Date(dateStr + 'T00:00:00');
+var CARS_DAILY_COUNT = 2;
+function carsDateKey(dateStr, slot) {
+  if (slot === void 0) {
+    slot = 1;
+  }
+  return slot === 1 ? dateStr : dateStr + "-" + slot;
+}
+function carsBaseDate(dateKey) {
+  return String(dateKey || '').replace(/-\d+$/, '');
+}
+function carsSlotFor(dateKey) {
+  var m = /-(\d+)$/.exec(String(dateKey || ''));
+  return m ? Math.max(1, Number(m[1]) || 1) : 1;
+}
+function carsSlotLabel(slot) {
+  return "Passage " + slot;
+}
+function carsDisciplineFor(dateStr, slot) {
+  if (slot === void 0) {
+    slot = 1;
+  }
+  var d = new Date(carsBaseDate(dateStr) + 'T00:00:00');
   var start = new Date(d.getFullYear(), 0, 0);
   var dayOfYear = Math.floor((d - start) / 86400000);
-  return CARS_DISCIPLINES[dayOfYear % CARS_DISCIPLINES.length];
+  return CARS_DISCIPLINES[(dayOfYear + slot - 1) % CARS_DISCIPLINES.length];
 }
 function getCarsResults() {
   try {
@@ -12872,15 +12892,17 @@ function CarsRunner(_ref71) {
     className: "flex-1 text-sm py-3 bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] rounded-lg font-medium"
   }, "Done")))));
 }
-function DailyCarsCard() {
+function DailyCarsSlotCard(_ref72) {
   var _payload$questions;
+  var date = _ref72.date,
+    slot = _ref72.slot;
   var _useApp1 = useApp(),
     api = _useApp1.api,
     client = _useApp1.client,
     apiKey = _useApp1.apiKey,
     session = _useApp1.session;
-  var today = todayStr();
-  var cached = getCarsCachePayload(today);
+  var slotLabel = carsSlotLabel(slot);
+  var cached = getCarsCachePayload(date);
   var _useState94 = useState(cached ? 'ready' : 'loading'),
     state = _useState94[0],
     setState = _useState94[1];
@@ -12896,21 +12918,21 @@ function DailyCarsCard() {
   var _useState98 = useState(0),
     tick = _useState98[0],
     setTick = _useState98[1];
-  var result = getCarsResults()[today];
+  var result = getCarsResults()[date];
   useEffect(function () {
     var cancelled = false;
-    if (!getCarsCachePayload(today)) {
+    if (!getCarsCachePayload(date)) {
       setState('loading');
     }
     setErr('');
-    api.getCars(today).then(function (d) {
+    api.getCars(date).then(function (d) {
       if (!cancelled) {
-        setCarsCachePayload(today, d.payload);
+        setCarsCachePayload(date, d.payload);
         setPayload(d.payload);
         setState('ready');
       }
     }).catch(function () {
-      var _ref72 = _asyncToGenerator(_regenerator().m(function _callee42(e) {
+      var _ref73 = _asyncToGenerator(_regenerator().m(function _callee42(e) {
         var fallback, _gen, gen, src, questions, discipline, d2, _t27, _t28, _t29;
         return _regenerator().w(function (_context47) {
           while (1) switch (_context47.p = _context47.n) {
@@ -12925,7 +12947,7 @@ function DailyCarsCard() {
                 _context47.n = 3;
                 break;
               }
-              fallback = getCarsCachePayload(today);
+              fallback = getCarsCachePayload(date);
               if (!fallback) {
                 _context47.n = 2;
                 break;
@@ -12950,7 +12972,7 @@ function DailyCarsCard() {
               gen = null;
               _context47.p = 6;
               _context47.n = 7;
-              return api.getCarsPassage(today);
+              return api.getCarsPassage(date);
             case 7:
               src = _context47.v;
               if (!(src != null && src.passage)) {
@@ -12981,7 +13003,7 @@ function DailyCarsCard() {
                 _context47.n = 13;
                 break;
               }
-              discipline = carsDisciplineFor(today);
+              discipline = carsDisciplineFor(date, slot);
               _context47.n = 12;
               return client.generateDailyCars(discipline);
             case 12:
@@ -12995,14 +13017,14 @@ function DailyCarsCard() {
             case 14:
               _context47.n = 15;
               return api.postCars({
-                date: today,
-                discipline: gen.discipline || carsDisciplineFor(today),
+                date,
+                discipline: gen.discipline || carsDisciplineFor(date, slot),
                 title: gen.title || '',
                 payload: gen
               });
             case 15:
               if (!cancelled) {
-                setCarsCachePayload(today, gen);
+                setCarsCachePayload(date, gen);
                 setPayload(gen);
                 setState('ready');
               }
@@ -13013,14 +13035,14 @@ function DailyCarsCard() {
               _t28 = _context47.v;
               _context47.p = 17;
               _context47.n = 18;
-              return api.getCars(today);
+              return api.getCars(date);
             case 18:
               d2 = _context47.v;
               if (cancelled) {
                 _context47.n = 19;
                 break;
               }
-              setCarsCachePayload(today, d2.payload);
+              setCarsCachePayload(date, d2.payload);
               setPayload(d2.payload);
               setState('ready');
               return _context47.a(2);
@@ -13041,13 +13063,13 @@ function DailyCarsCard() {
         }, _callee42, null, [[17, 20], [6, 10], [5, 16]]);
       }));
       return function (_x58) {
-        return _ref72.apply(this, arguments);
+        return _ref73.apply(this, arguments);
       };
     }());
     return function () {
       cancelled = true;
     };
-  }, [api, today, tick, apiKey, session]);
+  }, [api, date, slot, tick, apiKey, session]);
   var card = function card(inner) {
     return React.createElement("div", {
       className: "bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-5"
@@ -13058,19 +13080,19 @@ function DailyCarsCard() {
   }, "Checking today's CARS\u2026"));
   if (state === 'generating') return card(React.createElement("div", null, React.createElement("h2", {
     className: "font-semibold text-[var(--text-strong)]"
-  }, "Daily CARS"), React.createElement("p", {
+  }, "Daily CARS \xB7 ", slotLabel), React.createElement("p", {
     className: "text-sm text-[var(--text-muted)] mt-1"
   }, "Generating today's passage with Gemini \u2014 about 20 seconds\u2026")));
   if (state === 'unavailable') return card(React.createElement("div", null, React.createElement("h2", {
     className: "font-semibold text-[var(--text-strong)]"
-  }, "Daily CARS"), React.createElement("p", {
+  }, "Daily CARS \xB7 ", slotLabel), React.createElement("p", {
     className: "text-sm text-[var(--text-muted)] mt-1"
   }, "Today's CARS hasn't been generated yet. It appears once someone signed in with a Gemini API key opens the app.")));
   if (state === 'error') return card(React.createElement("div", null, React.createElement("div", {
     className: "flex items-center justify-between gap-3"
   }, React.createElement("h2", {
     className: "font-semibold text-[var(--text-strong)]"
-  }, "Daily CARS"), React.createElement("button", {
+  }, "Daily CARS \xB7 ", slotLabel), React.createElement("button", {
     onClick: function onClick() {
       return setTick(function (t) {
         return t + 1;
@@ -13090,7 +13112,7 @@ function DailyCarsCard() {
     className: "flex items-center gap-2"
   }, React.createElement("h2", {
     className: "font-semibold text-[var(--text-strong)]"
-  }, "Today's CARS"), !result && React.createElement("span", {
+  }, "Today's CARS \xB7 ", slotLabel), !result && React.createElement("span", {
     className: "w-2 h-2 rounded-full bg-[var(--danger-border)]"
   })), React.createElement("div", {
     className: "text-sm text-[var(--text)] mt-0.5"
@@ -13104,7 +13126,7 @@ function DailyCarsCard() {
     },
     className: "shrink-0 text-sm px-4 py-2 bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] rounded-lg font-medium"
   }, result ? 'Review' : 'Start'))), running && payload && React.createElement(CarsRunner, {
-    date: today,
+    date: date,
     payload: payload,
     alreadyDone: !!result,
     onClose: function onClose() {
@@ -13113,6 +13135,20 @@ function DailyCarsCard() {
         return t + 1;
       });
     }
+  }));
+}
+function DailyCarsCard() {
+  var today = todayStr();
+  return React.createElement("div", {
+    className: "space-y-3"
+  }, Array.from({
+    length: CARS_DAILY_COUNT
+  }).map(function (_, i) {
+    return React.createElement(DailyCarsSlotCard, {
+      key: i + 1,
+      date: carsDateKey(today, i + 1),
+      slot: i + 1
+    });
   }));
 }
 function CarsArchive() {
@@ -13147,7 +13183,7 @@ function CarsArchive() {
     };
   }, [api]);
   var openDay = function () {
-    var _ref73 = _asyncToGenerator(_regenerator().m(function _callee43(date) {
+    var _ref74 = _asyncToGenerator(_regenerator().m(function _callee43(date) {
       var cachedPayload, d, _t30;
       return _regenerator().w(function (_context48) {
         while (1) switch (_context48.p = _context48.n) {
@@ -13190,7 +13226,7 @@ function CarsArchive() {
       }, _callee43, null, [[2, 4, 5, 6]]);
     }));
     return function openDay(_x59) {
-      return _ref73.apply(this, arguments);
+      return _ref74.apply(this, arguments);
     };
   }();
   var visibleDays = days && (expanded ? days : days.slice(0, 3));
@@ -13215,6 +13251,8 @@ function CarsArchive() {
     className: "divide-y divide-[var(--border-soft)]"
   }, visibleDays.map(function (d) {
     var r = results[d.date];
+    var baseDate = carsBaseDate(d.date);
+    var slot = carsSlotFor(d.date);
     return React.createElement("li", {
       key: d.date,
       className: "py-2.5 flex items-center gap-3"
@@ -13224,7 +13262,7 @@ function CarsArchive() {
       className: "text-sm text-[var(--text)]"
     }, React.createElement("span", {
       className: "font-medium"
-    }, d.date, d.date === today ? ' · today' : ''), d.title && React.createElement("span", {
+    }, baseDate, baseDate === today ? ' · today' : '', slot > 1 ? " \xB7 " + carsSlotLabel(slot) : ''), d.title && React.createElement("span", {
       className: "text-[var(--text-muted)]"
     }, " \u2014 ", d.title)), React.createElement("div", {
       className: "text-xs text-[var(--text-faint)]"
@@ -13283,9 +13321,9 @@ function lookupLocalDef(term, extractions) {
   }
   return null;
 }
-function SolvedConnectionGroup(_ref74) {
-  var group = _ref74.group,
-    date = _ref74.date;
+function SolvedConnectionGroup(_ref75) {
+  var group = _ref75.group,
+    date = _ref75.date;
   var _useApp11 = useApp(),
     client = _useApp11.client,
     apiKey = _useApp11.apiKey,
@@ -13364,7 +13402,7 @@ function SolvedConnectionGroup(_ref74) {
     }, _callee44, null, [[3, 5, 6, 7]]);
   })), [client, apiKey, group.category, group.terms, date, explain, explainBusy]);
   var fetchTermDef = useCallback(function () {
-    var _ref76 = _asyncToGenerator(_regenerator().m(function _callee45(term) {
+    var _ref77 = _asyncToGenerator(_regenerator().m(function _callee45(term) {
       var def, _t32;
       return _regenerator().w(function (_context50) {
         while (1) switch (_context50.p = _context50.n) {
@@ -13416,7 +13454,7 @@ function SolvedConnectionGroup(_ref74) {
       }, _callee45, null, [[3, 5, 6, 7]]);
     }));
     return function (_x60) {
-      return _ref76.apply(this, arguments);
+      return _ref77.apply(this, arguments);
     };
   }(), [client, apiKey, group.category, termDefs, termBusy]);
   useEffect(function () {
@@ -13535,17 +13573,17 @@ function seededShuffle(arr, seedStr) {
   var out = arr.slice();
   for (var _i23 = out.length - 1; _i23 > 0; _i23--) {
     var j = Math.floor(rng() * (_i23 + 1));
-    var _ref77 = [out[j], out[_i23]];
-    out[_i23] = _ref77[0];
-    out[j] = _ref77[1];
+    var _ref78 = [out[j], out[_i23]];
+    out[_i23] = _ref78[0];
+    out[j] = _ref78[1];
   }
   return out;
 }
-function ConnectionsRunner(_ref78) {
-  var date = _ref78.date,
-    payload = _ref78.payload,
-    onClose = _ref78.onClose,
-    alreadyDone = _ref78.alreadyDone;
+function ConnectionsRunner(_ref79) {
+  var date = _ref79.date,
+    payload = _ref79.payload,
+    onClose = _ref79.onClose,
+    alreadyDone = _ref79.alreadyDone;
   var _useApp12 = useApp(),
     addAttempt = _useApp12.addAttempt,
     flushSync = _useApp12.flushSync;
@@ -13649,9 +13687,9 @@ function ConnectionsRunner(_ref78) {
       var out = o.slice();
       for (var i = out.length - 1; i > 0; i--) {
         var j = Math.floor(Math.random() * (i + 1));
-        var _ref79 = [out[j], out[i]];
-        out[i] = _ref79[0];
-        out[j] = _ref79[1];
+        var _ref80 = [out[j], out[i]];
+        out[i] = _ref80[0];
+        out[j] = _ref80[1];
       }
       return out;
     });
@@ -13907,7 +13945,7 @@ function DailyConnectionsCard() {
       setPayload(d.payload);
       setState('ready');
     }).catch(function () {
-      var _ref80 = _asyncToGenerator(_regenerator().m(function _callee47(e) {
+      var _ref81 = _asyncToGenerator(_regenerator().m(function _callee47(e) {
         var fallback, poolSet, norm, normMap, _iterator70, _step70, t, n, reconcile, buildValid, gen, lastErr, attempt, d2, _t33, _t34, _t35;
         return _regenerator().w(function (_context52) {
           while (1) switch (_context52.p = _context52.n) {
@@ -13977,7 +14015,7 @@ function DailyConnectionsCard() {
                 return null;
               };
               buildValid = function () {
-                var _ref81 = _asyncToGenerator(_regenerator().m(function _callee46() {
+                var _ref82 = _asyncToGenerator(_regenerator().m(function _callee46() {
                   var _gen$groups;
                   var gen, usedTerms, _iterator72, _step72, g;
                   return _regenerator().w(function (_context51) {
@@ -14029,7 +14067,7 @@ function DailyConnectionsCard() {
                   }, _callee46);
                 }));
                 return function buildValid() {
-                  return _ref81.apply(this, arguments);
+                  return _ref82.apply(this, arguments);
                 };
               }();
               gen = null, lastErr = null;
@@ -14107,7 +14145,7 @@ function DailyConnectionsCard() {
         }, _callee47, null, [[16, 19], [8, 10], [6, 15]]);
       }));
       return function (_x61) {
-        return _ref80.apply(this, arguments);
+        return _ref81.apply(this, arguments);
       };
     }());
     return function () {
@@ -14220,7 +14258,7 @@ function ConnectionsArchive() {
     };
   }, [api]);
   var openDay = function () {
-    var _ref82 = _asyncToGenerator(_regenerator().m(function _callee48(date) {
+    var _ref83 = _asyncToGenerator(_regenerator().m(function _callee48(date) {
       var cachedPayload, d, _t36;
       return _regenerator().w(function (_context53) {
         while (1) switch (_context53.p = _context53.n) {
@@ -14263,7 +14301,7 @@ function ConnectionsArchive() {
       }, _callee48, null, [[2, 4, 5, 6]]);
     }));
     return function openDay(_x62) {
-      return _ref82.apply(this, arguments);
+      return _ref83.apply(this, arguments);
     };
   }();
   var visibleDays = days && (expanded ? days : days.slice(0, 3));
@@ -14331,8 +14369,8 @@ function ConnectionsArchive() {
 }
 function CarsCalendar() {
   var results = getCarsResults();
-  var done = Object.entries(results).filter(function (_ref83) {
-    var r = _ref83[1];
+  var done = Object.entries(results).filter(function (_ref84) {
+    var r = _ref84[1];
     return r && r.total;
   });
   var WEEKS = 13;
@@ -14353,8 +14391,8 @@ function CarsCalendar() {
     if (r && r.total) streak++;else if (_i24 === 0) continue;else break;
   }
   var doneCount = done.length;
-  var avgAcc = doneCount ? Math.round(done.reduce(function (s, _ref84) {
-    var r = _ref84[1];
+  var avgAcc = doneCount ? Math.round(done.reduce(function (s, _ref85) {
+    var r = _ref85[1];
     return s + r.score / r.total;
   }, 0) / doneCount * 100) : 0;
   return React.createElement("div", {
@@ -14396,8 +14434,8 @@ function CarsCalendar() {
     className: "text-xs text-[var(--text-faint)] mt-3"
   }, "Do a daily CARS passage and it lights up here."));
 }
-function HomeView(_ref85) {
-  var onGoToStudy = _ref85.onGoToStudy;
+function HomeView(_ref86) {
+  var onGoToStudy = _ref86.onGoToStudy;
   var _useApp15 = useApp(),
     session = _useApp15.session;
   var username = (session == null ? void 0 : session.username) || 'student';
@@ -14549,13 +14587,13 @@ function chapterNum(chapter) {
 }
 function allocateCounts(weights, total) {
   var entries = Object.entries(weights);
-  var sum = entries.reduce(function (a, _ref86) {
-    var w = _ref86[1];
+  var sum = entries.reduce(function (a, _ref87) {
+    var w = _ref87[1];
     return a + w;
   }, 0) || 1;
-  var raw = entries.map(function (_ref87) {
-    var k = _ref87[0],
-      w = _ref87[1];
+  var raw = entries.map(function (_ref88) {
+    var k = _ref88[0],
+      w = _ref88[1];
     return [k, w / sum * total];
   });
   var out = {};
@@ -14568,9 +14606,9 @@ function allocateCounts(weights, total) {
     used += out[k];
   }
   var rem = total - used;
-  var fracs = raw.map(function (_ref88) {
-    var k = _ref88[0],
-      r = _ref88[1];
+  var fracs = raw.map(function (_ref89) {
+    var k = _ref89[0],
+      r = _ref89[1];
     return [k, r - Math.floor(r)];
   }).sort(function (a, b) {
     return b[1] - a[1];
@@ -14680,7 +14718,7 @@ function MiniExamCard() {
   }, 0);
   var target = MINI_EXAM_SECTIONS.length * MINI_EXAM_PER_SECTION;
   var start = function () {
-    var _ref89 = _asyncToGenerator(_regenerator().m(function _callee49() {
+    var _ref90 = _asyncToGenerator(_regenerator().m(function _callee49() {
       var items, _iterator79, _step79, section, res, picked, _iterator80, _step80, q, _t37;
       return _regenerator().w(function (_context54) {
         while (1) switch (_context54.p = _context54.n) {
@@ -14756,7 +14794,7 @@ function MiniExamCard() {
       }, _callee49, null, [[1, 7, 8, 9]]);
     }));
     return function start() {
-      return _ref89.apply(this, arguments);
+      return _ref90.apply(this, arguments);
     };
   }();
   return React.createElement("div", {
@@ -14789,8 +14827,8 @@ function MiniExamCard() {
     className: "w-full bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] disabled:opacity-40 rounded-lg py-3 sm:py-2.5 font-medium"
   }, loading ? 'Assembling exam…' : readyTotal === 0 ? 'Bank empty — generate daily exams first' : "Start " + readyTotal + "-question mini exam"));
 }
-function DailyExamCard(_ref90) {
-  var onGoToStudy = _ref90.onGoToStudy;
+function DailyExamCard(_ref91) {
+  var onGoToStudy = _ref91.onGoToStudy;
   var _useApp17 = useApp(),
     client = _useApp17.client,
     api = _useApp17.api,
@@ -14871,7 +14909,7 @@ function DailyExamCard(_ref90) {
     setState('idle');
   }, [payload, apiKey, mastered.length]);
   var generate = function () {
-    var _ref91 = _asyncToGenerator(_regenerator().m(function _callee50() {
+    var _ref92 = _asyncToGenerator(_regenerator().m(function _callee50() {
       var questionsOut, p, contribution, _t38;
       return _regenerator().w(function (_context55) {
         while (1) switch (_context55.p = _context55.n) {
@@ -14931,7 +14969,7 @@ function DailyExamCard(_ref90) {
       }, _callee50, null, [[2, 5]]);
     }));
     return function generate() {
-      return _ref91.apply(this, arguments);
+      return _ref92.apply(this, arguments);
     };
   }();
   var launch = function launch() {
@@ -15036,9 +15074,9 @@ function lessonSectionStatus(sec, latestCorrect) {
     total: ids.length
   };
 }
-function LessonDrillCard(_ref92) {
-  var term = _ref92.term,
-    definition = _ref92.definition;
+function LessonDrillCard(_ref93) {
+  var term = _ref93.term,
+    definition = _ref93.definition;
   var _useState134 = useState(false),
     show = _useState134[0],
     setShow = _useState134[1];
@@ -15057,11 +15095,11 @@ function LessonDrillCard(_ref92) {
     className: "text-xs text-[var(--text-faint)] mt-1"
   }, "Tap to reveal definition"));
 }
-function LessonSection(_ref93) {
-  var sec = _ref93.sec,
-    status = _ref93.status,
-    onQuiz = _ref93.onQuiz,
-    locked = _ref93.locked;
+function LessonSection(_ref94) {
+  var sec = _ref94.sec,
+    status = _ref94.status,
+    onQuiz = _ref94.onQuiz,
+    locked = _ref94.locked;
   var _useFigureViewer2 = useFigureViewer(),
     openFigure = _useFigureViewer2.open;
   var _useState135 = useState(false),
@@ -15169,12 +15207,12 @@ function LessonSection(_ref93) {
     className: "text-xs text-[var(--text-faint)]"
   }, "Ends with a quick term-matching review."))));
 }
-function LessonGateQuiz(_ref94) {
-  var kind = _ref94.kind,
-    pool = _ref94.pool,
-    need = _ref94.need,
-    onPass = _ref94.onPass,
-    onCancel = _ref94.onCancel;
+function LessonGateQuiz(_ref95) {
+  var kind = _ref95.kind,
+    pool = _ref95.pool,
+    need = _ref95.need,
+    onPass = _ref95.onPass,
+    onCancel = _ref95.onCancel;
   var _useApp18 = useApp(),
     addAttempt = _useApp18.addAttempt,
     updateLastAttempt = _useApp18.updateLastAttempt;
@@ -15264,10 +15302,10 @@ function LessonGateQuiz(_ref94) {
       className: "px-4 py-2 rounded border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--bg-hover)]"
     }, "Back to lesson")));
   }
-  var handleAnswer = function handleAnswer(_ref95) {
-    var correct = _ref95.correct,
-      user_answer = _ref95.user_answer,
-      isInterim = _ref95.isInterim;
+  var handleAnswer = function handleAnswer(_ref96) {
+    var correct = _ref96.correct,
+      user_answer = _ref96.user_answer,
+      isInterim = _ref96.isInterim;
     if (isInterim || answered) return;
     setAnswered(true);
     setAnswers(function (prev) {
@@ -15291,8 +15329,8 @@ function LessonGateQuiz(_ref94) {
       user_answer
     });
   };
-  var handleAnswerOverride = function handleAnswerOverride(_ref96) {
-    var correct = _ref96.correct;
+  var handleAnswerOverride = function handleAnswerOverride(_ref97) {
+    var correct = _ref97.correct;
     if (!answered) return;
     var nextCorrect = !!correct;
     updateLastAttempt(item.id, {
@@ -15400,12 +15438,12 @@ function LessonGateQuiz(_ref94) {
     }
   }));
 }
-function ForceMasterModal(_ref97) {
-  var lessonTitle = _ref97.lessonTitle,
-    username = _ref97.username,
-    onVerifyPin = _ref97.onVerifyPin,
-    onConfirmMaster = _ref97.onConfirmMaster,
-    onClose = _ref97.onClose;
+function ForceMasterModal(_ref98) {
+  var lessonTitle = _ref98.lessonTitle,
+    username = _ref98.username,
+    onVerifyPin = _ref98.onVerifyPin,
+    onConfirmMaster = _ref98.onConfirmMaster,
+    onClose = _ref98.onClose;
   var _useState147 = useState('confirm'),
     step = _useState147[0],
     setStep = _useState147[1];
@@ -15419,7 +15457,7 @@ function ForceMasterModal(_ref97) {
     busy = _useState150[0],
     setBusy = _useState150[1];
   var submitPin = function () {
-    var _ref98 = _asyncToGenerator(_regenerator().m(function _callee51() {
+    var _ref99 = _asyncToGenerator(_regenerator().m(function _callee51() {
       var _t39;
       return _regenerator().w(function (_context56) {
         while (1) switch (_context56.p = _context56.n) {
@@ -15458,7 +15496,7 @@ function ForceMasterModal(_ref97) {
       }, _callee51, null, [[3, 5]]);
     }));
     return function submitPin() {
-      return _ref98.apply(this, arguments);
+      return _ref99.apply(this, arguments);
     };
   }();
   return React.createElement("div", {
@@ -15541,19 +15579,19 @@ function lessonGateQuizEligible(item) {
   });
   return false;
 }
-function LessonReader(_ref99) {
-  var lesson = _ref99.lesson,
-    latestCorrect = _ref99.latestCorrect,
-    completed = _ref99.completed,
-    gate = _ref99.gate,
-    quizPool = _ref99.quizPool,
-    onBack = _ref99.onBack,
-    onQuizSection = _ref99.onQuizSection,
-    onMarkComplete = _ref99.onMarkComplete,
-    onPassCheckpoint = _ref99.onPassCheckpoint,
-    onMaster = _ref99.onMaster,
-    username = _ref99.username,
-    onVerifyPin = _ref99.onVerifyPin;
+function LessonReader(_ref100) {
+  var lesson = _ref100.lesson,
+    latestCorrect = _ref100.latestCorrect,
+    completed = _ref100.completed,
+    gate = _ref100.gate,
+    quizPool = _ref100.quizPool,
+    onBack = _ref100.onBack,
+    onQuizSection = _ref100.onQuizSection,
+    onMarkComplete = _ref100.onMarkComplete,
+    onPassCheckpoint = _ref100.onPassCheckpoint,
+    onMaster = _ref100.onMaster,
+    username = _ref100.username,
+    onVerifyPin = _ref100.onVerifyPin;
   var sections = [].concat(lesson.sections || []).sort(function (a, b) {
     return (a.order || 0) - (b.order || 0);
   });
@@ -15710,8 +15748,8 @@ function LessonReader(_ref99) {
     }
   }));
 }
-function LessonsView(_ref100) {
-  var onGoToStudy = _ref100.onGoToStudy;
+function LessonsView(_ref101) {
+  var onGoToStudy = _ref101.onGoToStudy;
   var _useApp19 = useApp(),
     api = _useApp19.api,
     session = _useApp19.session,
@@ -15862,7 +15900,7 @@ function LessonsView(_ref100) {
     }));
   };
   var verifyPin = function () {
-    var _ref102 = _asyncToGenerator(_regenerator().m(function _callee53(pin) {
+    var _ref103 = _asyncToGenerator(_regenerator().m(function _callee53(pin) {
       return _regenerator().w(function (_context58) {
         while (1) switch (_context58.n) {
           case 0:
@@ -15883,7 +15921,7 @@ function LessonsView(_ref100) {
       }, _callee53);
     }));
     return function verifyPin(_x63) {
-      return _ref102.apply(this, arguments);
+      return _ref103.apply(this, arguments);
     };
   }();
   var lessonQuizPoolFor = function lessonQuizPoolFor(chapterId) {
@@ -15901,7 +15939,7 @@ function LessonsView(_ref100) {
     return [].concat(buildPool(ctx, 'mc', scope), buildPool(ctx, 'short', scope));
   };
   var downloadLesson = function () {
-    var _ref103 = _asyncToGenerator(_regenerator().m(function _callee54(chapterId) {
+    var _ref104 = _asyncToGenerator(_regenerator().m(function _callee54(chapterId) {
       var full, lesson, _t41;
       return _regenerator().w(function (_context59) {
         while (1) switch (_context59.p = _context59.n) {
@@ -15955,7 +15993,7 @@ function LessonsView(_ref100) {
       }, _callee54, null, [[2, 5, 6, 7]]);
     }));
     return function downloadLesson(_x64) {
-      return _ref103.apply(this, arguments);
+      return _ref104.apply(this, arguments);
     };
   }();
   var removeLesson = function removeLesson(chapterId) {
@@ -16056,9 +16094,9 @@ function LessonsView(_ref100) {
       seenIds.add(_a.question_id);
       if (!_a.correct) wrongIds.add(_a.question_id);
     }
-    var out = Object.entries(byChapter).map(function (_ref104) {
-      var fid = _ref104[0],
-        s = _ref104[1];
+    var out = Object.entries(byChapter).map(function (_ref105) {
+      var fid = _ref105[0],
+        s = _ref105[1];
       var pool = buildPool({
         files,
         questions,
@@ -16325,9 +16363,9 @@ function LessonsView(_ref100) {
     className: "px-2 py-1 rounded border " + (sortBy === 'subject' ? 'bg-[var(--accent)] text-white border-[var(--accent-border)]' : 'border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--bg-hover)]')
   }, "Subject"))), sortBy === 'subject' ? React.createElement("div", {
     className: "space-y-2"
-  }, subjectGroups.map(function (_ref105) {
-    var subject = _ref105[0],
-      items = _ref105[1];
+  }, subjectGroups.map(function (_ref106) {
+    var subject = _ref106[0],
+      items = _ref106[1];
     var open = !!openSubjects[subject];
     var need = items.reduce(function (n, r) {
       return n + r.need;
@@ -16520,10 +16558,10 @@ function SyncPanel() {
     className: "text-[var(--text-strong)]"
   }, relativeTime(pushStatus.lastAt))) : github.autoPush ? 'Auto-push armed. Will fire on next chapter processed.' : !github.token ? 'Not configured.' : 'Ready.')));
 }
-function StatBar(_ref106) {
-  var correct = _ref106.correct,
-    total = _ref106.total,
-    label = _ref106.label;
+function StatBar(_ref107) {
+  var correct = _ref107.correct,
+    total = _ref107.total,
+    label = _ref107.label;
   var pct = total ? Math.round(correct / total * 100) : 0;
   return React.createElement("div", null, React.createElement("div", {
     className: "flex items-baseline justify-between text-sm mb-1"
@@ -16626,9 +16664,9 @@ function predictMcatScores(attempts) {
     if (p) posteriors.set(_subj, p);
   }
   var sections = MCAT_SECTIONS.map(function (sec) {
-    var present = Object.entries(sec.weights).map(function (_ref107) {
-      var subj = _ref107[0],
-        weight = _ref107[1];
+    var present = Object.entries(sec.weights).map(function (_ref108) {
+      var subj = _ref108[0],
+        weight = _ref108[1];
       var post = posteriors.get(subj);
       return post ? {
         subj,
@@ -16659,10 +16697,10 @@ function predictMcatScores(attempts) {
       n: present.reduce(function (s, x) {
         return s + x.post.n;
       }, 0),
-      subjects: present.map(function (_ref108) {
-        var subj = _ref108.subj,
-          weight = _ref108.weight,
-          post = _ref108.post;
+      subjects: present.map(function (_ref109) {
+        var subj = _ref109.subj,
+          weight = _ref109.weight,
+          post = _ref109.post;
         return {
           subject: subj,
           weight: weight / wSum,
@@ -16887,9 +16925,9 @@ function StatsView() {
       var f = _step100.value;
       fileLookup[f.file_id] = f;
     }
-    var topMisses = Object.entries(missByQid).map(function (_ref109) {
-      var qid = _ref109[0],
-        misses = _ref109[1];
+    var topMisses = Object.entries(missByQid).map(function (_ref110) {
+      var qid = _ref110[0],
+        misses = _ref110[1];
       var q = qLookup[qid];
       var text = q ? q.mode === 'mc' ? q.question : q.prompt : qid;
       var chapter = q && fileLookup[q.file_id] ? fileLookup[q.file_id].chapter : '—';
@@ -16931,9 +16969,9 @@ function StatsView() {
     className: "font-semibold mb-3 text-[var(--text-strong)]"
   }, "By subject"), React.createElement("div", {
     className: "space-y-3"
-  }, Object.entries(stats.bySubject).map(function (_ref110) {
-    var subject = _ref110[0],
-      s = _ref110[1];
+  }, Object.entries(stats.bySubject).map(function (_ref111) {
+    var subject = _ref111[0],
+      s = _ref111[1];
     return React.createElement(StatBar, {
       key: subject,
       label: subject,
@@ -16946,13 +16984,13 @@ function StatsView() {
     className: "font-semibold mb-3 text-[var(--text-strong)]"
   }, "By chapter"), React.createElement("div", {
     className: "space-y-3"
-  }, Object.entries(stats.byChapter).sort(function (_ref111, _ref112) {
-    var a = _ref111[1];
-    var b = _ref112[1];
+  }, Object.entries(stats.byChapter).sort(function (_ref112, _ref113) {
+    var a = _ref112[1];
+    var b = _ref113[1];
     return a.correct / a.total - b.correct / b.total;
-  }).map(function (_ref113) {
-    var fid = _ref113[0],
-      s = _ref113[1];
+  }).map(function (_ref114) {
+    var fid = _ref114[0],
+      s = _ref114[1];
     return React.createElement(StatBar, {
       key: fid,
       label: s.subject + " \u2014 " + s.chapter,
@@ -16990,8 +17028,8 @@ function StatsView() {
     className: "text-xs px-3 py-1.5 border border-[var(--border)] text-[var(--text-muted)] hover:text-[var(--danger-text)] hover:border-[var(--danger-border)] rounded"
   }, "Clear all attempts")));
 }
-function SettingsPanel(_ref114) {
-  var onClose = _ref114.onClose;
+function SettingsPanel(_ref115) {
+  var onClose = _ref115.onClose;
   var _useApp23 = useApp(),
     palette = _useApp23.palette,
     mode = _useApp23.mode,
@@ -17038,7 +17076,7 @@ function SettingsPanel(_ref114) {
     keyBusy = _useState169[0],
     setKeyBusy = _useState169[1];
   var saveKey = function () {
-    var _ref115 = _asyncToGenerator(_regenerator().m(function _callee55() {
+    var _ref116 = _asyncToGenerator(_regenerator().m(function _callee55() {
       var trimmed, _t42;
       return _regenerator().w(function (_context60) {
         while (1) switch (_context60.p = _context60.n) {
@@ -17083,7 +17121,7 @@ function SettingsPanel(_ref114) {
       }, _callee55, null, [[3, 5, 6, 7]]);
     }));
     return function saveKey() {
-      return _ref115.apply(this, arguments);
+      return _ref116.apply(this, arguments);
     };
   }();
   var paletteOpts = [['cold', '❄️', 'Cold'], ['warm', '🍂', 'Warm'], ['duo', '🗿', 'Rio'], ['tropical', '🌴', 'Tropical'], ['madison', '🏛️', 'Madison'], ['gambit', '🃏', 'Gambit']];
@@ -17101,10 +17139,10 @@ function SettingsPanel(_ref114) {
     className: "text-xs uppercase tracking-wide text-[var(--text-muted)] mb-2"
   }, "Colour"), React.createElement("div", {
     className: "grid grid-cols-4 gap-2"
-  }, paletteOpts.map(function (_ref116) {
-    var k = _ref116[0],
-      emoji = _ref116[1],
-      label = _ref116[2];
+  }, paletteOpts.map(function (_ref117) {
+    var k = _ref117[0],
+      emoji = _ref117[1],
+      label = _ref117[2];
     return React.createElement("button", {
       key: k,
       onClick: function onClick() {
@@ -17120,10 +17158,10 @@ function SettingsPanel(_ref114) {
     className: "text-xs uppercase tracking-wide text-[var(--text-muted)] mt-4 mb-2"
   }, "Mode"), React.createElement("div", {
     className: "grid grid-cols-3 gap-2"
-  }, modeOpts.map(function (_ref117) {
-    var k = _ref117[0],
-      emoji = _ref117[1],
-      label = _ref117[2];
+  }, modeOpts.map(function (_ref118) {
+    var k = _ref118[0],
+      emoji = _ref118[1],
+      label = _ref118[2];
     return React.createElement("button", {
       key: k,
       onClick: function onClick() {
@@ -17555,7 +17593,7 @@ function EraseQuizStatsSection() {
     }) + (" \xB7 " + key);
   };
   var eraseDay = function () {
-    var _ref118 = _asyncToGenerator(_regenerator().m(function _callee56(b) {
+    var _ref119 = _asyncToGenerator(_regenerator().m(function _callee56(b) {
       var label, res, _res$serverDeleted;
       return _regenerator().w(function (_context61) {
         while (1) switch (_context61.n) {
@@ -17594,7 +17632,7 @@ function EraseQuizStatsSection() {
       }, _callee56);
     }));
     return function eraseDay(_x65) {
-      return _ref118.apply(this, arguments);
+      return _ref119.apply(this, arguments);
     };
   }();
   return React.createElement("div", null, React.createElement("div", {
@@ -17681,7 +17719,7 @@ function PublishAllPanel() {
     return f.chapter_id;
   });
   var publishAll = function () {
-    var _ref119 = _asyncToGenerator(_regenerator().m(function _callee57() {
+    var _ref120 = _asyncToGenerator(_regenerator().m(function _callee57() {
       var okCount, errCount, lastErr, _loop7, _iterator102, _step102;
       return _regenerator().w(function (_context63) {
         while (1) switch (_context63.n) {
@@ -17795,7 +17833,7 @@ function PublishAllPanel() {
       }, _callee57);
     }));
     return function publishAll() {
-      return _ref119.apply(this, arguments);
+      return _ref120.apply(this, arguments);
     };
   }();
   return React.createElement("div", {
@@ -17887,7 +17925,7 @@ function FlagFixesPanel() {
     return (err == null ? void 0 : err.status) === 429 || /quota|rate.?limit|exceeded/i.test((err == null ? void 0 : err.message) || '');
   };
   var runPipeline = function () {
-    var _ref120 = _asyncToGenerator(_regenerator().m(function _callee58() {
+    var _ref121 = _asyncToGenerator(_regenerator().m(function _callee58() {
       var current, processedCount, _loop8, _ret3, _iterator103, _step103;
       return _regenerator().w(function (_context65) {
         while (1) switch (_context65.n) {
@@ -18111,7 +18149,7 @@ function FlagFixesPanel() {
       }, _callee58);
     }));
     return function runPipeline() {
-      return _ref120.apply(this, arguments);
+      return _ref121.apply(this, arguments);
     };
   }();
   if (!queue.length) return null;
@@ -18156,11 +18194,11 @@ function FlagFixesPanel() {
     });
   })));
 }
-function FlagRow(_ref121) {
+function FlagRow(_ref122) {
   var _f$question_snapshot, _f$question_snapshot2, _f$question_snapshot3, _f$question_snapshot4;
-  var f = _ref121.flag,
-    onRemove = _ref121.onRemove,
-    onRequeue = _ref121.onRequeue;
+  var f = _ref122.flag,
+    onRemove = _ref122.onRemove,
+    onRequeue = _ref122.onRequeue;
   var _useState180 = useState(false),
     amending = _useState180[0],
     setAmending = _useState180[1];
@@ -18281,7 +18319,7 @@ function CloudBankPanel() {
     return extractions[f.file_id] && ((_questions$f$file_id9 = questions[f.file_id]) == null ? void 0 : _questions$f$file_id9.mc);
   });
   var publish = function () {
-    var _ref122 = _asyncToGenerator(_regenerator().m(function _callee59() {
+    var _ref123 = _asyncToGenerator(_regenerator().m(function _callee59() {
       var bank, res, _t47;
       return _regenerator().w(function (_context66) {
         while (1) switch (_context66.p = _context66.n) {
@@ -18332,11 +18370,11 @@ function CloudBankPanel() {
       }, _callee59, null, [[1, 3, 4, 5]]);
     }));
     return function publish() {
-      return _ref122.apply(this, arguments);
+      return _ref123.apply(this, arguments);
     };
   }();
   var pull = function () {
-    var _ref123 = _asyncToGenerator(_regenerator().m(function _callee60() {
+    var _ref124 = _asyncToGenerator(_regenerator().m(function _callee60() {
       var bank, _i29, _Object$keys4, fid, _i30, _Object$keys5, _fid, n, _t48;
       return _regenerator().w(function (_context67) {
         while (1) switch (_context67.p = _context67.n) {
@@ -18392,7 +18430,7 @@ function CloudBankPanel() {
       }, _callee60, null, [[2, 4, 5, 6]]);
     }));
     return function pull() {
-      return _ref123.apply(this, arguments);
+      return _ref124.apply(this, arguments);
     };
   }();
   var remoteAge = remote ? function () {
@@ -18434,10 +18472,10 @@ function CloudBankPanel() {
     className: "text-xs text-[var(--text-faint)]"
   }, "No locally processed chapters \u2014 process some in the Library, or pull from cloud if you have one."));
 }
-function exportBank(_ref124) {
-  var files = _ref124.files,
-    extractions = _ref124.extractions,
-    questions = _ref124.questions;
+function exportBank(_ref125) {
+  var files = _ref125.files,
+    extractions = _ref125.extractions,
+    questions = _ref125.questions;
   var data = {
     version: 1,
     exported_at: new Date().toISOString(),
@@ -18458,8 +18496,8 @@ function exportBank(_ref124) {
   a.remove();
   URL.revokeObjectURL(url);
 }
-function AccountPanel(_ref125) {
-  var onClose = _ref125.onClose;
+function AccountPanel(_ref126) {
+  var onClose = _ref126.onClose;
   var _useApp28 = useApp(),
     session = _useApp28.session,
     setSession = _useApp28.setSession,
@@ -18514,7 +18552,7 @@ function AccountPanel(_ref125) {
     }, "Log out")));
   }
   var submit = function () {
-    var _ref127 = _asyncToGenerator(_regenerator().m(function _callee62() {
+    var _ref128 = _asyncToGenerator(_regenerator().m(function _callee62() {
       var res, _t50, _t51;
       return _regenerator().w(function (_context69) {
         while (1) switch (_context69.p = _context69.n) {
@@ -18581,16 +18619,16 @@ function AccountPanel(_ref125) {
       }, _callee62, null, [[3, 8, 9, 10]]);
     }));
     return function submit() {
-      return _ref127.apply(this, arguments);
+      return _ref128.apply(this, arguments);
     };
   }();
   return React.createElement("div", {
     className: "bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-5 max-w-sm mx-auto"
   }, React.createElement("div", {
     className: "flex gap-1 mb-4"
-  }, [['login', 'Log in'], ['signup', 'Sign up']].map(function (_ref128) {
-    var k = _ref128[0],
-      label = _ref128[1];
+  }, [['login', 'Log in'], ['signup', 'Sign up']].map(function (_ref129) {
+    var k = _ref129[0],
+      label = _ref129[1];
     return React.createElement("button", {
       key: k,
       onClick: function onClick() {
@@ -18640,8 +18678,8 @@ function AccountPanel(_ref125) {
 function pct(c, t) {
   return t ? Math.round(c / t * 100) : 0;
 }
-function Leaderboard(_ref129) {
-  var onPickUser = _ref129.onPickUser;
+function Leaderboard(_ref130) {
+  var onPickUser = _ref130.onPickUser;
   var _useApp29 = useApp(),
     api = _useApp29.api;
   var _useState190 = useState(null),
@@ -18696,9 +18734,9 @@ function Leaderboard(_ref129) {
     }, pct(u.correct, u.total), "%")));
   })));
 }
-function ServerStatsPayload(_ref130) {
+function ServerStatsPayload(_ref131) {
   var _data$bySubject, _data$byChapter, _data$byMode;
-  var data = _ref130.data;
+  var data = _ref131.data;
   if (!data) return null;
   var overall = data.overall || {
     total: 0,
@@ -18840,9 +18878,9 @@ function ServerStatsPayload(_ref130) {
     });
   }))));
 }
-function AuditModal(_ref131) {
-  var chapter = _ref131.chapter,
-    onClose = _ref131.onClose;
+function AuditModal(_ref132) {
+  var chapter = _ref132.chapter,
+    onClose = _ref132.onClose;
   var _useApp30 = useApp(),
     api = _useApp30.api,
     client = _useApp30.client,
@@ -18886,7 +18924,7 @@ function AuditModal(_ref131) {
     return f.chapter_id === chapter.id;
   });
   var runVerify = function () {
-    var _ref132 = _asyncToGenerator(_regenerator().m(function _callee63() {
+    var _ref133 = _asyncToGenerator(_regenerator().m(function _callee63() {
       var mcOnly, results, flagged, _t52, _t53;
       return _regenerator().w(function (_context70) {
         while (1) switch (_context70.p = _context70.n) {
@@ -18960,11 +18998,11 @@ function AuditModal(_ref131) {
       }, _callee63, null, [[4, 6], [2, 8]]);
     }));
     return function runVerify() {
-      return _ref132.apply(this, arguments);
+      return _ref133.apply(this, arguments);
     };
   }();
   var acceptFix = function () {
-    var _ref133 = _asyncToGenerator(_regenerator().m(function _callee64(flag) {
+    var _ref134 = _asyncToGenerator(_regenerator().m(function _callee64(flag) {
       var updated, qbank, localUpdated, _t54;
       return _regenerator().w(function (_context71) {
         while (1) switch (_context71.p = _context71.n) {
@@ -19014,7 +19052,7 @@ function AuditModal(_ref131) {
       }, _callee64, null, [[1, 3]]);
     }));
     return function acceptFix(_x66) {
-      return _ref133.apply(this, arguments);
+      return _ref134.apply(this, arguments);
     };
   }();
   return React.createElement("div", {
@@ -19093,9 +19131,9 @@ function AuditModal(_ref131) {
     className: "text-xs text-[var(--text-faint)]"
   }, mc.length, " MC question(s)")));
 }
-function StageDot(_ref134) {
-  var stage = _ref134.stage,
-    label = _ref134.label;
+function StageDot(_ref135) {
+  var stage = _ref135.stage,
+    label = _ref135.label;
   var done = stage == null ? void 0 : stage.done;
   var partial = (stage == null ? void 0 : stage.terms_missing) > 0;
   var cls = done && !partial ? 'bg-[var(--success-bg-strong)] text-[var(--success-text)] border-[var(--success-border)]' : done && partial ? 'bg-[var(--warning-bg)] text-[var(--warning-text)] border-[var(--warning-text-strong)]' : 'bg-[var(--bg-elev)] text-[var(--text-faint)] border-[var(--border)]';
@@ -19108,16 +19146,16 @@ function StageDot(_ref134) {
     className: "text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded border " + cls
   }, label, (stage == null ? void 0 : stage.count) != null ? " " + stage.count : '');
 }
-function ChapterRow(_ref135) {
+function ChapterRow(_ref136) {
   var _s$extraction, _chapter$stages, _chapter$stages2, _chapter$stages3, _chapter$stages4, _chapter$stages5;
-  var chapter = _ref135.chapter,
-    onDownload = _ref135.onDownload,
-    onContribute = _ref135.onContribute,
-    onAudit = _ref135.onAudit,
-    busy = _ref135.busy,
-    downloaded = _ref135.downloaded,
-    canContribute = _ref135.canContribute,
-    contributorMode = _ref135.contributorMode;
+  var chapter = _ref136.chapter,
+    onDownload = _ref136.onDownload,
+    onContribute = _ref136.onContribute,
+    onAudit = _ref136.onAudit,
+    busy = _ref136.busy,
+    downloaded = _ref136.downloaded,
+    canContribute = _ref136.canContribute,
+    contributorMode = _ref136.contributorMode;
   var ago = function () {
     var ms = Date.now() - chapter.updated_at;
     var m = Math.round(ms / 60000);
@@ -19278,7 +19316,7 @@ function BankTab() {
     }
   }, [data, seenAt]);
   var downloadOne = function () {
-    var _ref136 = _asyncToGenerator(_regenerator().m(function _callee65(chapter) {
+    var _ref137 = _asyncToGenerator(_regenerator().m(function _callee65(chapter) {
       var full, localFileId, fileRecord;
       return _regenerator().w(function (_context72) {
         while (1) switch (_context72.n) {
@@ -19317,11 +19355,11 @@ function BankTab() {
       }, _callee65);
     }));
     return function downloadOne(_x67) {
-      return _ref136.apply(this, arguments);
+      return _ref137.apply(this, arguments);
     };
   }();
   var downloadChapter = function () {
-    var _ref137 = _asyncToGenerator(_regenerator().m(function _callee66(chapter) {
+    var _ref138 = _asyncToGenerator(_regenerator().m(function _callee66(chapter) {
       var full, _t55;
       return _regenerator().w(function (_context73) {
         while (1) switch (_context73.p = _context73.n) {
@@ -19364,11 +19402,11 @@ function BankTab() {
       }, _callee66, null, [[2, 4, 5, 6]]);
     }));
     return function downloadChapter(_x68) {
-      return _ref137.apply(this, arguments);
+      return _ref138.apply(this, arguments);
     };
   }();
   var contributeChapter = function () {
-    var _ref138 = _asyncToGenerator(_regenerator().m(function _callee67(chapter, stages) {
+    var _ref139 = _asyncToGenerator(_regenerator().m(function _callee67(chapter, stages) {
       var full, _loop9, _iterator105, _step105, localFile, refreshed, localFileId, fileRecord, _t56, _t57;
       return _regenerator().w(function (_context75) {
         while (1) switch (_context75.p = _context75.n) {
@@ -19598,7 +19636,7 @@ function BankTab() {
       }, _callee67, null, [[9, 11], [3, 13, 14, 15]]);
     }));
     return function contributeChapter(_x69, _x70) {
-      return _ref138.apply(this, arguments);
+      return _ref139.apply(this, arguments);
     };
   }();
   if (err) {
@@ -19810,7 +19848,7 @@ function BanksBrowser() {
     };
   }, [api, tick]);
   var download = function () {
-    var _ref139 = _asyncToGenerator(_regenerator().m(function _callee68(username) {
+    var _ref140 = _asyncToGenerator(_regenerator().m(function _callee68(username) {
       var localCount, msg, bank, _i31, _Object$keys6, fid, _i32, _Object$keys7, _fid2, n, _t58;
       return _regenerator().w(function (_context76) {
         while (1) switch (_context76.p = _context76.n) {
@@ -19873,7 +19911,7 @@ function BanksBrowser() {
       }, _callee68, null, [[3, 5, 6, 7]]);
     }));
     return function download(_x71) {
-      return _ref139.apply(this, arguments);
+      return _ref140.apply(this, arguments);
     };
   }();
   if (err) {
@@ -19936,9 +19974,9 @@ function BanksBrowser() {
     }, busy === b.username ? 'Downloading…' : session ? 'Download' : 'Sign in'));
   }))));
 }
-function UserProfile(_ref140) {
-  var username = _ref140.username,
-    onBack = _ref140.onBack;
+function UserProfile(_ref141) {
+  var username = _ref141.username,
+    onBack = _ref141.onBack;
   var _useApp33 = useApp(),
     api = _useApp33.api;
   var _useState213 = useState(null),
@@ -20187,11 +20225,20 @@ function Shell() {
     setCarsReady = _useState225[1];
   var recheckCars = useCallback(function () {
     var d = todayStr();
-    api.getCars(d).then(function (res) {
-      setCarsCachePayload(d, res.payload);
-      setCarsReady(!getCarsResults()[d]);
-    }).catch(function () {
-      setCarsReady(false);
+    var keys = Array.from({
+      length: CARS_DAILY_COUNT
+    }).map(function (_, i) {
+      return carsDateKey(d, i + 1);
+    });
+    Promise.all(keys.map(function (key) {
+      return api.getCars(key).then(function (res) {
+        setCarsCachePayload(key, res.payload);
+        return !getCarsResults()[key];
+      }).catch(function () {
+        return false;
+      });
+    })).then(function (ready) {
+      return setCarsReady(ready.some(Boolean));
     });
   }, [api]);
   useEffect(function () {
@@ -20249,8 +20296,8 @@ function Shell() {
   useEffect(function () {
     tabRef.current = tab;
   }, [tab]);
-  var tabKeys = tabs.map(function (_ref141) {
-    var k = _ref141[0];
+  var tabKeys = tabs.map(function (_ref142) {
+    var k = _ref142[0];
     return k;
   });
   var scrollMemoryRef = useRef({});
@@ -20321,9 +20368,9 @@ function Shell() {
     className: "hidden sm:inline text-xs text-[var(--text-faint)] font-mono"
   }, MODEL)), React.createElement("nav", {
     className: "flex items-center justify-center gap-1 overflow-x-auto order-3 sm:order-2 w-full sm:w-auto"
-  }, tabs.map(function (_ref142) {
-    var k = _ref142[0],
-      label = _ref142[1];
+  }, tabs.map(function (_ref143) {
+    var k = _ref143[0],
+      label = _ref143[1];
     return React.createElement("button", {
       key: k,
       onClick: function onClick() {
