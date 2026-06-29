@@ -9130,6 +9130,112 @@ function WeakSpotQuiz() {
   );
 }
 
+const FREE_PASSAGE_SECTIONS = [
+  {
+    key: 'cp',
+    label: 'C/P',
+    title: 'Chemical and Physical',
+    url: 'https://www.khanacademy.org/test-prep/mcat/physical-sciences-practice',
+    subjects: ['General Chemistry', 'Chemistry', 'Organic Chemistry', 'Physics', 'Physics and Math'],
+  },
+  {
+    key: 'bb',
+    label: 'B/B',
+    title: 'Biological and Biochemical',
+    url: 'https://www.khanacademy.org/test-prep/mcat/biological-sciences-practice',
+    subjects: ['Biology', 'Biochemistry'],
+  },
+  {
+    key: 'ps',
+    label: 'P/S',
+    title: 'Psychological and Social',
+    url: 'https://www.khanacademy.org/test-prep/mcat/social-sciences-practice',
+    subjects: ['Behavioral Science', 'Psychology', 'Sociology'],
+  },
+];
+
+function FreePassagePractice() {
+  const { attempts } = useApp();
+  const [selectedKey, setSelectedKey] = useState(() => storage.get('mcat:freePassageSection', ''));
+  const sectionStats = useMemo(() => {
+    return FREE_PASSAGE_SECTIONS.map((section) => {
+      const subjects = new Set(section.subjects);
+      const scoped = attempts.filter((a) => subjects.has(a.subject));
+      const correct = scoped.filter((a) => a.correct).length;
+      return { ...section, correct, total: scoped.length, acc: scoped.length ? correct / scoped.length : null };
+    });
+  }, [attempts]);
+  const recommended = useMemo(() => {
+    const withData = sectionStats.filter((s) => s.total >= 5);
+    if (withData.length) return withData.slice().sort((a, b) => a.acc - b.acc || b.total - a.total)[0];
+    const day = Math.floor(Date.now() / 86400000);
+    return sectionStats[day % sectionStats.length] || sectionStats[0];
+  }, [sectionStats]);
+  const selected = sectionStats.find((s) => s.key === selectedKey) || recommended || sectionStats[0];
+
+  const pick = (key) => {
+    setSelectedKey(key);
+    storage.set('mcat:freePassageSection', key);
+  };
+
+  return (
+    <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-5 space-y-4">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <h2 className="font-semibold text-[var(--text-strong)]">Free passage practice</h2>
+          <div className="text-xs text-[var(--text-faint)] mt-1">Khan Academy MCAT passages open inside the app when supported.</div>
+        </div>
+        <button
+          onClick={() => pick(recommended.key)}
+          className="text-xs px-3 py-1.5 rounded font-medium bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)]"
+        >
+          Recommended: {recommended.label}
+        </button>
+      </div>
+      <div className="grid grid-cols-3 gap-2">
+        {sectionStats.map((section) => (
+          <button
+            key={section.key}
+            onClick={() => pick(section.key)}
+            className={`text-left border rounded-lg px-3 py-2 ${selected.key === section.key
+              ? 'bg-[var(--accent)] text-white border-[var(--accent-border)]'
+              : 'border-[var(--border)] hover:bg-[var(--bg-hover)] text-[var(--text)]'}`}
+          >
+            <div className="text-sm font-semibold">{section.label}</div>
+            <div className={`text-[11px] ${selected.key === section.key ? 'text-white/80' : 'text-[var(--text-faint)]'}`}>
+              {section.acc == null ? 'No local stats yet' : `${section.correct}/${section.total} correct`}
+            </div>
+          </button>
+        ))}
+      </div>
+      <div className="border border-[var(--border-soft)] rounded-xl overflow-hidden bg-[var(--bg-elev-soft)]">
+        <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-[var(--border-soft)]">
+          <div className="min-w-0">
+            <div className="text-sm font-medium text-[var(--text-strong)] truncate">{selected.label}: {selected.title}</div>
+            <div className="text-[11px] text-[var(--text-faint)] truncate">{selected.url}</div>
+          </div>
+          <a
+            href={selected.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="shrink-0 text-xs px-3 py-1.5 border border-[var(--border)] rounded text-[var(--text-muted)] hover:bg-[var(--bg-hover)]"
+          >
+            Open tab
+          </a>
+        </div>
+        <iframe
+          key={selected.url}
+          src={selected.url}
+          title={`${selected.label} free MCAT passages`}
+          className="w-full bg-white"
+          style={{ height: '70vh', minHeight: '520px' }}
+          loading="lazy"
+        />
+      </div>
+    </div>
+  );
+}
+
 function StudyView() {
   // 'launcher' | 'active' | 'summary' | 'flashcards'
   const [phase, setPhase] = useState('launcher');
@@ -9181,6 +9287,7 @@ function StudyView() {
   if (phase === 'launcher') return (
     <div className="space-y-5">
       <MiniExamCard />
+      <FreePassagePractice />
       <QuizLauncher onStart={start} onStartFlashcards={startFlashcards} />
       <WeakSpotQuiz />
     </div>

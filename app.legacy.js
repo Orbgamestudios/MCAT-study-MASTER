@@ -12296,22 +12296,136 @@ function WeakSpotQuiz() {
     className: "w-full bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] disabled:opacity-40 rounded-lg py-2.5 text-sm font-medium"
   }, available === 0 ? 'No questions available' : "Start " + Math.min(count, available) + "-question weak-spot quiz")));
 }
+var FREE_PASSAGE_SECTIONS = [{
+  key: 'cp',
+  label: 'C/P',
+  title: 'Chemical and Physical',
+  url: 'https://www.khanacademy.org/test-prep/mcat/physical-sciences-practice',
+  subjects: ['General Chemistry', 'Chemistry', 'Organic Chemistry', 'Physics', 'Physics and Math']
+}, {
+  key: 'bb',
+  label: 'B/B',
+  title: 'Biological and Biochemical',
+  url: 'https://www.khanacademy.org/test-prep/mcat/biological-sciences-practice',
+  subjects: ['Biology', 'Biochemistry']
+}, {
+  key: 'ps',
+  label: 'P/S',
+  title: 'Psychological and Social',
+  url: 'https://www.khanacademy.org/test-prep/mcat/social-sciences-practice',
+  subjects: ['Behavioral Science', 'Psychology', 'Sociology']
+}];
+function FreePassagePractice() {
+  var _useApp9 = useApp(),
+    attempts = _useApp9.attempts;
+  var _useState83 = useState(function () {
+      return storage.get('mcat:freePassageSection', '');
+    }),
+    selectedKey = _useState83[0],
+    setSelectedKey = _useState83[1];
+  var sectionStats = useMemo(function () {
+    return FREE_PASSAGE_SECTIONS.map(function (section) {
+      var subjects = new Set(section.subjects);
+      var scoped = attempts.filter(function (a) {
+        return subjects.has(a.subject);
+      });
+      var correct = scoped.filter(function (a) {
+        return a.correct;
+      }).length;
+      return _extends({}, section, {
+        correct,
+        total: scoped.length,
+        acc: scoped.length ? correct / scoped.length : null
+      });
+    });
+  }, [attempts]);
+  var recommended = useMemo(function () {
+    var withData = sectionStats.filter(function (s) {
+      return s.total >= 5;
+    });
+    if (withData.length) return withData.slice().sort(function (a, b) {
+      return a.acc - b.acc || b.total - a.total;
+    })[0];
+    var day = Math.floor(Date.now() / 86400000);
+    return sectionStats[day % sectionStats.length] || sectionStats[0];
+  }, [sectionStats]);
+  var selected = sectionStats.find(function (s) {
+    return s.key === selectedKey;
+  }) || recommended || sectionStats[0];
+  var pick = function pick(key) {
+    setSelectedKey(key);
+    storage.set('mcat:freePassageSection', key);
+  };
+  return React.createElement("div", {
+    className: "bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-5 space-y-4"
+  }, React.createElement("div", {
+    className: "flex items-center justify-between gap-3 flex-wrap"
+  }, React.createElement("div", null, React.createElement("h2", {
+    className: "font-semibold text-[var(--text-strong)]"
+  }, "Free passage practice"), React.createElement("div", {
+    className: "text-xs text-[var(--text-faint)] mt-1"
+  }, "Khan Academy MCAT passages open inside the app when supported.")), React.createElement("button", {
+    onClick: function onClick() {
+      return pick(recommended.key);
+    },
+    className: "text-xs px-3 py-1.5 rounded font-medium bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)]"
+  }, "Recommended: ", recommended.label)), React.createElement("div", {
+    className: "grid grid-cols-3 gap-2"
+  }, sectionStats.map(function (section) {
+    return React.createElement("button", {
+      key: section.key,
+      onClick: function onClick() {
+        return pick(section.key);
+      },
+      className: "text-left border rounded-lg px-3 py-2 " + (selected.key === section.key ? 'bg-[var(--accent)] text-white border-[var(--accent-border)]' : 'border-[var(--border)] hover:bg-[var(--bg-hover)] text-[var(--text)]')
+    }, React.createElement("div", {
+      className: "text-sm font-semibold"
+    }, section.label), React.createElement("div", {
+      className: "text-[11px] " + (selected.key === section.key ? 'text-white/80' : 'text-[var(--text-faint)]')
+    }, section.acc == null ? 'No local stats yet' : section.correct + "/" + section.total + " correct"));
+  })), React.createElement("div", {
+    className: "border border-[var(--border-soft)] rounded-xl overflow-hidden bg-[var(--bg-elev-soft)]"
+  }, React.createElement("div", {
+    className: "flex items-center justify-between gap-2 px-3 py-2 border-b border-[var(--border-soft)]"
+  }, React.createElement("div", {
+    className: "min-w-0"
+  }, React.createElement("div", {
+    className: "text-sm font-medium text-[var(--text-strong)] truncate"
+  }, selected.label, ": ", selected.title), React.createElement("div", {
+    className: "text-[11px] text-[var(--text-faint)] truncate"
+  }, selected.url)), React.createElement("a", {
+    href: selected.url,
+    target: "_blank",
+    rel: "noopener noreferrer",
+    className: "shrink-0 text-xs px-3 py-1.5 border border-[var(--border)] rounded text-[var(--text-muted)] hover:bg-[var(--bg-hover)]"
+  }, "Open tab")), React.createElement("iframe", {
+    key: selected.url,
+    src: selected.url,
+    title: selected.label + " free MCAT passages",
+    className: "w-full bg-white",
+    style: {
+      height: '70vh',
+      minHeight: '520px'
+    },
+    loading: "lazy"
+  })));
+}
 function StudyView() {
-  var _useState83 = useState('launcher'),
-    phase = _useState83[0],
-    setPhase = _useState83[1];
-  var _useState84 = useState([]),
-    items = _useState84[0],
-    setItems = _useState84[1];
+  var _useState84 = useState('launcher'),
+    phase = _useState84[0],
+    setPhase = _useState84[1];
   var _useState85 = useState([]),
-    flashItems = _useState85[0],
-    setFlashItems = _useState85[1];
+    items = _useState85[0],
+    setItems = _useState85[1];
   var _useState86 = useState([]),
-    results = _useState86[0],
-    setResults = _useState86[1];
-  var _useState87 = useState('0:00'),
-    elapsedTime = _useState87[0],
-    setElapsedTime = _useState87[1];
+    flashItems = _useState86[0],
+    setFlashItems = _useState86[1];
+  var _useState87 = useState([]),
+    results = _useState87[0],
+    setResults = _useState87[1];
+  var _useState88 = useState('0:00'),
+    elapsedTime = _useState88[0],
+    setElapsedTime = _useState88[1];
   var timerRefHolder = useRef(null);
   var start = function start(picked) {
     setItems(picked);
@@ -12379,7 +12493,7 @@ function StudyView() {
   }, []);
   if (phase === 'launcher') return React.createElement("div", {
     className: "space-y-5"
-  }, React.createElement(MiniExamCard, null), React.createElement(QuizLauncher, {
+  }, React.createElement(MiniExamCard, null), React.createElement(FreePassagePractice, null), React.createElement(QuizLauncher, {
     onStart: start,
     onStartFlashcards: startFlashcards
   }), React.createElement(WeakSpotQuiz, null));
@@ -12445,18 +12559,18 @@ function BirdHero(_ref68) {
   }));
 }
 function HomeActivity() {
-  var _useApp9 = useApp(),
-    api = _useApp9.api,
-    session = _useApp9.session;
-  var _useState88 = useState(null),
-    rows = _useState88[0],
-    setRows = _useState88[1];
-  var _useState89 = useState(''),
-    err = _useState89[0],
-    setErr = _useState89[1];
-  var _useState90 = useState(0),
-    tick = _useState90[0],
-    setTick = _useState90[1];
+  var _useApp0 = useApp(),
+    api = _useApp0.api,
+    session = _useApp0.session;
+  var _useState89 = useState(null),
+    rows = _useState89[0],
+    setRows = _useState89[1];
+  var _useState90 = useState(''),
+    err = _useState90[0],
+    setErr = _useState90[1];
+  var _useState91 = useState(0),
+    tick = _useState91[0],
+    setTick = _useState91[1];
   useEffect(function () {
     var cancelled = false;
     api.activity().then(function (d) {
@@ -12664,24 +12778,24 @@ function CarsRunner(_ref71) {
     payload = _ref71.payload,
     onClose = _ref71.onClose,
     alreadyDone = _ref71.alreadyDone;
-  var _useApp0 = useApp(),
-    addAttempt = _useApp0.addAttempt,
-    flushSync = _useApp0.flushSync;
+  var _useApp1 = useApp(),
+    addAttempt = _useApp1.addAttempt,
+    flushSync = _useApp1.flushSync;
   var questions = payload.questions || [];
   var savedResult = alreadyDone ? getCarsResults()[date] || null : null;
-  var _useState91 = useState(function () {
+  var _useState92 = useState(function () {
       return savedResult && savedResult.picks || {};
     }),
-    picks = _useState91[0],
-    setPicks = _useState91[1];
-  var _useState92 = useState(alreadyDone ? 'review' : 'attempt'),
-    phase = _useState92[0],
-    setPhase = _useState92[1];
+    picks = _useState92[0],
+    setPicks = _useState92[1];
+  var _useState93 = useState(alreadyDone ? 'review' : 'attempt'),
+    phase = _useState93[0],
+    setPhase = _useState93[1];
   var finalizedRef = useRef(false);
   var scrollRef = useRef(null);
-  var _useState93 = useState(0),
-    elapsedMs = _useState93[0],
-    setElapsedMs = _useState93[1];
+  var _useState94 = useState(0),
+    elapsedMs = _useState94[0],
+    setElapsedMs = _useState94[1];
   var startRef = useRef(null);
   useEffect(function () {
     if (phase !== 'attempt') {
@@ -12896,28 +13010,28 @@ function DailyCarsSlotCard(_ref72) {
   var _payload$questions;
   var date = _ref72.date,
     slot = _ref72.slot;
-  var _useApp1 = useApp(),
-    api = _useApp1.api,
-    client = _useApp1.client,
-    apiKey = _useApp1.apiKey,
-    session = _useApp1.session;
+  var _useApp10 = useApp(),
+    api = _useApp10.api,
+    client = _useApp10.client,
+    apiKey = _useApp10.apiKey,
+    session = _useApp10.session;
   var slotLabel = carsSlotLabel(slot);
   var cached = getCarsCachePayload(date);
-  var _useState94 = useState(cached ? 'ready' : 'loading'),
-    state = _useState94[0],
-    setState = _useState94[1];
-  var _useState95 = useState(cached),
-    payload = _useState95[0],
-    setPayload = _useState95[1];
-  var _useState96 = useState(''),
-    err = _useState96[0],
-    setErr = _useState96[1];
-  var _useState97 = useState(false),
-    running = _useState97[0],
-    setRunning = _useState97[1];
-  var _useState98 = useState(0),
-    tick = _useState98[0],
-    setTick = _useState98[1];
+  var _useState95 = useState(cached ? 'ready' : 'loading'),
+    state = _useState95[0],
+    setState = _useState95[1];
+  var _useState96 = useState(cached),
+    payload = _useState96[0],
+    setPayload = _useState96[1];
+  var _useState97 = useState(''),
+    err = _useState97[0],
+    setErr = _useState97[1];
+  var _useState98 = useState(false),
+    running = _useState98[0],
+    setRunning = _useState98[1];
+  var _useState99 = useState(0),
+    tick = _useState99[0],
+    setTick = _useState99[1];
   var result = getCarsResults()[date];
   useEffect(function () {
     var cancelled = false;
@@ -13152,23 +13266,23 @@ function DailyCarsCard() {
   }));
 }
 function CarsArchive() {
-  var _useApp10 = useApp(),
-    api = _useApp10.api;
-  var _useState99 = useState(null),
-    days = _useState99[0],
-    setDays = _useState99[1];
-  var _useState100 = useState(''),
-    err = _useState100[0],
-    setErr = _useState100[1];
-  var _useState101 = useState(null),
-    open = _useState101[0],
-    setOpen = _useState101[1];
+  var _useApp11 = useApp(),
+    api = _useApp11.api;
+  var _useState100 = useState(null),
+    days = _useState100[0],
+    setDays = _useState100[1];
+  var _useState101 = useState(''),
+    err = _useState101[0],
+    setErr = _useState101[1];
   var _useState102 = useState(null),
-    loadingDate = _useState102[0],
-    setLoadingDate = _useState102[1];
-  var _useState103 = useState(false),
-    expanded = _useState103[0],
-    setExpanded = _useState103[1];
+    open = _useState102[0],
+    setOpen = _useState102[1];
+  var _useState103 = useState(null),
+    loadingDate = _useState103[0],
+    setLoadingDate = _useState103[1];
+  var _useState104 = useState(false),
+    expanded = _useState104[0],
+    setExpanded = _useState104[1];
   var today = todayStr();
   var results = getCarsResults();
   useEffect(function () {
@@ -13324,29 +13438,29 @@ function lookupLocalDef(term, extractions) {
 function SolvedConnectionGroup(_ref75) {
   var group = _ref75.group,
     date = _ref75.date;
-  var _useApp11 = useApp(),
-    client = _useApp11.client,
-    apiKey = _useApp11.apiKey,
-    extractions = _useApp11.extractions;
+  var _useApp12 = useApp(),
+    client = _useApp12.client,
+    apiKey = _useApp12.apiKey,
+    extractions = _useApp12.extractions;
   var c = CONNECTIONS_COLORS[group.difficulty];
-  var _useState104 = useState(false),
-    open = _useState104[0],
-    setOpen = _useState104[1];
-  var _useState105 = useState(null),
-    flippedTerm = _useState105[0],
-    setFlippedTerm = _useState105[1];
-  var _useState106 = useState(function () {
+  var _useState105 = useState(false),
+    open = _useState105[0],
+    setOpen = _useState105[1];
+  var _useState106 = useState(null),
+    flippedTerm = _useState106[0],
+    setFlippedTerm = _useState106[1];
+  var _useState107 = useState(function () {
       return getConnExplain(date, group.category);
     }),
-    explain = _useState106[0],
-    setExplain = _useState106[1];
-  var _useState107 = useState(false),
-    explainBusy = _useState107[0],
-    setExplainBusy = _useState107[1];
-  var _useState108 = useState(''),
-    explainErr = _useState108[0],
-    setExplainErr = _useState108[1];
-  var _useState109 = useState(function () {
+    explain = _useState107[0],
+    setExplain = _useState107[1];
+  var _useState108 = useState(false),
+    explainBusy = _useState108[0],
+    setExplainBusy = _useState108[1];
+  var _useState109 = useState(''),
+    explainErr = _useState109[0],
+    setExplainErr = _useState109[1];
+  var _useState110 = useState(function () {
       var seed = {};
       for (var _iterator66 = _createForOfIteratorHelperLoose(group.terms), _step66; !(_step66 = _iterator66()).done;) {
         var t = _step66.value;
@@ -13354,11 +13468,11 @@ function SolvedConnectionGroup(_ref75) {
       }
       return seed;
     }),
-    termDefs = _useState109[0],
-    setTermDefs = _useState109[1];
-  var _useState110 = useState({}),
-    termBusy = _useState110[0],
-    setTermBusy = _useState110[1];
+    termDefs = _useState110[0],
+    setTermDefs = _useState110[1];
+  var _useState111 = useState({}),
+    termBusy = _useState111[0],
+    setTermBusy = _useState111[1];
   var fetchExplain = useCallback(_asyncToGenerator(_regenerator().m(function _callee44() {
     var text, _t31;
     return _regenerator().w(function (_context49) {
@@ -13584,9 +13698,9 @@ function ConnectionsRunner(_ref79) {
     payload = _ref79.payload,
     onClose = _ref79.onClose,
     alreadyDone = _ref79.alreadyDone;
-  var _useApp12 = useApp(),
-    addAttempt = _useApp12.addAttempt,
-    flushSync = _useApp12.flushSync;
+  var _useApp13 = useApp(),
+    addAttempt = _useApp13.addAttempt,
+    flushSync = _useApp13.flushSync;
   var groups = useMemo(function () {
     var list = (payload.groups || []).map(function (g) {
       return _extends({}, g, {
@@ -13614,12 +13728,12 @@ function ConnectionsRunner(_ref79) {
   }, [groups]);
   var savedResult = alreadyDone ? getConnectionsResults()[date] || null : null;
   var startSolved = (savedResult == null ? void 0 : savedResult.solvedCategories) || [];
-  var _useState111 = useState(function () {
+  var _useState112 = useState(function () {
       return startSolved;
     }),
-    solved = _useState111[0],
-    setSolved = _useState111[1];
-  var _useState112 = useState(function () {
+    solved = _useState112[0],
+    setSolved = _useState112[1];
+  var _useState113 = useState(function () {
       var remaining = allTerms.filter(function (t) {
         return !startSolved.some(function (cat) {
           var _groups$find;
@@ -13630,26 +13744,26 @@ function ConnectionsRunner(_ref79) {
       });
       return seededShuffle(remaining, "connections:" + date);
     }),
-    order = _useState112[0],
-    setOrder = _useState112[1];
-  var _useState113 = useState([]),
-    selected = _useState113[0],
-    setSelected = _useState113[1];
-  var _useState114 = useState((savedResult == null ? void 0 : savedResult.mistakes) || 0),
-    mistakes = _useState114[0],
-    setMistakes = _useState114[1];
-  var _useState115 = useState(function () {
+    order = _useState113[0],
+    setOrder = _useState113[1];
+  var _useState114 = useState([]),
+    selected = _useState114[0],
+    setSelected = _useState114[1];
+  var _useState115 = useState((savedResult == null ? void 0 : savedResult.mistakes) || 0),
+    mistakes = _useState115[0],
+    setMistakes = _useState115[1];
+  var _useState116 = useState(function () {
       if (!savedResult) return 'play';
       return savedResult.won ? 'won' : 'lost';
     }),
-    phase = _useState115[0],
-    setPhase = _useState115[1];
-  var _useState116 = useState(''),
-    message = _useState116[0],
-    setMessage = _useState116[1];
-  var _useState117 = useState(false),
-    shaking = _useState117[0],
-    setShaking = _useState117[1];
+    phase = _useState116[0],
+    setPhase = _useState116[1];
+  var _useState117 = useState(''),
+    message = _useState117[0],
+    setMessage = _useState117[1];
+  var _useState118 = useState(false),
+    shaking = _useState118[0],
+    setShaking = _useState118[1];
   var finalizedRef = useRef(!!savedResult);
   var solvedGroups = solved.map(function (cat) {
     return groups.find(function (g) {
@@ -13888,30 +14002,30 @@ function ConnectionsRunner(_ref79) {
 }
 function DailyConnectionsCard() {
   var _result$solvedCategor;
-  var _useApp13 = useApp(),
-    api = _useApp13.api,
-    client = _useApp13.client,
-    apiKey = _useApp13.apiKey,
-    session = _useApp13.session,
-    extractions = _useApp13.extractions,
-    files = _useApp13.files;
+  var _useApp14 = useApp(),
+    api = _useApp14.api,
+    client = _useApp14.client,
+    apiKey = _useApp14.apiKey,
+    session = _useApp14.session,
+    extractions = _useApp14.extractions,
+    files = _useApp14.files;
   var today = todayStr();
   var cached = getConnectionsCachePayload(today);
-  var _useState118 = useState(cached ? 'ready' : 'loading'),
-    state = _useState118[0],
-    setState = _useState118[1];
-  var _useState119 = useState(cached),
-    payload = _useState119[0],
-    setPayload = _useState119[1];
-  var _useState120 = useState(''),
-    err = _useState120[0],
-    setErr = _useState120[1];
-  var _useState121 = useState(false),
-    running = _useState121[0],
-    setRunning = _useState121[1];
-  var _useState122 = useState(0),
-    tick = _useState122[0],
-    setTick = _useState122[1];
+  var _useState119 = useState(cached ? 'ready' : 'loading'),
+    state = _useState119[0],
+    setState = _useState119[1];
+  var _useState120 = useState(cached),
+    payload = _useState120[0],
+    setPayload = _useState120[1];
+  var _useState121 = useState(''),
+    err = _useState121[0],
+    setErr = _useState121[1];
+  var _useState122 = useState(false),
+    running = _useState122[0],
+    setRunning = _useState122[1];
+  var _useState123 = useState(0),
+    tick = _useState123[0],
+    setTick = _useState123[1];
   var result = getConnectionsResults()[today];
   var termPool = useMemo(function () {
     var out = [];
@@ -14227,23 +14341,23 @@ function DailyConnectionsCard() {
   }));
 }
 function ConnectionsArchive() {
-  var _useApp14 = useApp(),
-    api = _useApp14.api;
-  var _useState123 = useState(null),
-    days = _useState123[0],
-    setDays = _useState123[1];
-  var _useState124 = useState(''),
-    err = _useState124[0],
-    setErr = _useState124[1];
-  var _useState125 = useState(null),
-    open = _useState125[0],
-    setOpen = _useState125[1];
+  var _useApp15 = useApp(),
+    api = _useApp15.api;
+  var _useState124 = useState(null),
+    days = _useState124[0],
+    setDays = _useState124[1];
+  var _useState125 = useState(''),
+    err = _useState125[0],
+    setErr = _useState125[1];
   var _useState126 = useState(null),
-    loadingDate = _useState126[0],
-    setLoadingDate = _useState126[1];
-  var _useState127 = useState(false),
-    expanded = _useState127[0],
-    setExpanded = _useState127[1];
+    open = _useState126[0],
+    setOpen = _useState126[1];
+  var _useState127 = useState(null),
+    loadingDate = _useState127[0],
+    setLoadingDate = _useState127[1];
+  var _useState128 = useState(false),
+    expanded = _useState128[0],
+    setExpanded = _useState128[1];
   var today = todayStr();
   var results = getConnectionsResults();
   useEffect(function () {
@@ -14436,8 +14550,8 @@ function CarsCalendar() {
 }
 function HomeView(_ref86) {
   var onGoToStudy = _ref86.onGoToStudy;
-  var _useApp15 = useApp(),
-    session = _useApp15.session;
+  var _useApp16 = useApp(),
+    session = _useApp16.session;
   var username = (session == null ? void 0 : session.username) || 'student';
   var quote = useMemo(function () {
     return QUOTES[Math.floor(Math.random() * QUOTES.length)];
@@ -14685,17 +14799,17 @@ function assembleSection(section, available, target) {
   return shuffle(chosen).slice(0, target);
 }
 function MiniExamCard() {
-  var _useApp16 = useApp(),
-    api = _useApp16.api;
-  var _useState128 = useState(null),
-    stats = _useState128[0],
-    setStats = _useState128[1];
-  var _useState129 = useState(false),
-    loading = _useState129[0],
-    setLoading = _useState129[1];
-  var _useState130 = useState(''),
-    err = _useState130[0],
-    setErr = _useState130[1];
+  var _useApp17 = useApp(),
+    api = _useApp17.api;
+  var _useState129 = useState(null),
+    stats = _useState129[0],
+    setStats = _useState129[1];
+  var _useState130 = useState(false),
+    loading = _useState130[0],
+    setLoading = _useState130[1];
+  var _useState131 = useState(''),
+    err = _useState131[0],
+    setErr = _useState131[1];
   useEffect(function () {
     var alive = true;
     api.examBankStats().then(function (s) {
@@ -14829,26 +14943,26 @@ function MiniExamCard() {
 }
 function DailyExamCard(_ref91) {
   var onGoToStudy = _ref91.onGoToStudy;
-  var _useApp17 = useApp(),
-    client = _useApp17.client,
-    api = _useApp17.api,
-    session = _useApp17.session,
-    apiKey = _useApp17.apiKey,
-    files = _useApp17.files,
-    questions = _useApp17.questions,
-    extractions = _useApp17.extractions,
-    attempts = _useApp17.attempts;
+  var _useApp18 = useApp(),
+    client = _useApp18.client,
+    api = _useApp18.api,
+    session = _useApp18.session,
+    apiKey = _useApp18.apiKey,
+    files = _useApp18.files,
+    questions = _useApp18.questions,
+    extractions = _useApp18.extractions,
+    attempts = _useApp18.attempts;
   var today = todayStr();
   var cached = getDailyExamPayload(today);
-  var _useState131 = useState(cached),
-    payload = _useState131[0],
-    setPayload = _useState131[1];
-  var _useState132 = useState(cached ? 'ready' : 'idle'),
-    state = _useState132[0],
-    setState = _useState132[1];
-  var _useState133 = useState(''),
-    err = _useState133[0],
-    setErr = _useState133[1];
+  var _useState132 = useState(cached),
+    payload = _useState132[0],
+    setPayload = _useState132[1];
+  var _useState133 = useState(cached ? 'ready' : 'idle'),
+    state = _useState133[0],
+    setState = _useState133[1];
+  var _useState134 = useState(''),
+    err = _useState134[0],
+    setErr = _useState134[1];
   var mastered = useMemo(function () {
     var g = storage.get(KEYS.lessonGates, {}) || {};
     return files.filter(function (f) {
@@ -15361,9 +15475,9 @@ function builtInLessonPoolFor(chapterId) {
 function LessonDrillCard(_ref93) {
   var term = _ref93.term,
     definition = _ref93.definition;
-  var _useState134 = useState(false),
-    show = _useState134[0],
-    setShow = _useState134[1];
+  var _useState135 = useState(false),
+    show = _useState135[0],
+    setShow = _useState135[1];
   return React.createElement("button", {
     onClick: function onClick() {
       return setShow(function (s) {
@@ -15386,9 +15500,9 @@ function LessonSection(_ref94) {
     locked = _ref94.locked;
   var _useFigureViewer2 = useFigureViewer(),
     openFigure = _useFigureViewer2.open;
-  var _useState135 = useState(false),
-    open = _useState135[0],
-    setOpen = _useState135[1];
+  var _useState136 = useState(false),
+    open = _useState136[0],
+    setOpen = _useState136[1];
   var paras = (sec.teach || '').split(/\n\n+/).map(function (p) {
     return p.trim();
   }).filter(Boolean);
@@ -15497,45 +15611,45 @@ function LessonGateQuiz(_ref95) {
     need = _ref95.need,
     onPass = _ref95.onPass,
     onCancel = _ref95.onCancel;
-  var _useApp18 = useApp(),
-    addAttempt = _useApp18.addAttempt,
-    updateLastAttempt = _useApp18.updateLastAttempt;
-  var _useState136 = useState(0),
-    round = _useState136[0],
-    setRound = _useState136[1];
+  var _useApp19 = useApp(),
+    addAttempt = _useApp19.addAttempt,
+    updateLastAttempt = _useApp19.updateLastAttempt;
+  var _useState137 = useState(0),
+    round = _useState137[0],
+    setRound = _useState137[1];
   var items = useMemo(function () {
     return shuffle(pool).slice(0, need);
   }, [pool, need, round]);
-  var _useState137 = useState(0),
-    index = _useState137[0],
-    setIndex = _useState137[1];
-  var _useState138 = useState(false),
-    answered = _useState138[0],
-    setAnswered = _useState138[1];
-  var _useState139 = useState(0),
-    correctCount = _useState139[0],
-    setCorrectCount = _useState139[1];
+  var _useState138 = useState(0),
+    index = _useState138[0],
+    setIndex = _useState138[1];
+  var _useState139 = useState(false),
+    answered = _useState139[0],
+    setAnswered = _useState139[1];
   var _useState140 = useState(0),
-    scoredCount = _useState140[0],
-    setScoredCount = _useState140[1];
-  var _useState141 = useState({}),
-    answers = _useState141[0],
-    setAnswers = _useState141[1];
-  var _useState142 = useState(false),
-    done = _useState142[0],
-    setDone = _useState142[1];
+    correctCount = _useState140[0],
+    setCorrectCount = _useState140[1];
+  var _useState141 = useState(0),
+    scoredCount = _useState141[0],
+    setScoredCount = _useState141[1];
+  var _useState142 = useState({}),
+    answers = _useState142[0],
+    setAnswers = _useState142[1];
   var _useState143 = useState(false),
-    showCalc = _useState143[0],
-    setShowCalc = _useState143[1];
+    done = _useState143[0],
+    setDone = _useState143[1];
   var _useState144 = useState(false),
-    calcMin = _useState144[0],
-    setCalcMin = _useState144[1];
-  var _useState145 = useState(''),
-    calcExpr = _useState145[0],
-    setCalcExpr = _useState145[1];
-  var _useState146 = useState(false),
-    showTable = _useState146[0],
-    setShowTable = _useState146[1];
+    showCalc = _useState144[0],
+    setShowCalc = _useState144[1];
+  var _useState145 = useState(false),
+    calcMin = _useState145[0],
+    setCalcMin = _useState145[1];
+  var _useState146 = useState(''),
+    calcExpr = _useState146[0],
+    setCalcExpr = _useState146[1];
+  var _useState147 = useState(false),
+    showTable = _useState147[0],
+    setShowTable = _useState147[1];
   var total = items.length;
   var scoreTotal = items.length;
   var item = items[index];
@@ -15728,18 +15842,18 @@ function ForceMasterModal(_ref98) {
     onVerifyPin = _ref98.onVerifyPin,
     onConfirmMaster = _ref98.onConfirmMaster,
     onClose = _ref98.onClose;
-  var _useState147 = useState('confirm'),
-    step = _useState147[0],
-    setStep = _useState147[1];
-  var _useState148 = useState(''),
-    pin = _useState148[0],
-    setPin = _useState148[1];
+  var _useState148 = useState('confirm'),
+    step = _useState148[0],
+    setStep = _useState148[1];
   var _useState149 = useState(''),
-    err = _useState149[0],
-    setErr = _useState149[1];
-  var _useState150 = useState(false),
-    busy = _useState150[0],
-    setBusy = _useState150[1];
+    pin = _useState149[0],
+    setPin = _useState149[1];
+  var _useState150 = useState(''),
+    err = _useState150[0],
+    setErr = _useState150[1];
+  var _useState151 = useState(false),
+    busy = _useState151[0],
+    setBusy = _useState151[1];
   var submitPin = function () {
     var _ref99 = _asyncToGenerator(_regenerator().m(function _callee51() {
       var _t39;
@@ -15891,12 +16005,12 @@ function LessonReader(_ref100) {
   var mastered = !!(gate != null && gate.mastered);
   var unlocked = mastered ? total : Math.min(total, Math.max(G, (gate == null ? void 0 : gate.unlocked) || G));
   var allUnlocked = unlocked >= total;
-  var _useState151 = useState(null),
-    quiz = _useState151[0],
-    setQuiz = _useState151[1];
-  var _useState152 = useState(false),
-    forceMaster = _useState152[0],
-    setForceMaster = _useState152[1];
+  var _useState152 = useState(null),
+    quiz = _useState152[0],
+    setQuiz = _useState152[1];
+  var _useState153 = useState(false),
+    forceMaster = _useState153[0],
+    setForceMaster = _useState153[1];
   var poolThrough = function poolThrough(end) {
     var ids = new Set();
     for (var k = 0; k < end; k++) {
@@ -16037,23 +16151,23 @@ function LessonReader(_ref100) {
 }
 function LessonsView(_ref101) {
   var onGoToStudy = _ref101.onGoToStudy;
-  var _useApp19 = useApp(),
-    api = _useApp19.api,
-    session = _useApp19.session,
-    files = _useApp19.files,
-    questions = _useApp19.questions,
-    extractions = _useApp19.extractions,
-    attempts = _useApp19.attempts,
-    stateRev = _useApp19.stateRev;
-  var _useState153 = useState(false),
-    showAll = _useState153[0],
-    setShowAll = _useState153[1];
-  var _useState154 = useState('subject'),
-    sortBy = _useState154[0],
-    setSortBy = _useState154[1];
-  var _useState155 = useState({}),
-    openSubjects = _useState155[0],
-    setOpenSubjects = _useState155[1];
+  var _useApp20 = useApp(),
+    api = _useApp20.api,
+    session = _useApp20.session,
+    files = _useApp20.files,
+    questions = _useApp20.questions,
+    extractions = _useApp20.extractions,
+    attempts = _useApp20.attempts,
+    stateRev = _useApp20.stateRev;
+  var _useState154 = useState(false),
+    showAll = _useState154[0],
+    setShowAll = _useState154[1];
+  var _useState155 = useState('subject'),
+    sortBy = _useState155[0],
+    setSortBy = _useState155[1];
+  var _useState156 = useState({}),
+    openSubjects = _useState156[0],
+    setOpenSubjects = _useState156[1];
   var toggleSubject = function toggleSubject(s) {
     return setOpenSubjects(function (m) {
       return _extends({}, m, {
@@ -16061,33 +16175,33 @@ function LessonsView(_ref101) {
       });
     });
   };
-  var _useState156 = useState(function () {
+  var _useState157 = useState(function () {
       return storage.get(KEYS.lessonsCache, {}) || {};
     }),
-    lessonsCache = _useState156[0],
-    setLessonsCache = _useState156[1];
-  var _useState157 = useState(function () {
+    lessonsCache = _useState157[0],
+    setLessonsCache = _useState157[1];
+  var _useState158 = useState(function () {
       return storage.get(KEYS.lessonProgress, {}) || {};
     }),
-    progress = _useState157[0],
-    setProgress = _useState157[1];
-  var _useState158 = useState(function () {
+    progress = _useState158[0],
+    setProgress = _useState158[1];
+  var _useState159 = useState(function () {
       return storage.get(KEYS.lessonGates, {}) || {};
     }),
-    gates = _useState158[0],
-    setGates = _useState158[1];
-  var _useState159 = useState({}),
-    availMap = _useState159[0],
-    setAvailMap = _useState159[1];
+    gates = _useState159[0],
+    setGates = _useState159[1];
   var _useState160 = useState({}),
-    busy = _useState160[0],
-    setBusy = _useState160[1];
-  var _useState161 = useState(null),
-    openId = _useState161[0],
-    setOpenId = _useState161[1];
-  var _useState162 = useState(''),
-    error = _useState162[0],
-    setError = _useState162[1];
+    availMap = _useState160[0],
+    setAvailMap = _useState160[1];
+  var _useState161 = useState({}),
+    busy = _useState161[0],
+    setBusy = _useState161[1];
+  var _useState162 = useState(null),
+    openId = _useState162[0],
+    setOpenId = _useState162[1];
+  var _useState163 = useState(''),
+    error = _useState163[0],
+    setError = _useState163[1];
   var fileToChapter = useMemo(function () {
     var m = {};
     for (var _iterator85 = _createForOfIteratorHelperLoose(files), _step85; !(_step85 = _iterator85()).done;) {
@@ -16823,20 +16937,20 @@ function relativeTime(ts) {
 }
 function SyncPanel() {
   var _pushStatus$error;
-  var _useApp20 = useApp(),
-    github = _useApp20.github,
-    setGithub = _useApp20.setGithub,
-    pushBank = _useApp20.pushBank,
-    pushStatus = _useApp20.pushStatus,
-    files = _useApp20.files,
-    extractions = _useApp20.extractions,
-    questions = _useApp20.questions;
-  var _useState163 = useState(false),
-    showToken = _useState163[0],
-    setShowToken = _useState163[1];
+  var _useApp21 = useApp(),
+    github = _useApp21.github,
+    setGithub = _useApp21.setGithub,
+    pushBank = _useApp21.pushBank,
+    pushStatus = _useApp21.pushStatus,
+    files = _useApp21.files,
+    extractions = _useApp21.extractions,
+    questions = _useApp21.questions;
   var _useState164 = useState(false),
-    expanded = _useState164[0],
-    setExpanded = _useState164[1];
+    showToken = _useState164[0],
+    setShowToken = _useState164[1];
+  var _useState165 = useState(false),
+    expanded = _useState165[0],
+    setExpanded = _useState165[1];
   var fullyProcessed = files.filter(function (f) {
     var _questions$f$file_id7, _questions$f$file_id8;
     return extractions[f.file_id] && ((_questions$f$file_id7 = questions[f.file_id]) == null ? void 0 : _questions$f$file_id7.mc) && ((_questions$f$file_id8 = questions[f.file_id]) == null ? void 0 : _questions$f$file_id8.short);
@@ -17154,16 +17268,16 @@ function predictMcatScores(attempts) {
   };
 }
 function McatPredictionCard() {
-  var _useApp21 = useApp(),
-    attempts = _useApp21.attempts;
+  var _useApp22 = useApp(),
+    attempts = _useApp22.attempts;
   var _useMemo2 = useMemo(function () {
       return predictMcatScores(attempts);
     }, [attempts]),
     sections = _useMemo2.sections,
     total = _useMemo2.total;
-  var _useState165 = useState(false),
-    expanded = _useState165[0],
-    setExpanded = _useState165[1];
+  var _useState166 = useState(false),
+    expanded = _useState166[0],
+    setExpanded = _useState166[1];
   var fmt = function fmt(n) {
     return n.toFixed(1).replace(/\.0$/, '');
   };
@@ -17260,11 +17374,11 @@ function McatPredictionCard() {
   }, expanded ? 'Hide breakdown' : 'Breakdown')));
 }
 function StatsView() {
-  var _useApp22 = useApp(),
-    attempts = _useApp22.attempts,
-    files = _useApp22.files,
-    questions = _useApp22.questions,
-    clearAttempts = _useApp22.clearAttempts;
+  var _useApp23 = useApp(),
+    attempts = _useApp23.attempts,
+    files = _useApp23.files,
+    questions = _useApp23.questions,
+    clearAttempts = _useApp23.clearAttempts;
   var stats = useMemo(function () {
     var overall = {
       correct: 0,
@@ -17433,51 +17547,51 @@ function StatsView() {
 }
 function SettingsPanel(_ref115) {
   var onClose = _ref115.onClose;
-  var _useApp23 = useApp(),
-    palette = _useApp23.palette,
-    mode = _useApp23.mode,
-    setPalette = _useApp23.setPalette,
-    setMode = _useApp23.setMode,
-    apiKey = _useApp23.apiKey,
-    setApiKey = _useApp23.setApiKey,
-    client = _useApp23.client,
-    session = _useApp23.session,
-    pendingSync = _useApp23.pendingSync,
-    syncBusy = _useApp23.syncBusy,
-    syncError = _useApp23.syncError,
-    flushSync = _useApp23.flushSync,
-    volume = _useApp23.volume,
-    setVolume = _useApp23.setVolume,
-    autoDownloadChapters = _useApp23.autoDownloadChapters,
-    setAutoDownloadChapters = _useApp23.setAutoDownloadChapters,
-    autoDownloadAll = _useApp23.autoDownloadAll,
-    setAutoDownloadAll = _useApp23.setAutoDownloadAll,
-    contributorMode = _useApp23.contributorMode,
-    setContributorMode = _useApp23.setContributorMode,
-    tropicalBg = _useApp23.tropicalBg,
-    setTropicalBg = _useApp23.setTropicalBg,
-    bgBlur = _useApp23.bgBlur,
-    setBgBlur = _useApp23.setBgBlur,
-    experimentalUI = _useApp23.experimentalUI,
-    setExperimentalUI = _useApp23.setExperimentalUI,
-    glass = _useApp23.glass,
-    setGlass = _useApp23.setGlass,
-    files = _useApp23.files;
+  var _useApp24 = useApp(),
+    palette = _useApp24.palette,
+    mode = _useApp24.mode,
+    setPalette = _useApp24.setPalette,
+    setMode = _useApp24.setMode,
+    apiKey = _useApp24.apiKey,
+    setApiKey = _useApp24.setApiKey,
+    client = _useApp24.client,
+    session = _useApp24.session,
+    pendingSync = _useApp24.pendingSync,
+    syncBusy = _useApp24.syncBusy,
+    syncError = _useApp24.syncError,
+    flushSync = _useApp24.flushSync,
+    volume = _useApp24.volume,
+    setVolume = _useApp24.setVolume,
+    autoDownloadChapters = _useApp24.autoDownloadChapters,
+    setAutoDownloadChapters = _useApp24.setAutoDownloadChapters,
+    autoDownloadAll = _useApp24.autoDownloadAll,
+    setAutoDownloadAll = _useApp24.setAutoDownloadAll,
+    contributorMode = _useApp24.contributorMode,
+    setContributorMode = _useApp24.setContributorMode,
+    tropicalBg = _useApp24.tropicalBg,
+    setTropicalBg = _useApp24.setTropicalBg,
+    bgBlur = _useApp24.bgBlur,
+    setBgBlur = _useApp24.setBgBlur,
+    experimentalUI = _useApp24.experimentalUI,
+    setExperimentalUI = _useApp24.setExperimentalUI,
+    glass = _useApp24.glass,
+    setGlass = _useApp24.setGlass,
+    files = _useApp24.files;
   var hasDownloadedChapters = files.some(function (f) {
     return f.chapter_id;
   });
-  var _useState166 = useState(apiKey || ''),
-    keyVal = _useState166[0],
-    setKeyVal = _useState166[1];
-  var _useState167 = useState(false),
-    keyShow = _useState167[0],
-    setKeyShow = _useState167[1];
-  var _useState168 = useState(''),
-    keyErr = _useState168[0],
-    setKeyErr = _useState168[1];
-  var _useState169 = useState(false),
-    keyBusy = _useState169[0],
-    setKeyBusy = _useState169[1];
+  var _useState167 = useState(apiKey || ''),
+    keyVal = _useState167[0],
+    setKeyVal = _useState167[1];
+  var _useState168 = useState(false),
+    keyShow = _useState168[0],
+    setKeyShow = _useState168[1];
+  var _useState169 = useState(''),
+    keyErr = _useState169[0],
+    setKeyErr = _useState169[1];
+  var _useState170 = useState(false),
+    keyBusy = _useState170[0],
+    setKeyBusy = _useState170[1];
   var saveKey = function () {
     var _ref116 = _asyncToGenerator(_regenerator().m(function _callee55() {
       var trimmed, _t42;
@@ -17794,11 +17908,11 @@ function SettingsPanel(_ref115) {
   }))), React.createElement(StorageUsageSection, null), React.createElement(EraseQuizStatsSection, null));
 }
 function StorageUsageSection() {
-  var _useState170 = useState(function () {
+  var _useState171 = useState(function () {
       return computeStorageSnapshot();
     }),
-    snap = _useState170[0],
-    setSnap = _useState170[1];
+    snap = _useState171[0],
+    setSnap = _useState171[1];
   var fmtBytes = function fmtBytes(n) {
     if (n < 1024) return n + " B";
     if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
@@ -17915,19 +18029,19 @@ function computeStorageSnapshot() {
   };
 }
 function EraseQuizStatsSection() {
-  var _useApp24 = useApp(),
-    attempts = _useApp24.attempts,
-    session = _useApp24.session,
-    eraseStatsFor = _useApp24.eraseStatsFor;
-  var _useState171 = useState(null),
-    busy = _useState171[0],
-    setBusy = _useState171[1];
+  var _useApp25 = useApp(),
+    attempts = _useApp25.attempts,
+    session = _useApp25.session,
+    eraseStatsFor = _useApp25.eraseStatsFor;
   var _useState172 = useState(null),
-    msg = _useState172[0],
-    setMsg = _useState172[1];
+    busy = _useState172[0],
+    setBusy = _useState172[1];
   var _useState173 = useState(null),
-    openDay = _useState173[0],
-    setOpenDay = _useState173[1];
+    msg = _useState173[0],
+    setMsg = _useState173[1];
+  var _useState174 = useState(null),
+    openDay = _useState174[0],
+    setOpenDay = _useState174[1];
   var days = useMemo(function () {
     var dayMap = new Map();
     for (var _iterator101 = _createForOfIteratorHelperLoose(attempts), _step101; !(_step101 = _iterator101()).done;) {
@@ -18101,19 +18215,19 @@ function EraseQuizStatsSection() {
   })));
 }
 function PublishAllPanel() {
-  var _useApp25 = useApp(),
-    api = _useApp25.api,
-    session = _useApp25.session,
-    files = _useApp25.files,
-    extractions = _useApp25.extractions,
-    questions = _useApp25.questions,
-    setFiles = _useApp25.setFiles;
-  var _useState174 = useState(false),
-    busy = _useState174[0],
-    setBusy = _useState174[1];
-  var _useState175 = useState(null),
-    status = _useState175[0],
-    setStatus = _useState175[1];
+  var _useApp26 = useApp(),
+    api = _useApp26.api,
+    session = _useApp26.session,
+    files = _useApp26.files,
+    extractions = _useApp26.extractions,
+    questions = _useApp26.questions,
+    setFiles = _useApp26.setFiles;
+  var _useState175 = useState(false),
+    busy = _useState175[0],
+    setBusy = _useState175[1];
+  var _useState176 = useState(null),
+    status = _useState176[0],
+    setStatus = _useState176[1];
   var publishable = files.filter(function (f) {
     return extractions[f.file_id];
   });
@@ -18260,29 +18374,29 @@ function PublishAllPanel() {
   }, status.kind === 'ok' ? '✓ ' : '', status.msg));
 }
 function FlagFixesPanel() {
-  var _useApp26 = useApp(),
-    api = _useApp26.api,
-    client = _useApp26.client,
-    apiKey = _useApp26.apiKey,
-    session = _useApp26.session,
-    files = _useApp26.files,
-    extractions = _useApp26.extractions,
-    questions = _useApp26.questions,
-    setQuestionsFor = _useApp26.setQuestionsFor;
-  var _useState176 = useState(function () {
+  var _useApp27 = useApp(),
+    api = _useApp27.api,
+    client = _useApp27.client,
+    apiKey = _useApp27.apiKey,
+    session = _useApp27.session,
+    files = _useApp27.files,
+    extractions = _useApp27.extractions,
+    questions = _useApp27.questions,
+    setQuestionsFor = _useApp27.setQuestionsFor;
+  var _useState177 = useState(function () {
       return storage.get(KEYS.flagQueue, []);
     }),
-    queue = _useState176[0],
-    setQueue = _useState176[1];
-  var _useState177 = useState(false),
-    busy = _useState177[0],
-    setBusy = _useState177[1];
-  var _useState178 = useState(null),
-    status = _useState178[0],
-    setStatus = _useState178[1];
-  var _useState179 = useState([]),
-    processedLog = _useState179[0],
-    setProcessedLog = _useState179[1];
+    queue = _useState177[0],
+    setQueue = _useState177[1];
+  var _useState178 = useState(false),
+    busy = _useState178[0],
+    setBusy = _useState178[1];
+  var _useState179 = useState(null),
+    status = _useState179[0],
+    setStatus = _useState179[1];
+  var _useState180 = useState([]),
+    processedLog = _useState180[0],
+    setProcessedLog = _useState180[1];
   var pending = queue.filter(function (f) {
     return f.status === 'pending';
   });
@@ -18602,12 +18716,12 @@ function FlagRow(_ref122) {
   var f = _ref122.flag,
     onRemove = _ref122.onRemove,
     onRequeue = _ref122.onRequeue;
-  var _useState180 = useState(false),
-    amending = _useState180[0],
-    setAmending = _useState180[1];
-  var _useState181 = useState(''),
-    amendText = _useState181[0],
-    setAmendText = _useState181[1];
+  var _useState181 = useState(false),
+    amending = _useState181[0],
+    setAmending = _useState181[1];
+  var _useState182 = useState(''),
+    amendText = _useState182[0],
+    setAmendText = _useState182[1];
   var letters = ['A', 'B', 'C', 'D'];
   var fixed = f.fixed_question;
   return React.createElement("li", {
@@ -18676,27 +18790,27 @@ function FlagRow(_ref122) {
   }, "remove")));
 }
 function CloudBankPanel() {
-  var _useApp27 = useApp(),
-    session = _useApp27.session,
-    api = _useApp27.api,
-    files = _useApp27.files,
-    extractions = _useApp27.extractions,
-    questions = _useApp27.questions,
-    setFiles = _useApp27.setFiles,
-    setExtraction = _useApp27.setExtraction,
-    setQuestionsFor = _useApp27.setQuestionsFor;
-  var _useState182 = useState({
+  var _useApp28 = useApp(),
+    session = _useApp28.session,
+    api = _useApp28.api,
+    files = _useApp28.files,
+    extractions = _useApp28.extractions,
+    questions = _useApp28.questions,
+    setFiles = _useApp28.setFiles,
+    setExtraction = _useApp28.setExtraction,
+    setQuestionsFor = _useApp28.setQuestionsFor;
+  var _useState183 = useState({
       state: 'idle',
       message: ''
     }),
-    status = _useState182[0],
-    setStatus = _useState182[1];
-  var _useState183 = useState(null),
-    remote = _useState183[0],
-    setRemote = _useState183[1];
-  var _useState184 = useState(false),
-    busy = _useState184[0],
-    setBusy = _useState184[1];
+    status = _useState183[0],
+    setStatus = _useState183[1];
+  var _useState184 = useState(null),
+    remote = _useState184[0],
+    setRemote = _useState184[1];
+  var _useState185 = useState(false),
+    busy = _useState185[0],
+    setBusy = _useState185[1];
   useEffect(function () {
     if (!session) {
       setRemote(null);
@@ -18901,25 +19015,25 @@ function exportBank(_ref125) {
 }
 function AccountPanel(_ref126) {
   var onClose = _ref126.onClose;
-  var _useApp28 = useApp(),
-    session = _useApp28.session,
-    setSession = _useApp28.setSession,
-    api = _useApp28.api;
-  var _useState185 = useState('login'),
-    mode = _useState185[0],
-    setMode = _useState185[1];
-  var _useState186 = useState(''),
-    username = _useState186[0],
-    setUsername = _useState186[1];
+  var _useApp29 = useApp(),
+    session = _useApp29.session,
+    setSession = _useApp29.setSession,
+    api = _useApp29.api;
+  var _useState186 = useState('login'),
+    mode = _useState186[0],
+    setMode = _useState186[1];
   var _useState187 = useState(''),
-    pin = _useState187[0],
-    setPin = _useState187[1];
+    username = _useState187[0],
+    setUsername = _useState187[1];
   var _useState188 = useState(''),
-    err = _useState188[0],
-    setErr = _useState188[1];
-  var _useState189 = useState(false),
-    busy = _useState189[0],
-    setBusy = _useState189[1];
+    pin = _useState188[0],
+    setPin = _useState188[1];
+  var _useState189 = useState(''),
+    err = _useState189[0],
+    setErr = _useState189[1];
+  var _useState190 = useState(false),
+    busy = _useState190[0],
+    setBusy = _useState190[1];
   if (session) {
     return React.createElement("div", {
       className: "bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-5"
@@ -19083,14 +19197,14 @@ function pct(c, t) {
 }
 function Leaderboard(_ref130) {
   var onPickUser = _ref130.onPickUser;
-  var _useApp29 = useApp(),
-    api = _useApp29.api;
-  var _useState190 = useState(null),
-    data = _useState190[0],
-    setData = _useState190[1];
-  var _useState191 = useState(''),
-    err = _useState191[0],
-    setErr = _useState191[1];
+  var _useApp30 = useApp(),
+    api = _useApp30.api;
+  var _useState191 = useState(null),
+    data = _useState191[0],
+    setData = _useState191[1];
+  var _useState192 = useState(''),
+    err = _useState192[0],
+    setErr = _useState192[1];
   useEffect(function () {
     var cancelled = false;
     api.leaderboard().then(function (d) {
@@ -19284,28 +19398,28 @@ function ServerStatsPayload(_ref131) {
 function AuditModal(_ref132) {
   var chapter = _ref132.chapter,
     onClose = _ref132.onClose;
-  var _useApp30 = useApp(),
-    api = _useApp30.api,
-    client = _useApp30.client,
-    apiKey = _useApp30.apiKey,
-    files = _useApp30.files,
-    setQuestionsFor = _useApp30.setQuestionsFor,
-    questions = _useApp30.questions;
-  var _useState192 = useState('loading'),
-    phase = _useState192[0],
-    setPhase = _useState192[1];
-  var _useState193 = useState([]),
-    mc = _useState193[0],
-    setMc = _useState193[1];
+  var _useApp31 = useApp(),
+    api = _useApp31.api,
+    client = _useApp31.client,
+    apiKey = _useApp31.apiKey,
+    files = _useApp31.files,
+    setQuestionsFor = _useApp31.setQuestionsFor,
+    questions = _useApp31.questions;
+  var _useState193 = useState('loading'),
+    phase = _useState193[0],
+    setPhase = _useState193[1];
   var _useState194 = useState([]),
-    flags = _useState194[0],
-    setFlags = _useState194[1];
-  var _useState195 = useState(null),
-    status = _useState195[0],
-    setStatus = _useState195[1];
-  var _useState196 = useState(new Set()),
-    applied = _useState196[0],
-    setApplied = _useState196[1];
+    mc = _useState194[0],
+    setMc = _useState194[1];
+  var _useState195 = useState([]),
+    flags = _useState195[0],
+    setFlags = _useState195[1];
+  var _useState196 = useState(null),
+    status = _useState196[0],
+    setStatus = _useState196[1];
+  var _useState197 = useState(new Set()),
+    applied = _useState197[0],
+    setApplied = _useState197[1];
   useEffect(function () {
     var cancelled = false;
     api.getChapter(chapter.id).then(function (full) {
@@ -19646,50 +19760,50 @@ function ChapterRow(_ref136) {
   }, "\u2713 audited")));
 }
 function BankTab() {
-  var _useApp31 = useApp(),
-    api = _useApp31.api,
-    session = _useApp31.session,
-    apiKey = _useApp31.apiKey,
-    client = _useApp31.client,
-    setFiles = _useApp31.setFiles,
-    setExtraction = _useApp31.setExtraction,
-    setQuestionsFor = _useApp31.setQuestionsFor,
-    files = _useApp31.files,
-    contributorMode = _useApp31.contributorMode;
-  var _useState197 = useState(null),
-    data = _useState197[0],
-    setData = _useState197[1];
-  var _useState198 = useState(''),
-    err = _useState198[0],
-    setErr = _useState198[1];
-  var _useState199 = useState(null),
-    auditChapter = _useState199[0],
-    setAuditChapter = _useState199[1];
-  var _useState200 = useState(0),
-    tick = _useState200[0],
-    setTick = _useState200[1];
-  var _useState201 = useState(null),
-    busyId = _useState201[0],
-    setBusyId = _useState201[1];
+  var _useApp32 = useApp(),
+    api = _useApp32.api,
+    session = _useApp32.session,
+    apiKey = _useApp32.apiKey,
+    client = _useApp32.client,
+    setFiles = _useApp32.setFiles,
+    setExtraction = _useApp32.setExtraction,
+    setQuestionsFor = _useApp32.setQuestionsFor,
+    files = _useApp32.files,
+    contributorMode = _useApp32.contributorMode;
+  var _useState198 = useState(null),
+    data = _useState198[0],
+    setData = _useState198[1];
+  var _useState199 = useState(''),
+    err = _useState199[0],
+    setErr = _useState199[1];
+  var _useState200 = useState(null),
+    auditChapter = _useState200[0],
+    setAuditChapter = _useState200[1];
+  var _useState201 = useState(0),
+    tick = _useState201[0],
+    setTick = _useState201[1];
   var _useState202 = useState(null),
-    busyKind = _useState202[0],
-    setBusyKind = _useState202[1];
+    busyId = _useState202[0],
+    setBusyId = _useState202[1];
   var _useState203 = useState(null),
-    status = _useState203[0],
-    setStatus = _useState203[1];
-  var _useState204 = useState(''),
-    filter = _useState204[0],
-    setFilter = _useState204[1];
-  var _useState205 = useState(function () {
+    busyKind = _useState203[0],
+    setBusyKind = _useState203[1];
+  var _useState204 = useState(null),
+    status = _useState204[0],
+    setStatus = _useState204[1];
+  var _useState205 = useState(''),
+    filter = _useState205[0],
+    setFilter = _useState205[1];
+  var _useState206 = useState(function () {
       return storage.get(KEYS.bankSeen, 0);
     }),
-    seenAt = _useState205[0];
-  var _useState206 = useState(false),
-    summaryDismissed = _useState206[0],
-    setSummaryDismissed = _useState206[1];
-  var _useState207 = useState({}),
-    openSubjects = _useState207[0],
-    setOpenSubjects = _useState207[1];
+    seenAt = _useState206[0];
+  var _useState207 = useState(false),
+    summaryDismissed = _useState207[0],
+    setSummaryDismissed = _useState207[1];
+  var _useState208 = useState({}),
+    openSubjects = _useState208[0],
+    setOpenSubjects = _useState208[1];
   var toggleSubject = function toggleSubject(s) {
     return setOpenSubjects(function (p) {
       return _extends({}, p, {
@@ -20215,28 +20329,28 @@ function BankTab() {
   }), React.createElement(ConnectionsArchive, null));
 }
 function BanksBrowser() {
-  var _useApp32 = useApp(),
-    api = _useApp32.api,
-    session = _useApp32.session,
-    setFiles = _useApp32.setFiles,
-    setExtraction = _useApp32.setExtraction,
-    setQuestionsFor = _useApp32.setQuestionsFor,
-    files = _useApp32.files;
-  var _useState208 = useState(null),
-    data = _useState208[0],
-    setData = _useState208[1];
-  var _useState209 = useState(''),
-    err = _useState209[0],
-    setErr = _useState209[1];
-  var _useState210 = useState(0),
-    tick = _useState210[0],
-    setTick = _useState210[1];
-  var _useState211 = useState(null),
-    busy = _useState211[0],
-    setBusy = _useState211[1];
+  var _useApp33 = useApp(),
+    api = _useApp33.api,
+    session = _useApp33.session,
+    setFiles = _useApp33.setFiles,
+    setExtraction = _useApp33.setExtraction,
+    setQuestionsFor = _useApp33.setQuestionsFor,
+    files = _useApp33.files;
+  var _useState209 = useState(null),
+    data = _useState209[0],
+    setData = _useState209[1];
+  var _useState210 = useState(''),
+    err = _useState210[0],
+    setErr = _useState210[1];
+  var _useState211 = useState(0),
+    tick = _useState211[0],
+    setTick = _useState211[1];
   var _useState212 = useState(null),
-    status = _useState212[0],
-    setStatus = _useState212[1];
+    busy = _useState212[0],
+    setBusy = _useState212[1];
+  var _useState213 = useState(null),
+    status = _useState213[0],
+    setStatus = _useState213[1];
   useEffect(function () {
     var cancelled = false;
     setData(null);
@@ -20380,14 +20494,14 @@ function BanksBrowser() {
 function UserProfile(_ref141) {
   var username = _ref141.username,
     onBack = _ref141.onBack;
-  var _useApp33 = useApp(),
-    api = _useApp33.api;
-  var _useState213 = useState(null),
-    data = _useState213[0],
-    setData = _useState213[1];
-  var _useState214 = useState(''),
-    err = _useState214[0],
-    setErr = _useState214[1];
+  var _useApp34 = useApp(),
+    api = _useApp34.api;
+  var _useState214 = useState(null),
+    data = _useState214[0],
+    setData = _useState214[1];
+  var _useState215 = useState(''),
+    err = _useState215[0],
+    setErr = _useState215[1];
   useEffect(function () {
     var cancelled = false;
     setData(null);
@@ -20419,12 +20533,12 @@ function UserProfile(_ref141) {
   }));
 }
 function SyncBar() {
-  var _useApp34 = useApp(),
-    pendingSync = _useApp34.pendingSync,
-    syncBusy = _useApp34.syncBusy,
-    syncError = _useApp34.syncError,
-    flushSync = _useApp34.flushSync,
-    session = _useApp34.session;
+  var _useApp35 = useApp(),
+    pendingSync = _useApp35.pendingSync,
+    syncBusy = _useApp35.syncBusy,
+    syncError = _useApp35.syncError,
+    flushSync = _useApp35.flushSync,
+    session = _useApp35.session;
   if (!session) return null;
   var count = pendingSync.length;
   return React.createElement("div", {
@@ -20447,22 +20561,22 @@ function SyncBar() {
   }, syncBusy ? '...' : 'Sync now'));
 }
 function ServerStatsView() {
-  var _useApp35 = useApp(),
-    api = _useApp35.api,
-    session = _useApp35.session,
-    pendingSync = _useApp35.pendingSync,
-    syncBusy = _useApp35.syncBusy;
-  var _useState215 = useState(function () {
+  var _useApp36 = useApp(),
+    api = _useApp36.api,
+    session = _useApp36.session,
+    pendingSync = _useApp36.pendingSync,
+    syncBusy = _useApp36.syncBusy;
+  var _useState216 = useState(function () {
       return getStatsCache();
     }),
-    data = _useState215[0],
-    setData = _useState215[1];
-  var _useState216 = useState(''),
-    err = _useState216[0],
-    setErr = _useState216[1];
-  var _useState217 = useState(0),
-    tick = _useState217[0],
-    setTick = _useState217[1];
+    data = _useState216[0],
+    setData = _useState216[1];
+  var _useState217 = useState(''),
+    err = _useState217[0],
+    setErr = _useState217[1];
+  var _useState218 = useState(0),
+    tick = _useState218[0],
+    setTick = _useState218[1];
   useEffect(function () {
     if (!session) return;
     var cancelled = false;
@@ -20500,14 +20614,14 @@ function ServerStatsView() {
   }));
 }
 function StorageWarning() {
-  var _useApp36 = useApp(),
-    clearAttempts = _useApp36.clearAttempts;
-  var _useState218 = useState(null),
-    fail = _useState218[0],
-    setFail = _useState218[1];
-  var _useState219 = useState(0),
-    usage = _useState219[0],
-    setUsage = _useState219[1];
+  var _useApp37 = useApp(),
+    clearAttempts = _useApp37.clearAttempts;
+  var _useState219 = useState(null),
+    fail = _useState219[0],
+    setFail = _useState219[1];
+  var _useState220 = useState(0),
+    usage = _useState220[0],
+    setUsage = _useState220[1];
   useEffect(function () {
     var handler = function handler(e) {
       setFail(e.detail || {
@@ -20569,37 +20683,37 @@ function StorageWarning() {
   }, "\xD7"));
 }
 function Shell() {
-  var _useApp37 = useApp(),
-    apiKey = _useApp37.apiKey,
-    setApiKey = _useApp37.setApiKey,
-    attempts = _useApp37.attempts,
-    readOnly = _useApp37.readOnly,
-    files = _useApp37.files,
-    extractions = _useApp37.extractions,
-    questions = _useApp37.questions,
-    session = _useApp37.session,
-    setSession = _useApp37.setSession,
-    pendingSync = _useApp37.pendingSync,
-    syncBusy = _useApp37.syncBusy,
-    api = _useApp37.api,
-    palette = _useApp37.palette,
-    mode = _useApp37.mode,
-    contributorMode = _useApp37.contributorMode;
-  var _useState220 = useState('home'),
-    tab = _useState220[0],
-    setTab = _useState220[1];
-  var _useState221 = useState(false),
-    showAccount = _useState221[0],
-    setShowAccount = _useState221[1];
+  var _useApp38 = useApp(),
+    apiKey = _useApp38.apiKey,
+    setApiKey = _useApp38.setApiKey,
+    attempts = _useApp38.attempts,
+    readOnly = _useApp38.readOnly,
+    files = _useApp38.files,
+    extractions = _useApp38.extractions,
+    questions = _useApp38.questions,
+    session = _useApp38.session,
+    setSession = _useApp38.setSession,
+    pendingSync = _useApp38.pendingSync,
+    syncBusy = _useApp38.syncBusy,
+    api = _useApp38.api,
+    palette = _useApp38.palette,
+    mode = _useApp38.mode,
+    contributorMode = _useApp38.contributorMode;
+  var _useState221 = useState('home'),
+    tab = _useState221[0],
+    setTab = _useState221[1];
   var _useState222 = useState(false),
-    showSettings = _useState222[0],
-    setShowSettings = _useState222[1];
-  var _useState223 = useState(null),
-    profileUser = _useState223[0],
-    setProfileUser = _useState223[1];
-  var _useState224 = useState(false),
-    bankHasUpdates = _useState224[0],
-    setBankHasUpdates = _useState224[1];
+    showAccount = _useState222[0],
+    setShowAccount = _useState222[1];
+  var _useState223 = useState(false),
+    showSettings = _useState223[0],
+    setShowSettings = _useState223[1];
+  var _useState224 = useState(null),
+    profileUser = _useState224[0],
+    setProfileUser = _useState224[1];
+  var _useState225 = useState(false),
+    bankHasUpdates = _useState225[0],
+    setBankHasUpdates = _useState225[1];
   useEffect(function () {
     var cancelled = false;
     api.listChapters().then(function (d) {
@@ -20623,9 +20737,9 @@ function Shell() {
       return window.removeEventListener('mcat:bankSeen', onSeen);
     };
   }, []);
-  var _useState225 = useState(false),
-    carsReady = _useState225[0],
-    setCarsReady = _useState225[1];
+  var _useState226 = useState(false),
+    carsReady = _useState226[0],
+    setCarsReady = _useState226[1];
   var recheckCars = useCallback(function () {
     var d = todayStr();
     var keys = Array.from({
@@ -20730,9 +20844,9 @@ function Shell() {
     return extractions[f.file_id] && ((_questions$f$file_id0 = questions[f.file_id]) == null ? void 0 : _questions$f$file_id0.mc) && ((_questions$f$file_id1 = questions[f.file_id]) == null ? void 0 : _questions$f$file_id1.short);
   }).length;
   var headerRef = useRef(null);
-  var _useState226 = useState(56),
-    headerH = _useState226[0],
-    setHeaderH = _useState226[1];
+  var _useState227 = useState(56),
+    headerH = _useState227[0],
+    setHeaderH = _useState227[1];
   useLayoutEffect(function () {
     var measure = function measure() {
       if (!headerRef.current) return;
@@ -20893,10 +21007,10 @@ function Shell() {
   }))));
 }
 function Root() {
-  var _useApp38 = useApp(),
-    apiKey = _useApp38.apiKey,
-    readOnly = _useApp38.readOnly,
-    session = _useApp38.session;
+  var _useApp39 = useApp(),
+    apiKey = _useApp39.apiKey,
+    readOnly = _useApp39.readOnly,
+    session = _useApp39.session;
   return apiKey || readOnly || session ? React.createElement(Shell, null) : React.createElement(ApiKeyGate, null);
 }
 try {
