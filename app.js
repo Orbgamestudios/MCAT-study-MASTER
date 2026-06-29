@@ -9215,27 +9215,19 @@ function FreePassagePractice() {
           </button>
         ))}
       </div>
-      <div className="border border-[var(--border-soft)] rounded-xl overflow-hidden bg-[var(--bg-elev-soft)]">
-        <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-[var(--border-soft)]">
-          <div className="min-w-0">
-            <div className="text-sm font-medium text-[var(--text-strong)] truncate">{selected.label}: {selected.title}</div>
-            <div className="text-[11px] text-[var(--text-faint)] truncate">{selected.url}</div>
-          </div>
-          <a
-            href={selected.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="shrink-0 text-xs px-3 py-1.5 border border-[var(--border)] rounded text-[var(--text-muted)] hover:bg-[var(--bg-hover)]"
-          >
-            Open tab
-          </a>
+      <div className="flex items-center justify-between gap-3 rounded-xl border border-[var(--border-soft)] bg-[var(--bg-elev-soft)] px-3 py-2">
+        <div className="min-w-0">
+          <div className="text-sm font-medium text-[var(--text-strong)] truncate">{selected.label}: {selected.title}</div>
+          <div className="text-[11px] text-[var(--text-faint)] truncate">{selected.url}</div>
         </div>
-        <div className="min-h-[18rem] flex items-center justify-center p-5 text-center">
-          <div className="max-w-md space-y-3">
-            <div className="text-sm font-medium text-[var(--text-strong)]">Embedded view is blocked by Khan Academy.</div>
-            <div className="text-sm text-[var(--text-muted)]">Use Open tab to launch the selected practice page while keeping the app open.</div>
-          </div>
-        </div>
+        <a
+          href={selected.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="shrink-0 text-xs px-3 py-1.5 border border-[var(--border)] rounded text-[var(--text-muted)] hover:bg-[var(--bg-hover)]"
+        >
+          Open tab
+        </a>
       </div>
     </div>
   );

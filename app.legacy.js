@@ -12390,9 +12390,7 @@ function FreePassagePractice() {
       className: "text-[11px] " + (selected.key === section.key ? 'text-white/80' : 'text-[var(--text-faint)]')
     }, section.acc == null ? 'No local stats yet' : section.correct + "/" + section.total + " correct"));
   })), React.createElement("div", {
-    className: "border border-[var(--border-soft)] rounded-xl overflow-hidden bg-[var(--bg-elev-soft)]"
-  }, React.createElement("div", {
-    className: "flex items-center justify-between gap-2 px-3 py-2 border-b border-[var(--border-soft)]"
+    className: "flex items-center justify-between gap-3 rounded-xl border border-[var(--border-soft)] bg-[var(--bg-elev-soft)] px-3 py-2"
   }, React.createElement("div", {
     className: "min-w-0"
   }, React.createElement("div", {
@@ -12404,15 +12402,7 @@ function FreePassagePractice() {
     target: "_blank",
     rel: "noopener noreferrer",
     className: "shrink-0 text-xs px-3 py-1.5 border border-[var(--border)] rounded text-[var(--text-muted)] hover:bg-[var(--bg-hover)]"
-  }, "Open tab")), React.createElement("div", {
-    className: "min-h-[18rem] flex items-center justify-center p-5 text-center"
-  }, React.createElement("div", {
-    className: "max-w-md space-y-3"
-  }, React.createElement("div", {
-    className: "text-sm font-medium text-[var(--text-strong)]"
-  }, "Embedded view is blocked by Khan Academy."), React.createElement("div", {
-    className: "text-sm text-[var(--text-muted)]"
-  }, "Use Open tab to launch the selected practice page while keeping the app open.")))));
+  }, "Open tab")));
 }
 function StudyView() {
   var _useState84 = useState('launcher'),
