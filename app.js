@@ -6355,6 +6355,16 @@ function QuizLauncher({ onStart, onStartFlashcards }) {
   const scope = drillMisses ? { misses: true } : { fileIds: selFiles, subjects: selSubjects };
   const pool = useMemo(() => buildPool(ctx, mode, scope), [ctx, mode, drillMisses, selected]);
 
+  // Chapters whose lesson final exam was passed 100% (mastered), from the lesson
+  // gating store. Lets the student drill only material they've mastered. Keyed by
+  // (subject, file) so a cross-subject chapter is selectable per credited subject.
+  const masteredKeys = useMemo(() => {
+    const g = storage.get(KEYS.lessonGates, {}) || {};
+    const out = new Set();
+    for (const f of readyChapters) if (f.chapter_id && g[f.chapter_id]?.mastered) for (const subj of fileSubjects(f)) out.add(selKey(subj, f.file_id));
+    return out;
+  }, [readyChapters, fileSubjects]);
+
   if (!readyChapters.length) {
     return (
       <div className="bg-[var(--bg-card-soft)] border border-dashed border-[var(--border-soft)] rounded-2xl p-6 text-sm text-[var(--text-muted)]">
@@ -6392,15 +6402,6 @@ function QuizLauncher({ onStart, onStartFlashcards }) {
   };
   const selectAll = () => setSelected(new Set(allKeys));
   const selectNone = () => setSelected(new Set());
-  // Chapters whose lesson final exam was passed 100% (mastered), from the lesson
-  // gating store. Lets the student drill only material they've mastered. Keyed by
-  // (subject, file) so a cross-subject chapter is selectable per credited subject.
-  const masteredKeys = useMemo(() => {
-    const g = storage.get(KEYS.lessonGates, {}) || {};
-    const out = new Set();
-    for (const f of readyChapters) if (f.chapter_id && g[f.chapter_id]?.mastered) for (const subj of fileSubjects(f)) out.add(selKey(subj, f.file_id));
-    return out;
-  }, [readyChapters, fileSubjects]);
   const selectMastered = () => setSelected(new Set(masteredKeys));
 
   return (

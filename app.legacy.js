@@ -8336,6 +8336,21 @@ function QuizLauncher(_ref43) {
   var pool = useMemo(function () {
     return buildPool(ctx, mode, scope);
   }, [ctx, mode, drillMisses, selected]);
+  var masteredKeys = useMemo(function () {
+    var g = storage.get(KEYS.lessonGates, {}) || {};
+    var out = new Set();
+    for (var _iterator52 = _createForOfIteratorHelperLoose(readyChapters), _step52; !(_step52 = _iterator52()).done;) {
+      var _g$f$chapter_id;
+      var f = _step52.value;
+      if (f.chapter_id && (_g$f$chapter_id = g[f.chapter_id]) != null && _g$f$chapter_id.mastered) {
+        for (var _iterator53 = _createForOfIteratorHelperLoose(fileSubjects(f)), _step53; !(_step53 = _iterator53()).done;) {
+          var subj = _step53.value;
+          out.add(selKey(subj, f.file_id));
+        }
+      }
+    }
+    return out;
+  }, [readyChapters, fileSubjects]);
   if (!readyChapters.length) {
     return React.createElement("div", {
       className: "bg-[var(--bg-card-soft)] border border-dashed border-[var(--border-soft)] rounded-2xl p-6 text-sm text-[var(--text-muted)]"
@@ -8375,13 +8390,13 @@ function QuizLauncher(_ref43) {
         return next.has(key);
       });
       if (allOn) {
-        for (var _iterator52 = _createForOfIteratorHelperLoose(keys), _step52; !(_step52 = _iterator52()).done;) {
-          var key = _step52.value;
+        for (var _iterator54 = _createForOfIteratorHelperLoose(keys), _step54; !(_step54 = _iterator54()).done;) {
+          var key = _step54.value;
           next.delete(key);
         }
       } else {
-        for (var _iterator53 = _createForOfIteratorHelperLoose(keys), _step53; !(_step53 = _iterator53()).done;) {
-          var _key = _step53.value;
+        for (var _iterator55 = _createForOfIteratorHelperLoose(keys), _step55; !(_step55 = _iterator55()).done;) {
+          var _key = _step55.value;
           next.add(_key);
         }
       }
@@ -8394,21 +8409,6 @@ function QuizLauncher(_ref43) {
   var selectNone = function selectNone() {
     return setSelected(new Set());
   };
-  var masteredKeys = useMemo(function () {
-    var g = storage.get(KEYS.lessonGates, {}) || {};
-    var out = new Set();
-    for (var _iterator54 = _createForOfIteratorHelperLoose(readyChapters), _step54; !(_step54 = _iterator54()).done;) {
-      var _g$f$chapter_id;
-      var f = _step54.value;
-      if (f.chapter_id && (_g$f$chapter_id = g[f.chapter_id]) != null && _g$f$chapter_id.mastered) {
-        for (var _iterator55 = _createForOfIteratorHelperLoose(fileSubjects(f)), _step55; !(_step55 = _iterator55()).done;) {
-          var subj = _step55.value;
-          out.add(selKey(subj, f.file_id));
-        }
-      }
-    }
-    return out;
-  }, [readyChapters, fileSubjects]);
   var selectMastered = function selectMastered() {
     return setSelected(new Set(masteredKeys));
   };
