@@ -12356,6 +12356,9 @@ function FreePassagePractice() {
     setSelectedKey(key);
     storage.set('mcat:freePassageSection', key);
   };
+  var openFullscreen = function openFullscreen() {
+    window.location.href = selected.url;
+  };
   return React.createElement("div", {
     className: "bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-5 space-y-4"
   }, React.createElement("div", {
@@ -12364,7 +12367,7 @@ function FreePassagePractice() {
     className: "font-semibold text-[var(--text-strong)]"
   }, "Free passage practice"), React.createElement("div", {
     className: "text-xs text-[var(--text-faint)] mt-1"
-  }, "Khan Academy MCAT passages open inside the app when supported.")), React.createElement("button", {
+  }, "Khan Academy blocks embedded frames, so launch the selected practice page directly.")), React.createElement("button", {
     onClick: function onClick() {
       return pick(recommended.key);
     },
@@ -12393,22 +12396,28 @@ function FreePassagePractice() {
     className: "text-sm font-medium text-[var(--text-strong)] truncate"
   }, selected.label, ": ", selected.title), React.createElement("div", {
     className: "text-[11px] text-[var(--text-faint)] truncate"
-  }, selected.url)), React.createElement("a", {
+  }, selected.url)), React.createElement("div", {
+    className: "flex items-center gap-2 shrink-0"
+  }, React.createElement("button", {
+    onClick: openFullscreen,
+    className: "text-xs px-3 py-1.5 rounded font-medium bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)]"
+  }, "Fullscreen"), React.createElement("a", {
     href: selected.url,
     target: "_blank",
     rel: "noopener noreferrer",
-    className: "shrink-0 text-xs px-3 py-1.5 border border-[var(--border)] rounded text-[var(--text-muted)] hover:bg-[var(--bg-hover)]"
-  }, "Open tab")), React.createElement("iframe", {
-    key: selected.url,
-    src: selected.url,
-    title: selected.label + " free MCAT passages",
-    className: "w-full bg-white",
-    style: {
-      height: '70vh',
-      minHeight: '520px'
-    },
-    loading: "lazy"
-  })));
+    className: "text-xs px-3 py-1.5 border border-[var(--border)] rounded text-[var(--text-muted)] hover:bg-[var(--bg-hover)]"
+  }, "Open tab"))), React.createElement("div", {
+    className: "min-h-[18rem] flex items-center justify-center p-5 text-center"
+  }, React.createElement("div", {
+    className: "max-w-md space-y-3"
+  }, React.createElement("div", {
+    className: "text-sm font-medium text-[var(--text-strong)]"
+  }, "Embedded view is blocked by Khan Academy."), React.createElement("div", {
+    className: "text-sm text-[var(--text-muted)]"
+  }, "Use Fullscreen to replace this app window with the practice page, or Open tab to keep the app open separately."), React.createElement("button", {
+    onClick: openFullscreen,
+    className: "inline-flex px-4 py-2 rounded font-medium bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)]"
+  }, "Open ", selected.label, " fullscreen")))));
 }
 function StudyView() {
   var _useState84 = useState('launcher'),
