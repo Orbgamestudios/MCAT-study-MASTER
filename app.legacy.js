@@ -15074,6 +15074,290 @@ function lessonSectionStatus(sec, latestCorrect) {
     total: ids.length
   };
 }
+var NUCLEOTIDE_LESSON_ID = 'builtin_biochem_nucleotides';
+var NUCLEOTIDE_FILE_ID = 'builtin:biochem:nucleotides';
+var NUCLEOTIDE_META = {
+  file_id: NUCLEOTIDE_FILE_ID,
+  chapter: 'Nucleotides',
+  subject: 'Biochemistry'
+};
+var NUCLEOTIDE_LESSON = {
+  chapter_id: NUCLEOTIDE_LESSON_ID,
+  subject: 'Biochemistry',
+  title: 'Nucleotides',
+  intro: 'A focused Biochemistry lesson for memorizing nucleotide parts, base identities, DNA versus RNA differences, and the purine/pyrimidine rules that show up on MCAT questions.',
+  sections: [{
+    id: 'nuc_sec_parts',
+    order: 1,
+    concept_id: 'nucleotide-parts',
+    title: 'What a nucleotide is',
+    teach: 'A nucleotide has three parts: a nitrogenous base, a pentose sugar, and one or more phosphate groups. The base is the information-bearing part. The sugar tells you whether the molecule belongs to DNA or RNA. The phosphate gives nucleic acids their negative charge and lets nucleotides link through phosphodiester bonds.\n\nA nucleoside is smaller than a nucleotide: it is only the base plus the sugar. Add phosphate to a nucleoside and it becomes a nucleotide. That distinction is a common MCAT wording trap.',
+    worked_examples: [{
+      prompt: 'Is adenosine triphosphate a nucleoside or a nucleotide?',
+      solution: 'It is a nucleotide because it contains adenine, ribose, and three phosphate groups. Adenosine alone would be the nucleoside.'
+    }],
+    definition_drills: [{
+      term: 'Nucleotide',
+      definition: 'A nitrogenous base plus pentose sugar plus at least one phosphate group.'
+    }, {
+      term: 'Nucleoside',
+      definition: 'A nitrogenous base plus pentose sugar, with no phosphate group.'
+    }, {
+      term: 'Phosphate group',
+      definition: 'The negatively charged group that links nucleotides and forms the sugar-phosphate backbone.'
+    }, {
+      term: 'Pentose sugar',
+      definition: 'A five-carbon sugar: ribose in RNA or deoxyribose in DNA.'
+    }],
+    figures: ['Nucleotide'],
+    check_ids: ['nuc_mc_parts_1', 'nuc_mc_parts_2', 'nuc_mc_parts_3', 'nuc_mc_parts_4'],
+    mastery_threshold: 1
+  }, {
+    id: 'nuc_sec_bases',
+    order: 2,
+    concept_id: 'bases-and-rings',
+    title: 'Bases: purines and pyrimidines',
+    teach: 'The five major bases are adenine, guanine, cytosine, thymine, and uracil. Adenine and guanine are purines, meaning they have two rings. Cytosine, thymine, and uracil are pyrimidines, meaning they have one ring.\n\nA useful memory hook is "Pure As Gold": purines are A and G. The remaining bases are pyrimidines. DNA uses A, G, C, and T. RNA uses A, G, C, and U, replacing thymine with uracil.',
+    worked_examples: [{
+      prompt: 'A base has two fused rings and pairs with cytosine. Which base is it?',
+      solution: 'Guanine. It is a purine, and G pairs with C.'
+    }],
+    definition_drills: [{
+      term: 'Purines',
+      definition: 'Two-ring bases: adenine and guanine.'
+    }, {
+      term: 'Pyrimidines',
+      definition: 'One-ring bases: cytosine, thymine, and uracil.'
+    }, {
+      term: 'Adenine',
+      definition: 'A purine base found in DNA and RNA; pairs with T in DNA and U in RNA.'
+    }, {
+      term: 'Guanine',
+      definition: 'A purine base found in DNA and RNA; pairs with cytosine.'
+    }, {
+      term: 'Uracil',
+      definition: 'An RNA pyrimidine that replaces thymine and pairs with adenine.'
+    }],
+    figures: ['DNA'],
+    check_ids: ['nuc_mc_bases_1', 'nuc_mc_bases_2', 'nuc_mc_bases_3', 'nuc_mc_bases_4'],
+    mastery_threshold: 1
+  }, {
+    id: 'nuc_sec_pairing',
+    order: 3,
+    concept_id: 'base-pairing',
+    title: 'Base pairing and hydrogen bonds',
+    teach: 'Complementary base pairing keeps nucleic acid structure predictable. In DNA, adenine pairs with thymine, and guanine pairs with cytosine. In RNA, adenine pairs with uracil instead of thymine.\n\nA-T has two hydrogen bonds. G-C has three hydrogen bonds. More G-C content raises melting temperature because more hydrogen bonding and stronger stacking interactions make the double helix harder to separate.',
+    worked_examples: [{
+      prompt: 'Which DNA strand is complementary to 5-prime ACGT-3-prime?',
+      solution: 'The antiparallel complement is 3-prime TGCA-5-prime. If written 5-prime to 3-prime, it is ACGT.'
+    }],
+    definition_drills: [{
+      term: 'Complementary base pairing',
+      definition: 'Specific pairing: A with T or U, and G with C.'
+    }, {
+      term: 'A-T pair',
+      definition: 'A DNA base pair held by two hydrogen bonds.'
+    }, {
+      term: 'G-C pair',
+      definition: 'A DNA or RNA base pair held by three hydrogen bonds.'
+    }, {
+      term: 'Melting temperature',
+      definition: 'The temperature at which double-stranded nucleic acid separates; increased by high G-C content.'
+    }],
+    figures: ['DNA'],
+    check_ids: ['nuc_mc_pairing_1', 'nuc_mc_pairing_2', 'nuc_mc_pairing_3', 'nuc_mc_pairing_4'],
+    mastery_threshold: 1
+  }, {
+    id: 'nuc_sec_sugars',
+    order: 4,
+    concept_id: 'dna-vs-rna',
+    title: 'DNA versus RNA nucleotides',
+    teach: 'DNA and RNA differ in sugar, base usage, and usual strand structure. DNA contains deoxyribose, which lacks a 2-prime hydroxyl group. RNA contains ribose, which has a 2-prime hydroxyl group. That 2-prime OH makes RNA more chemically reactive and easier to hydrolyze.\n\nDNA usually uses thymine and is double-stranded. RNA uses uracil and is usually single-stranded. The bases A, G, and C are shared by both.',
+    worked_examples: [{
+      prompt: 'A nucleotide contains ribose and uracil. Is it more likely from DNA or RNA?',
+      solution: 'RNA. RNA uses ribose and uracil; DNA uses deoxyribose and thymine.'
+    }],
+    definition_drills: [{
+      term: 'Ribose',
+      definition: 'The RNA sugar, containing a 2-prime hydroxyl group.'
+    }, {
+      term: 'Deoxyribose',
+      definition: 'The DNA sugar, lacking the 2-prime hydroxyl group.'
+    }, {
+      term: 'Thymine',
+      definition: 'A DNA pyrimidine that pairs with adenine.'
+    }, {
+      term: 'Uracil',
+      definition: 'An RNA pyrimidine that pairs with adenine.'
+    }],
+    figures: ['RNA', 'DNA'],
+    check_ids: ['nuc_mc_sugars_1', 'nuc_mc_sugars_2', 'nuc_mc_sugars_3', 'nuc_mc_sugars_4'],
+    mastery_threshold: 1
+  }, {
+    id: 'nuc_sec_linkages',
+    order: 5,
+    concept_id: 'phosphodiester-bonds',
+    title: 'Backbone and directionality',
+    teach: 'Nucleotides polymerize through phosphodiester bonds. The phosphate links the 3-prime hydroxyl of one sugar to the 5-prime phosphate of the next sugar, creating a sugar-phosphate backbone.\n\nNucleic acid strands have direction. The 5-prime end has a phosphate, and the 3-prime end has a hydroxyl. Polymerases add new nucleotides to the 3-prime OH, so DNA and RNA synthesis proceeds 5-prime to 3-prime.',
+    worked_examples: [{
+      prompt: 'Why do polymerases need a free 3-prime OH?',
+      solution: 'The incoming nucleotide is joined to the growing strand when the 3-prime OH attacks the incoming 5-prime phosphate, forming the next phosphodiester bond.'
+    }],
+    definition_drills: [{
+      term: 'Phosphodiester bond',
+      definition: 'The linkage joining nucleotides through the 3-prime OH and 5-prime phosphate.'
+    }, {
+      term: '5-prime end',
+      definition: 'The end of a nucleic acid strand with a free phosphate.'
+    }, {
+      term: '3-prime end',
+      definition: 'The end of a nucleic acid strand with a free hydroxyl group.'
+    }, {
+      term: '5-prime to 3-prime synthesis',
+      definition: 'The direction of DNA and RNA synthesis as nucleotides are added to the 3-prime OH.'
+    }],
+    figures: ['DNA replication'],
+    check_ids: ['nuc_mc_link_1', 'nuc_mc_link_2', 'nuc_mc_link_3', 'nuc_mc_link_4'],
+    mastery_threshold: 1
+  }]
+};
+var NUCLEOTIDE_MCQ = [{
+  id: 'nuc_mc_parts_1',
+  question: 'Which set lists the three parts of a nucleotide?',
+  choices: ['Nitrogenous base, pentose sugar, phosphate group', 'Amino group, carboxyl group, R group', 'Fatty acid, glycerol, phosphate group', 'Base, amino acid, peptide bond'],
+  correct_index: 0,
+  explanation: 'A nucleotide consists of a nitrogenous base, a five-carbon sugar, and at least one phosphate group.'
+}, {
+  id: 'nuc_mc_parts_2',
+  question: 'A nucleoside differs from a nucleotide because a nucleoside lacks:',
+  choices: ['Phosphate', 'A nitrogenous base', 'A pentose sugar', 'A ring structure'],
+  correct_index: 0,
+  explanation: 'A nucleoside is base plus sugar. Adding phosphate makes it a nucleotide.'
+}, {
+  id: 'nuc_mc_parts_3',
+  question: 'Which part of a nucleotide gives nucleic acids much of their negative charge?',
+  choices: ['Phosphate group', 'Ribose ring oxygen', 'Nitrogenous base', 'Hydrogen bonds'],
+  correct_index: 0,
+  explanation: 'The phosphate groups in the backbone are negatively charged at physiological pH.'
+}, {
+  id: 'nuc_mc_parts_4',
+  question: 'Adenosine triphosphate is best classified as a:',
+  choices: ['Nucleotide', 'Nucleoside', 'Amino acid', 'Pyrimidine only'],
+  correct_index: 0,
+  explanation: 'ATP contains adenine, ribose, and three phosphates, so it is a nucleotide.'
+}, {
+  id: 'nuc_mc_bases_1',
+  question: 'Which bases are purines?',
+  choices: ['Adenine and guanine', 'Cytosine and thymine', 'Thymine and uracil', 'Cytosine and uracil'],
+  correct_index: 0,
+  explanation: 'Purines are adenine and guanine. They have two rings.'
+}, {
+  id: 'nuc_mc_bases_2',
+  question: 'Which base is found in RNA instead of thymine?',
+  choices: ['Uracil', 'Guanine', 'Cytosine', 'Adenine'],
+  correct_index: 0,
+  explanation: 'RNA uses uracil where DNA uses thymine.'
+}, {
+  id: 'nuc_mc_bases_3',
+  question: 'Cytosine, thymine, and uracil are classified as:',
+  choices: ['Pyrimidines', 'Purines', 'Nucleosides', 'Pentoses'],
+  correct_index: 0,
+  explanation: 'C, T, and U are one-ring pyrimidines.'
+}, {
+  id: 'nuc_mc_bases_4',
+  question: 'The memory hook "Pure As Gold" identifies which bases?',
+  choices: ['Adenine and guanine', 'Adenine and cytosine', 'Guanine and cytosine', 'Thymine and uracil'],
+  correct_index: 0,
+  explanation: 'Pure As Gold means purines are A and G.'
+}, {
+  id: 'nuc_mc_pairing_1',
+  question: 'In DNA, adenine pairs with:',
+  choices: ['Thymine', 'Uracil', 'Cytosine', 'Guanine'],
+  correct_index: 0,
+  explanation: 'DNA base pairing is A-T and G-C.'
+}, {
+  id: 'nuc_mc_pairing_2',
+  question: 'Which base pair has three hydrogen bonds?',
+  choices: ['G-C', 'A-T', 'A-U', 'T-U'],
+  correct_index: 0,
+  explanation: 'G-C has three hydrogen bonds; A-T and A-U have two.'
+}, {
+  id: 'nuc_mc_pairing_3',
+  question: 'A DNA molecule with high G-C content generally has:',
+  choices: ['Higher melting temperature', 'Lower melting temperature', 'No phosphodiester bonds', 'More uracil'],
+  correct_index: 0,
+  explanation: 'G-C pairs and stacking interactions stabilize the helix, raising melting temperature.'
+}, {
+  id: 'nuc_mc_pairing_4',
+  question: 'In RNA, adenine usually pairs with:',
+  choices: ['Uracil', 'Thymine', 'Guanine', 'Cytosine'],
+  correct_index: 0,
+  explanation: 'RNA uses uracil, so A pairs with U.'
+}, {
+  id: 'nuc_mc_sugars_1',
+  question: 'The sugar in RNA is:',
+  choices: ['Ribose', 'Deoxyribose', 'Glucose', 'Fructose'],
+  correct_index: 0,
+  explanation: 'RNA contains ribose.'
+}, {
+  id: 'nuc_mc_sugars_2',
+  question: 'Compared with ribose, deoxyribose lacks a hydroxyl group at the:',
+  choices: ['2-prime carbon', '1-prime carbon', '3-prime carbon', '5-prime carbon'],
+  correct_index: 0,
+  explanation: 'Deoxyribose lacks the 2-prime OH found in ribose.'
+}, {
+  id: 'nuc_mc_sugars_3',
+  question: 'Which combination points most directly to RNA?',
+  choices: ['Ribose and uracil', 'Deoxyribose and thymine', 'Ribose and thymine', 'Deoxyribose and uracil'],
+  correct_index: 0,
+  explanation: 'RNA uses ribose and uracil.'
+}, {
+  id: 'nuc_mc_sugars_4',
+  question: 'Why is RNA generally more chemically reactive than DNA?',
+  choices: ['RNA has a 2-prime hydroxyl group', 'RNA has thymine', 'RNA lacks phosphate', 'RNA is always double-stranded'],
+  correct_index: 0,
+  explanation: 'The 2-prime OH in ribose makes RNA more reactive and easier to hydrolyze.'
+}, {
+  id: 'nuc_mc_link_1',
+  question: 'Nucleotides in DNA and RNA are joined by:',
+  choices: ['Phosphodiester bonds', 'Peptide bonds', 'Glycosidic bonds between amino acids', 'Disulfide bonds'],
+  correct_index: 0,
+  explanation: 'The sugar-phosphate backbone is held together by phosphodiester bonds.'
+}, {
+  id: 'nuc_mc_link_2',
+  question: 'A phosphodiester bond links which positions?',
+  choices: ['3-prime OH to 5-prime phosphate', '2-prime OH to base nitrogen', '1-prime base to 3-prime base', '5-prime phosphate to 5-prime phosphate'],
+  correct_index: 0,
+  explanation: 'The backbone linkage joins the 3-prime OH of one sugar to the 5-prime phosphate of the next nucleotide.'
+}, {
+  id: 'nuc_mc_link_3',
+  question: 'DNA and RNA polymerases extend a strand by adding nucleotides to the:',
+  choices: ['3-prime hydroxyl', '5-prime phosphate', 'Nitrogenous base', '2-prime hydroxyl only'],
+  correct_index: 0,
+  explanation: 'New nucleotides are added to the free 3-prime OH, so synthesis proceeds 5-prime to 3-prime.'
+}, {
+  id: 'nuc_mc_link_4',
+  question: 'The 5-prime end of a nucleic acid strand is defined by a free:',
+  choices: ['Phosphate group', 'Hydroxyl group', 'Amino group', 'Carboxyl group'],
+  correct_index: 0,
+  explanation: 'The 5-prime end has a free phosphate; the 3-prime end has a free hydroxyl.'
+}];
+var NUCLEOTIDE_POOL = NUCLEOTIDE_MCQ.map(function (q) {
+  return _extends({
+    id: q.id,
+    mode: 'mc',
+    q
+  }, NUCLEOTIDE_META);
+});
+function isBuiltInLessonId(chapterId) {
+  return chapterId === NUCLEOTIDE_LESSON_ID;
+}
+function builtInLessonFor(chapterId) {
+  return isBuiltInLessonId(chapterId) ? NUCLEOTIDE_LESSON : null;
+}
+function builtInLessonPoolFor(chapterId) {
+  return isBuiltInLessonId(chapterId) ? NUCLEOTIDE_POOL : [];
+}
 function LessonDrillCard(_ref93) {
   var term = _ref93.term,
     definition = _ref93.definition;
@@ -15925,6 +16209,7 @@ function LessonsView(_ref101) {
     };
   }();
   var lessonQuizPoolFor = function lessonQuizPoolFor(chapterId) {
+    if (isBuiltInLessonId(chapterId)) return builtInLessonPoolFor(chapterId);
     var fid = chapterToFile[chapterId];
     if (!fid) return [];
     var scope = {
@@ -15940,7 +16225,7 @@ function LessonsView(_ref101) {
   };
   var downloadLesson = function () {
     var _ref104 = _asyncToGenerator(_regenerator().m(function _callee54(chapterId) {
-      var full, lesson, _t41;
+      var builtIn, full, lesson, _t41;
       return _regenerator().w(function (_context59) {
         while (1) switch (_context59.p = _context59.n) {
           case 0:
@@ -15950,47 +16235,58 @@ function LessonsView(_ref101) {
             }
             return _context59.a(2);
           case 1:
+            builtIn = builtInLessonFor(chapterId);
+            if (!builtIn) {
+              _context59.n = 2;
+              break;
+            }
+            persistCache(_extends({}, lessonsCache, {
+              [chapterId]: builtIn
+            }));
+            setOpenId(chapterId);
+            return _context59.a(2);
+          case 2:
             setBusy(function (b) {
               return _extends({}, b, {
                 [chapterId]: true
               });
             });
             setError('');
-            _context59.p = 2;
-            _context59.n = 3;
+            _context59.p = 3;
+            _context59.n = 4;
             return api.getChapter(chapterId);
-          case 3:
+          case 4:
             full = _context59.v;
             lesson = full == null ? void 0 : full.lesson;
             if (!(!lesson || !Array.isArray(lesson.sections))) {
-              _context59.n = 4;
+              _context59.n = 5;
               break;
             }
             setError('No lesson is available for that chapter yet.');
             return _context59.a(2);
-          case 4:
+          case 5:
             persistCache(_extends({}, lessonsCache, {
               [chapterId]: lesson
             }));
             setOpenId(chapterId);
-            _context59.n = 6;
+            _context59.n = 7;
             break;
-          case 5:
-            _context59.p = 5;
-            _t41 = _context59.v;
-            setError((_t41 == null ? void 0 : _t41.message) || 'Download failed.');
           case 6:
             _context59.p = 6;
+            _t41 = _context59.v;
+            setError((_t41 == null ? void 0 : _t41.message) || 'Download failed.');
+          case 7:
+            _context59.p = 7;
             setBusy(function (b) {
               var n = _extends({}, b);
               delete n[chapterId];
               return n;
             });
-            return _context59.f(6);
-          case 7:
+            return _context59.f(7);
+          case 8:
             return _context59.a(2);
         }
-      }, _callee54, null, [[2, 5, 6, 7]]);
+      }, _callee54, null, [[3, 6, 7, 8]]);
     }));
     return function downloadLesson(_x64) {
       return _ref104.apply(this, arguments);
@@ -16010,6 +16306,35 @@ function LessonsView(_ref101) {
     }));
   };
   var quizSection = function quizSection(chapterId, sec) {
+    if (isBuiltInLessonId(chapterId)) {
+      var _want = new Set(sec.check_ids || []);
+      var _checks = shuffle(builtInLessonPoolFor(chapterId).filter(function (x) {
+        return _want.has(x.id);
+      }));
+      var _drills = (Array.isArray(sec.definition_drills) ? sec.definition_drills : []).filter(function (d) {
+        return d && d.term && d.definition;
+      });
+      var _matchId = "lmatch_" + (sec.id || sec.concept_id);
+      var _matchItem = _drills.length >= 2 ? _extends({
+        id: _matchId,
+        mode: 'match',
+        studyOnly: true,
+        q: {
+          id: _matchId,
+          terms: _drills
+        }
+      }, NUCLEOTIDE_META) : null;
+      var _items = _matchItem ? [].concat(_checks, [_matchItem]) : _checks;
+      if (!_items.length) return;
+      sfxQuizStart();
+      window.dispatchEvent(new CustomEvent('mcat:startQuiz', {
+        detail: {
+          items: _items
+        }
+      }));
+      onGoToStudy == null || onGoToStudy();
+      return;
+    }
     var fid = chapterToFile[chapterId];
     if (!fid) return;
     var ctx = {
@@ -16136,6 +16461,28 @@ function LessonsView(_ref101) {
     return out;
   }, [files, questions, extractions, attempts, fileToChapter, sortBy]);
   var launchReview = function launchReview(fid) {
+    if (fid === NUCLEOTIDE_FILE_ID) {
+      var latest = lessonLatestCorrect(attempts);
+      var _misses = NUCLEOTIDE_POOL.filter(function (x) {
+        return latest[x.id] === false;
+      });
+      var _unseen = NUCLEOTIDE_POOL.filter(function (x) {
+        return !(x.id in latest);
+      });
+      var _mastered = NUCLEOTIDE_POOL.filter(function (x) {
+        return latest[x.id] === true;
+      });
+      var _items2 = [].concat(shuffle(_misses), shuffle(_unseen), shuffle(_mastered)).slice(0, 15);
+      if (!_items2.length) return;
+      sfxQuizStart();
+      window.dispatchEvent(new CustomEvent('mcat:startQuiz', {
+        detail: {
+          items: _items2
+        }
+      }));
+      onGoToStudy == null || onGoToStudy();
+      return;
+    }
     var pool = buildPool({
       files,
       questions,
@@ -16199,7 +16546,45 @@ function LessonsView(_ref101) {
       onVerifyPin: verifyPin
     });
   }
-  if (rows.length === 0) {
+  var builtInRows = useMemo(function () {
+    var relevant = attempts.filter(function (a) {
+      return a.file_id === NUCLEOTIDE_FILE_ID;
+    });
+    var correct = relevant.filter(function (a) {
+      return a.correct;
+    }).length;
+    var seen = new Set(relevant.map(function (a) {
+      return a.question_id;
+    }));
+    var wrong = new Set(relevant.filter(function (a) {
+      return !a.correct;
+    }).map(function (a) {
+      return a.question_id;
+    }));
+    var need = NUCLEOTIDE_POOL.filter(function (x) {
+      return wrong.has(x.id) || !seen.has(x.id);
+    }).length;
+    return [{
+      fid: NUCLEOTIDE_FILE_ID,
+      chapterId: NUCLEOTIDE_LESSON_ID,
+      acc: relevant.length ? correct / relevant.length : 1,
+      correct,
+      total: relevant.length,
+      chapter: NUCLEOTIDE_LESSON.title,
+      subject: NUCLEOTIDE_LESSON.subject,
+      need,
+      builtIn: true
+    }];
+  }, [attempts]);
+  var lessonRows = useMemo(function () {
+    var byId = new Set(rows.map(function (r) {
+      return r.chapterId;
+    }));
+    return [].concat(rows, builtInRows.filter(function (r) {
+      return !byId.has(r.chapterId);
+    }));
+  }, [rows, builtInRows]);
+  if (lessonRows.length === 0) {
     return React.createElement("div", {
       className: "space-y-4"
     }, React.createElement("div", {
@@ -16212,12 +16597,19 @@ function LessonsView(_ref101) {
       className: "bg-[var(--bg-card-soft)] border border-dashed border-[var(--border-soft)] rounded-2xl p-5 text-sm text-[var(--text-muted)]"
     }, "Answer some quiz questions first. Once you do, your most-struggled chapters show up here so you can drill them."));
   }
-  var visible = showAll || sortBy === 'subject' ? rows : rows.slice(0, 3);
+  var visible = showAll || sortBy === 'subject' ? lessonRows : lessonRows.slice(0, 3);
   var inProgress = Object.keys(lessonsCache).filter(function (cid) {
     var _gates$cid;
     return !((_gates$cid = gates[cid]) != null && _gates$cid.mastered) && !progress[cid];
   }).map(function (cid) {
     var _lessonsCache$cid;
+    var builtIn = builtInLessonFor(cid);
+    if (builtIn) return {
+      chapterId: cid,
+      fid: NUCLEOTIDE_FILE_ID,
+      chapter: builtIn.title,
+      subject: builtIn.subject
+    };
     var f = files.find(function (x) {
       return x.chapter_id === cid;
     });
@@ -16251,6 +16643,14 @@ function LessonsView(_ref101) {
         title: "Remove the downloaded lesson body from this device",
         className: "text-xs px-2 py-1.5 rounded border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--bg-hover)]"
       }, "Remove"));
+    }
+    if (r.builtIn) {
+      return React.createElement("button", {
+        onClick: function onClick() {
+          return downloadLesson(r.chapterId);
+        },
+        className: "text-xs px-3 py-1.5 rounded font-medium border border-[var(--accent)] text-[var(--accent)] hover:bg-[var(--accent)] hover:text-white"
+      }, "Open lesson");
     }
     if (avail === false) return React.createElement("span", {
       className: "text-xs text-[var(--text-faint)]"
@@ -16292,7 +16692,7 @@ function LessonsView(_ref101) {
   var subjectGroups = function () {
     var order = [];
     var map = {};
-    for (var _iterator92 = _createForOfIteratorHelperLoose(rows), _step92; !(_step92 = _iterator92()).done;) {
+    for (var _iterator92 = _createForOfIteratorHelperLoose(lessonRows), _step92; !(_step92 = _iterator92()).done;) {
       var r = _step92.value;
       var s = r.subject || 'Other';
       if (!map[s]) {
@@ -16400,14 +16800,14 @@ function LessonsView(_ref101) {
     className: "space-y-4"
   }, visible.map(function (r) {
     return renderRow(r);
-  })), sortBy !== 'subject' && rows.length > 3 && React.createElement("button", {
+  })), sortBy !== 'subject' && lessonRows.length > 3 && React.createElement("button", {
     onClick: function onClick() {
       return setShowAll(function (s) {
         return !s;
       });
     },
     className: "w-full text-sm py-2 rounded border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-strong)]"
-  }, showAll ? 'Show less' : "View more (" + (rows.length - 3) + " more)")));
+  }, showAll ? 'Show less' : "View more (" + (lessonRows.length - 3) + " more)")));
 }
 function relativeTime(ts) {
   if (!ts) return 'never';

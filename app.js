@@ -11221,6 +11221,150 @@ function lessonSectionStatus(sec, latestCorrect) {
   return { mastered, correct, attempted, total: ids.length };
 }
 
+const NUCLEOTIDE_LESSON_ID = 'builtin_biochem_nucleotides';
+const NUCLEOTIDE_FILE_ID = 'builtin:biochem:nucleotides';
+const NUCLEOTIDE_META = {
+  file_id: NUCLEOTIDE_FILE_ID,
+  chapter: 'Nucleotides',
+  subject: 'Biochemistry',
+};
+const NUCLEOTIDE_LESSON = {
+  chapter_id: NUCLEOTIDE_LESSON_ID,
+  subject: 'Biochemistry',
+  title: 'Nucleotides',
+  intro: 'A focused Biochemistry lesson for memorizing nucleotide parts, base identities, DNA versus RNA differences, and the purine/pyrimidine rules that show up on MCAT questions.',
+  sections: [
+    {
+      id: 'nuc_sec_parts',
+      order: 1,
+      concept_id: 'nucleotide-parts',
+      title: 'What a nucleotide is',
+      teach: 'A nucleotide has three parts: a nitrogenous base, a pentose sugar, and one or more phosphate groups. The base is the information-bearing part. The sugar tells you whether the molecule belongs to DNA or RNA. The phosphate gives nucleic acids their negative charge and lets nucleotides link through phosphodiester bonds.\n\nA nucleoside is smaller than a nucleotide: it is only the base plus the sugar. Add phosphate to a nucleoside and it becomes a nucleotide. That distinction is a common MCAT wording trap.',
+      worked_examples: [
+        { prompt: 'Is adenosine triphosphate a nucleoside or a nucleotide?', solution: 'It is a nucleotide because it contains adenine, ribose, and three phosphate groups. Adenosine alone would be the nucleoside.' },
+      ],
+      definition_drills: [
+        { term: 'Nucleotide', definition: 'A nitrogenous base plus pentose sugar plus at least one phosphate group.' },
+        { term: 'Nucleoside', definition: 'A nitrogenous base plus pentose sugar, with no phosphate group.' },
+        { term: 'Phosphate group', definition: 'The negatively charged group that links nucleotides and forms the sugar-phosphate backbone.' },
+        { term: 'Pentose sugar', definition: 'A five-carbon sugar: ribose in RNA or deoxyribose in DNA.' },
+      ],
+      figures: ['Nucleotide'],
+      check_ids: ['nuc_mc_parts_1', 'nuc_mc_parts_2', 'nuc_mc_parts_3', 'nuc_mc_parts_4'],
+      mastery_threshold: 1,
+    },
+    {
+      id: 'nuc_sec_bases',
+      order: 2,
+      concept_id: 'bases-and-rings',
+      title: 'Bases: purines and pyrimidines',
+      teach: 'The five major bases are adenine, guanine, cytosine, thymine, and uracil. Adenine and guanine are purines, meaning they have two rings. Cytosine, thymine, and uracil are pyrimidines, meaning they have one ring.\n\nA useful memory hook is "Pure As Gold": purines are A and G. The remaining bases are pyrimidines. DNA uses A, G, C, and T. RNA uses A, G, C, and U, replacing thymine with uracil.',
+      worked_examples: [
+        { prompt: 'A base has two fused rings and pairs with cytosine. Which base is it?', solution: 'Guanine. It is a purine, and G pairs with C.' },
+      ],
+      definition_drills: [
+        { term: 'Purines', definition: 'Two-ring bases: adenine and guanine.' },
+        { term: 'Pyrimidines', definition: 'One-ring bases: cytosine, thymine, and uracil.' },
+        { term: 'Adenine', definition: 'A purine base found in DNA and RNA; pairs with T in DNA and U in RNA.' },
+        { term: 'Guanine', definition: 'A purine base found in DNA and RNA; pairs with cytosine.' },
+        { term: 'Uracil', definition: 'An RNA pyrimidine that replaces thymine and pairs with adenine.' },
+      ],
+      figures: ['DNA'],
+      check_ids: ['nuc_mc_bases_1', 'nuc_mc_bases_2', 'nuc_mc_bases_3', 'nuc_mc_bases_4'],
+      mastery_threshold: 1,
+    },
+    {
+      id: 'nuc_sec_pairing',
+      order: 3,
+      concept_id: 'base-pairing',
+      title: 'Base pairing and hydrogen bonds',
+      teach: 'Complementary base pairing keeps nucleic acid structure predictable. In DNA, adenine pairs with thymine, and guanine pairs with cytosine. In RNA, adenine pairs with uracil instead of thymine.\n\nA-T has two hydrogen bonds. G-C has three hydrogen bonds. More G-C content raises melting temperature because more hydrogen bonding and stronger stacking interactions make the double helix harder to separate.',
+      worked_examples: [
+        { prompt: 'Which DNA strand is complementary to 5-prime ACGT-3-prime?', solution: 'The antiparallel complement is 3-prime TGCA-5-prime. If written 5-prime to 3-prime, it is ACGT.' },
+      ],
+      definition_drills: [
+        { term: 'Complementary base pairing', definition: 'Specific pairing: A with T or U, and G with C.' },
+        { term: 'A-T pair', definition: 'A DNA base pair held by two hydrogen bonds.' },
+        { term: 'G-C pair', definition: 'A DNA or RNA base pair held by three hydrogen bonds.' },
+        { term: 'Melting temperature', definition: 'The temperature at which double-stranded nucleic acid separates; increased by high G-C content.' },
+      ],
+      figures: ['DNA'],
+      check_ids: ['nuc_mc_pairing_1', 'nuc_mc_pairing_2', 'nuc_mc_pairing_3', 'nuc_mc_pairing_4'],
+      mastery_threshold: 1,
+    },
+    {
+      id: 'nuc_sec_sugars',
+      order: 4,
+      concept_id: 'dna-vs-rna',
+      title: 'DNA versus RNA nucleotides',
+      teach: 'DNA and RNA differ in sugar, base usage, and usual strand structure. DNA contains deoxyribose, which lacks a 2-prime hydroxyl group. RNA contains ribose, which has a 2-prime hydroxyl group. That 2-prime OH makes RNA more chemically reactive and easier to hydrolyze.\n\nDNA usually uses thymine and is double-stranded. RNA uses uracil and is usually single-stranded. The bases A, G, and C are shared by both.',
+      worked_examples: [
+        { prompt: 'A nucleotide contains ribose and uracil. Is it more likely from DNA or RNA?', solution: 'RNA. RNA uses ribose and uracil; DNA uses deoxyribose and thymine.' },
+      ],
+      definition_drills: [
+        { term: 'Ribose', definition: 'The RNA sugar, containing a 2-prime hydroxyl group.' },
+        { term: 'Deoxyribose', definition: 'The DNA sugar, lacking the 2-prime hydroxyl group.' },
+        { term: 'Thymine', definition: 'A DNA pyrimidine that pairs with adenine.' },
+        { term: 'Uracil', definition: 'An RNA pyrimidine that pairs with adenine.' },
+      ],
+      figures: ['RNA', 'DNA'],
+      check_ids: ['nuc_mc_sugars_1', 'nuc_mc_sugars_2', 'nuc_mc_sugars_3', 'nuc_mc_sugars_4'],
+      mastery_threshold: 1,
+    },
+    {
+      id: 'nuc_sec_linkages',
+      order: 5,
+      concept_id: 'phosphodiester-bonds',
+      title: 'Backbone and directionality',
+      teach: 'Nucleotides polymerize through phosphodiester bonds. The phosphate links the 3-prime hydroxyl of one sugar to the 5-prime phosphate of the next sugar, creating a sugar-phosphate backbone.\n\nNucleic acid strands have direction. The 5-prime end has a phosphate, and the 3-prime end has a hydroxyl. Polymerases add new nucleotides to the 3-prime OH, so DNA and RNA synthesis proceeds 5-prime to 3-prime.',
+      worked_examples: [
+        { prompt: 'Why do polymerases need a free 3-prime OH?', solution: 'The incoming nucleotide is joined to the growing strand when the 3-prime OH attacks the incoming 5-prime phosphate, forming the next phosphodiester bond.' },
+      ],
+      definition_drills: [
+        { term: 'Phosphodiester bond', definition: 'The linkage joining nucleotides through the 3-prime OH and 5-prime phosphate.' },
+        { term: '5-prime end', definition: 'The end of a nucleic acid strand with a free phosphate.' },
+        { term: '3-prime end', definition: 'The end of a nucleic acid strand with a free hydroxyl group.' },
+        { term: '5-prime to 3-prime synthesis', definition: 'The direction of DNA and RNA synthesis as nucleotides are added to the 3-prime OH.' },
+      ],
+      figures: ['DNA replication'],
+      check_ids: ['nuc_mc_link_1', 'nuc_mc_link_2', 'nuc_mc_link_3', 'nuc_mc_link_4'],
+      mastery_threshold: 1,
+    },
+  ],
+};
+const NUCLEOTIDE_MCQ = [
+  { id: 'nuc_mc_parts_1', question: 'Which set lists the three parts of a nucleotide?', choices: ['Nitrogenous base, pentose sugar, phosphate group', 'Amino group, carboxyl group, R group', 'Fatty acid, glycerol, phosphate group', 'Base, amino acid, peptide bond'], correct_index: 0, explanation: 'A nucleotide consists of a nitrogenous base, a five-carbon sugar, and at least one phosphate group.' },
+  { id: 'nuc_mc_parts_2', question: 'A nucleoside differs from a nucleotide because a nucleoside lacks:', choices: ['Phosphate', 'A nitrogenous base', 'A pentose sugar', 'A ring structure'], correct_index: 0, explanation: 'A nucleoside is base plus sugar. Adding phosphate makes it a nucleotide.' },
+  { id: 'nuc_mc_parts_3', question: 'Which part of a nucleotide gives nucleic acids much of their negative charge?', choices: ['Phosphate group', 'Ribose ring oxygen', 'Nitrogenous base', 'Hydrogen bonds'], correct_index: 0, explanation: 'The phosphate groups in the backbone are negatively charged at physiological pH.' },
+  { id: 'nuc_mc_parts_4', question: 'Adenosine triphosphate is best classified as a:', choices: ['Nucleotide', 'Nucleoside', 'Amino acid', 'Pyrimidine only'], correct_index: 0, explanation: 'ATP contains adenine, ribose, and three phosphates, so it is a nucleotide.' },
+  { id: 'nuc_mc_bases_1', question: 'Which bases are purines?', choices: ['Adenine and guanine', 'Cytosine and thymine', 'Thymine and uracil', 'Cytosine and uracil'], correct_index: 0, explanation: 'Purines are adenine and guanine. They have two rings.' },
+  { id: 'nuc_mc_bases_2', question: 'Which base is found in RNA instead of thymine?', choices: ['Uracil', 'Guanine', 'Cytosine', 'Adenine'], correct_index: 0, explanation: 'RNA uses uracil where DNA uses thymine.' },
+  { id: 'nuc_mc_bases_3', question: 'Cytosine, thymine, and uracil are classified as:', choices: ['Pyrimidines', 'Purines', 'Nucleosides', 'Pentoses'], correct_index: 0, explanation: 'C, T, and U are one-ring pyrimidines.' },
+  { id: 'nuc_mc_bases_4', question: 'The memory hook "Pure As Gold" identifies which bases?', choices: ['Adenine and guanine', 'Adenine and cytosine', 'Guanine and cytosine', 'Thymine and uracil'], correct_index: 0, explanation: 'Pure As Gold means purines are A and G.' },
+  { id: 'nuc_mc_pairing_1', question: 'In DNA, adenine pairs with:', choices: ['Thymine', 'Uracil', 'Cytosine', 'Guanine'], correct_index: 0, explanation: 'DNA base pairing is A-T and G-C.' },
+  { id: 'nuc_mc_pairing_2', question: 'Which base pair has three hydrogen bonds?', choices: ['G-C', 'A-T', 'A-U', 'T-U'], correct_index: 0, explanation: 'G-C has three hydrogen bonds; A-T and A-U have two.' },
+  { id: 'nuc_mc_pairing_3', question: 'A DNA molecule with high G-C content generally has:', choices: ['Higher melting temperature', 'Lower melting temperature', 'No phosphodiester bonds', 'More uracil'], correct_index: 0, explanation: 'G-C pairs and stacking interactions stabilize the helix, raising melting temperature.' },
+  { id: 'nuc_mc_pairing_4', question: 'In RNA, adenine usually pairs with:', choices: ['Uracil', 'Thymine', 'Guanine', 'Cytosine'], correct_index: 0, explanation: 'RNA uses uracil, so A pairs with U.' },
+  { id: 'nuc_mc_sugars_1', question: 'The sugar in RNA is:', choices: ['Ribose', 'Deoxyribose', 'Glucose', 'Fructose'], correct_index: 0, explanation: 'RNA contains ribose.' },
+  { id: 'nuc_mc_sugars_2', question: 'Compared with ribose, deoxyribose lacks a hydroxyl group at the:', choices: ['2-prime carbon', '1-prime carbon', '3-prime carbon', '5-prime carbon'], correct_index: 0, explanation: 'Deoxyribose lacks the 2-prime OH found in ribose.' },
+  { id: 'nuc_mc_sugars_3', question: 'Which combination points most directly to RNA?', choices: ['Ribose and uracil', 'Deoxyribose and thymine', 'Ribose and thymine', 'Deoxyribose and uracil'], correct_index: 0, explanation: 'RNA uses ribose and uracil.' },
+  { id: 'nuc_mc_sugars_4', question: 'Why is RNA generally more chemically reactive than DNA?', choices: ['RNA has a 2-prime hydroxyl group', 'RNA has thymine', 'RNA lacks phosphate', 'RNA is always double-stranded'], correct_index: 0, explanation: 'The 2-prime OH in ribose makes RNA more reactive and easier to hydrolyze.' },
+  { id: 'nuc_mc_link_1', question: 'Nucleotides in DNA and RNA are joined by:', choices: ['Phosphodiester bonds', 'Peptide bonds', 'Glycosidic bonds between amino acids', 'Disulfide bonds'], correct_index: 0, explanation: 'The sugar-phosphate backbone is held together by phosphodiester bonds.' },
+  { id: 'nuc_mc_link_2', question: 'A phosphodiester bond links which positions?', choices: ['3-prime OH to 5-prime phosphate', '2-prime OH to base nitrogen', '1-prime base to 3-prime base', '5-prime phosphate to 5-prime phosphate'], correct_index: 0, explanation: 'The backbone linkage joins the 3-prime OH of one sugar to the 5-prime phosphate of the next nucleotide.' },
+  { id: 'nuc_mc_link_3', question: 'DNA and RNA polymerases extend a strand by adding nucleotides to the:', choices: ['3-prime hydroxyl', '5-prime phosphate', 'Nitrogenous base', '2-prime hydroxyl only'], correct_index: 0, explanation: 'New nucleotides are added to the free 3-prime OH, so synthesis proceeds 5-prime to 3-prime.' },
+  { id: 'nuc_mc_link_4', question: 'The 5-prime end of a nucleic acid strand is defined by a free:', choices: ['Phosphate group', 'Hydroxyl group', 'Amino group', 'Carboxyl group'], correct_index: 0, explanation: 'The 5-prime end has a free phosphate; the 3-prime end has a free hydroxyl.' },
+];
+const NUCLEOTIDE_POOL = NUCLEOTIDE_MCQ.map((q) => ({ id: q.id, mode: 'mc', q, ...NUCLEOTIDE_META }));
+function isBuiltInLessonId(chapterId) {
+  return chapterId === NUCLEOTIDE_LESSON_ID;
+}
+function builtInLessonFor(chapterId) {
+  return isBuiltInLessonId(chapterId) ? NUCLEOTIDE_LESSON : null;
+}
+function builtInLessonPoolFor(chapterId) {
+  return isBuiltInLessonId(chapterId) ? NUCLEOTIDE_POOL : [];
+}
+
 // Click-to-reveal flashcard for a definition drill.
 function LessonDrillCard({ term, definition }) {
   const [show, setShow] = useState(false);
@@ -11777,6 +11921,7 @@ function LessonsView({ onGoToStudy }) {
 
   // Quiz pool for one chapter's checkpoint/final gates: MC, two-part, and short answer.
   const lessonQuizPoolFor = (chapterId) => {
+    if (isBuiltInLessonId(chapterId)) return builtInLessonPoolFor(chapterId);
     const fid = chapterToFile[chapterId];
     if (!fid) return [];
     const scope = { fileIds: new Set([fid]) };
@@ -11786,6 +11931,12 @@ function LessonsView({ onGoToStudy }) {
 
   const downloadLesson = async (chapterId) => {
     if (!chapterId) return;
+    const builtIn = builtInLessonFor(chapterId);
+    if (builtIn) {
+      persistCache({ ...lessonsCache, [chapterId]: builtIn });
+      setOpenId(chapterId);
+      return;
+    }
     setBusy((b) => ({ ...b, [chapterId]: true }));
     setError('');
     try {
@@ -11820,6 +11971,22 @@ function LessonsView({ onGoToStudy }) {
   // attempt recorded) so matching is part of the section quiz rather than a
   // separate widget in the reader.
   const quizSection = (chapterId, sec) => {
+    if (isBuiltInLessonId(chapterId)) {
+      const want = new Set(sec.check_ids || []);
+      const checks = shuffle(builtInLessonPoolFor(chapterId).filter((x) => want.has(x.id)));
+      const drills = (Array.isArray(sec.definition_drills) ? sec.definition_drills : [])
+        .filter((d) => d && d.term && d.definition);
+      const matchId = `lmatch_${sec.id || sec.concept_id}`;
+      const matchItem = drills.length >= 2
+        ? { id: matchId, mode: 'match', studyOnly: true, q: { id: matchId, terms: drills }, ...NUCLEOTIDE_META }
+        : null;
+      const items = matchItem ? [...checks, matchItem] : checks;
+      if (!items.length) return;
+      sfxQuizStart();
+      window.dispatchEvent(new CustomEvent('mcat:startQuiz', { detail: { items } }));
+      onGoToStudy?.();
+      return;
+    }
     const fid = chapterToFile[chapterId];
     if (!fid) return;
     const ctx = { files, questions, extractions, attempts };
@@ -11893,6 +12060,18 @@ function LessonsView({ onGoToStudy }) {
   }, [files, questions, extractions, attempts, fileToChapter, sortBy]);
 
   const launchReview = (fid) => {
+    if (fid === NUCLEOTIDE_FILE_ID) {
+      const latest = lessonLatestCorrect(attempts);
+      const misses = NUCLEOTIDE_POOL.filter((x) => latest[x.id] === false);
+      const unseen = NUCLEOTIDE_POOL.filter((x) => !(x.id in latest));
+      const mastered = NUCLEOTIDE_POOL.filter((x) => latest[x.id] === true);
+      const items = [...shuffle(misses), ...shuffle(unseen), ...shuffle(mastered)].slice(0, 15);
+      if (!items.length) return;
+      sfxQuizStart();
+      window.dispatchEvent(new CustomEvent('mcat:startQuiz', { detail: { items } }));
+      onGoToStudy?.();
+      return;
+    }
     const pool = buildPool({ files, questions, extractions, attempts }, 'mc', { fileIds: new Set([fid]) });
     if (!pool.length) return;
     const wrongIds = new Set();
@@ -11932,7 +12111,30 @@ function LessonsView({ onGoToStudy }) {
     );
   }
 
-  if (rows.length === 0) {
+  const builtInRows = useMemo(() => {
+    const relevant = attempts.filter((a) => a.file_id === NUCLEOTIDE_FILE_ID);
+    const correct = relevant.filter((a) => a.correct).length;
+    const seen = new Set(relevant.map((a) => a.question_id));
+    const wrong = new Set(relevant.filter((a) => !a.correct).map((a) => a.question_id));
+    const need = NUCLEOTIDE_POOL.filter((x) => wrong.has(x.id) || !seen.has(x.id)).length;
+    return [{
+      fid: NUCLEOTIDE_FILE_ID,
+      chapterId: NUCLEOTIDE_LESSON_ID,
+      acc: relevant.length ? correct / relevant.length : 1,
+      correct,
+      total: relevant.length,
+      chapter: NUCLEOTIDE_LESSON.title,
+      subject: NUCLEOTIDE_LESSON.subject,
+      need,
+      builtIn: true,
+    }];
+  }, [attempts]);
+  const lessonRows = useMemo(() => {
+    const byId = new Set(rows.map((r) => r.chapterId));
+    return [...rows, ...builtInRows.filter((r) => !byId.has(r.chapterId))];
+  }, [rows, builtInRows]);
+
+  if (lessonRows.length === 0) {
     return (
       <div className="space-y-4">
         <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-5">
@@ -11948,7 +12150,7 @@ function LessonsView({ onGoToStudy }) {
     );
   }
 
-  const visible = (showAll || sortBy === 'subject') ? rows : rows.slice(0, 3);
+  const visible = (showAll || sortBy === 'subject') ? lessonRows : lessonRows.slice(0, 3);
 
   // In-progress = lesson downloaded to this device, not yet mastered and not
   // marked complete. Surfaced at the top so you can pick up where you left off.
@@ -11957,6 +12159,8 @@ function LessonsView({ onGoToStudy }) {
   const inProgress = Object.keys(lessonsCache)
     .filter((cid) => !gates[cid]?.mastered && !progress[cid])
     .map((cid) => {
+      const builtIn = builtInLessonFor(cid);
+      if (builtIn) return { chapterId: cid, fid: NUCLEOTIDE_FILE_ID, chapter: builtIn.title, subject: builtIn.subject };
       const f = files.find((x) => x.chapter_id === cid);
       return { chapterId: cid, fid: chapterToFile[cid] || cid, chapter: f?.chapter || lessonsCache[cid]?.title || 'Lesson', subject: f?.subject || '' };
     });
@@ -11974,6 +12178,13 @@ function LessonsView({ onGoToStudy }) {
           <button onClick={() => setOpenId(r.chapterId)} className="text-xs px-3 py-1.5 rounded font-medium bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)]">Open lesson</button>
           <button onClick={() => removeLesson(r.chapterId)} title="Remove the downloaded lesson body from this device" className="text-xs px-2 py-1.5 rounded border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--bg-hover)]">Remove</button>
         </div>
+      );
+    }
+    if (r.builtIn) {
+      return (
+        <button onClick={() => downloadLesson(r.chapterId)} className="text-xs px-3 py-1.5 rounded font-medium border border-[var(--accent)] text-[var(--accent)] hover:bg-[var(--accent)] hover:text-white">
+          Open lesson
+        </button>
       );
     }
     // Not cached. Only offer a download when the server says a lesson exists
@@ -12018,7 +12229,7 @@ function LessonsView({ onGoToStudy }) {
   const subjectGroups = (() => {
     const order = [];
     const map = {};
-    for (const r of rows) {
+    for (const r of lessonRows) {
       const s = r.subject || 'Other';
       if (!map[s]) { map[s] = []; order.push(s); }
       map[s].push(r);
@@ -12111,12 +12322,12 @@ function LessonsView({ onGoToStudy }) {
             {visible.map((r) => renderRow(r))}
           </div>
         )}
-        {sortBy !== 'subject' && rows.length > 3 && (
+        {sortBy !== 'subject' && lessonRows.length > 3 && (
           <button
             onClick={() => setShowAll((s) => !s)}
             className="w-full text-sm py-2 rounded border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-strong)]"
           >
-            {showAll ? 'Show less' : `View more (${rows.length - 3} more)`}
+            {showAll ? 'Show less' : `View more (${lessonRows.length - 3} more)`}
           </button>
         )}
       </div>
