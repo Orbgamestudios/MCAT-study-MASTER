@@ -5995,9 +5995,15 @@ function AppProvider(_ref15) {
       var onChange = function onChange() {
         return apply();
       };
-      mq.addEventListener('change', onChange);
+      if (mq.addEventListener) {
+        mq.addEventListener('change', onChange);
+        return function () {
+          return mq.removeEventListener('change', onChange);
+        };
+      }
+      mq.addListener(onChange);
       return function () {
-        return mq.removeEventListener('change', onChange);
+        return mq.removeListener(onChange);
       };
     }
   }, [palette, mode]);

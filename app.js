@@ -4882,8 +4882,12 @@ function AppProvider({ children }) {
     if (mode === 'system') {
       const mq = window.matchMedia('(prefers-color-scheme: dark)');
       const onChange = () => apply();
-      mq.addEventListener('change', onChange);
-      return () => mq.removeEventListener('change', onChange);
+      if (mq.addEventListener) {
+        mq.addEventListener('change', onChange);
+        return () => mq.removeEventListener('change', onChange);
+      }
+      mq.addListener(onChange);
+      return () => mq.removeListener(onChange);
     }
   }, [palette, mode]);
 
