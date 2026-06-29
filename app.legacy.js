@@ -16014,9 +16014,12 @@ function LessonReader(_ref100) {
   }, "Final exam \u2014 ", LESSON_FINAL_Q, " cumulative questions, 100% to master this chapter."), React.createElement("button", {
     onClick: startFinal,
     className: "text-xs px-3 py-1.5 rounded font-medium bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] shrink-0"
-  }, "Take final exam \u2192")) : React.createElement("span", {
-    className: "text-sm text-[var(--text-faint)]"
-  }, "\uD83D\uDD12 Unlock all sections to take the final exam."), React.createElement("button", {
+  }, "Take final exam \u2192")) : React.createElement(React.Fragment, null, React.createElement("span", {
+    className: "text-sm text-[var(--text-strong)]"
+  }, "Final exam \u2014 available anytime, 100% to master this chapter."), React.createElement("button", {
+    onClick: startFinal,
+    className: "text-xs px-3 py-1.5 rounded font-medium bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] shrink-0"
+  }, "Take final exam early \u2192")), React.createElement("button", {
     onClick: function onClick() {
       return setForceMaster(true);
     },

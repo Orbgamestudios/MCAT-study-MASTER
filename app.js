@@ -11824,7 +11824,10 @@ function LessonReader({ lesson, latestCorrect, completed, gate, quizPool, onBack
                 <button onClick={startFinal} className="text-xs px-3 py-1.5 rounded font-medium bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] shrink-0">Take final exam →</button>
               </>
             ) : (
-              <span className="text-sm text-[var(--text-faint)]">🔒 Unlock all sections to take the final exam.</span>
+              <>
+                <span className="text-sm text-[var(--text-strong)]">Final exam — available anytime, 100% to master this chapter.</span>
+                <button onClick={startFinal} className="text-xs px-3 py-1.5 rounded font-medium bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] shrink-0">Take final exam early →</button>
+              </>
             )}
             <button
               onClick={() => setForceMaster(true)}
