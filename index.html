@@ -46,10 +46,26 @@
     } catch (e) { document.documentElement.setAttribute('data-theme', 'dark'); }
   })();
 </script>
-<script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
-<script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
-<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="legacy-tailwind.css?v=183" />
+<script>
+  (function () {
+    var match = /iP(?:ad|hone|od).*OS (\d+)_/.exec(navigator.userAgent);
+    var oldIos = match && parseInt(match[1], 10) <= 9;
+    var forcedLegacy = location.search.indexOf('legacy=1') !== -1;
+    var legacy = !!(forcedLegacy || oldIos || !window.Promise || !window.fetch || !window.Symbol);
+    window.__MCAT_LEGACY_BOOT__ = legacy;
+    function writeScript(src) {
+      document.write('<script src="' + src + '"><\/script>');
+    }
+    if (legacy) writeScript('legacy-polyfills.js?v=183');
+    writeScript('https://unpkg.com/react@18/umd/react.development.js');
+    writeScript('https://unpkg.com/react-dom@18/umd/react-dom.development.js');
+    if (!legacy) {
+      writeScript('https://unpkg.com/@babel/standalone/babel.min.js');
+      writeScript('https://cdn.tailwindcss.com');
+    }
+  })();
+</script>
 <style>
   html, body, #root { height: 100%; }
   /* html background tracks --bg so overflow/overscroll always shows the
@@ -863,6 +879,15 @@
     });
   })();
 </script>
-<script type="text/babel" data-presets="react" src="app.js?v=181"></script>
+<script>
+  (function () {
+    var v = '183';
+    if (window.__MCAT_LEGACY_BOOT__) {
+      document.write('<script src="app.legacy.js?v=' + v + '"><\/script>');
+    } else {
+      document.write('<script type="text/babel" data-presets="react" src="app.js?v=' + v + '"><\/script>');
+    }
+  })();
+</script>
 </body>
 </html>
