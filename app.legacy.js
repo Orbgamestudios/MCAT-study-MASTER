@@ -12314,6 +12314,12 @@ var FREE_PASSAGE_SECTIONS = [{
   title: 'Psychological and Social',
   url: 'https://www.khanacademy.org/test-prep/mcat/social-sciences-practice',
   subjects: ['Behavioral Science', 'Psychology', 'Sociology']
+}, {
+  key: 'cars',
+  label: 'CARS',
+  title: 'Critical Analysis and Reasoning',
+  url: 'https://www.khanacademy.org/test-prep/mcat/critical-analysis-and-reasoning-skills-practice-questions',
+  subjects: ['CARS']
 }];
 function FreePassagePractice() {
   var _useApp9 = useApp(),
@@ -12370,7 +12376,7 @@ function FreePassagePractice() {
     },
     className: "text-xs px-3 py-1.5 rounded font-medium bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)]"
   }, "Recommended: ", recommended.label)), React.createElement("div", {
-    className: "grid grid-cols-3 gap-2"
+    className: "grid grid-cols-2 sm:grid-cols-4 gap-2"
   }, sectionStats.map(function (section) {
     return React.createElement("button", {
       key: section.key,
