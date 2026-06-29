@@ -2841,7 +2841,7 @@ function stripChoiceLabel(s, index) {
   var expected = 'ABCD'[index];
   var cleaned = sanitizeText(s);
   if (!expected) return cleaned;
-  var m = cleaned.match(/^\(?([A-Da-d])\)?[.):\-]\s+([^]+)$/);
+  var m = cleaned.match(/^\(?([A-Da-d])\)?[.):\-]\s+([\s\S]+)$/);
   if (m && m[1].toUpperCase() === expected) {
     var rest = m[2].trim();
     if (/^[A-Z]\.\s/.test(rest)) return cleaned;
@@ -10561,7 +10561,7 @@ function FigureText(_ref24) {
 }
 function _calcEvaluate(expr) {
   if (!expr || !expr.trim()) return '';
-  var s = String(expr).replace(/×/g, '*').replace(/÷/g, '/').replace(/−/g, '-').replace(/(\d+(?:\.\d+)?)E([+-]?\d+(?:\.\d+)?)/g, '($1*Math.pow(10,$2))').replace(/π/g, '(Math.PI)').replace(/(?<![A-Za-z])e(?![A-Za-z0-9])/g, '(Math.E)').replace(/√\s*\(/g, 'Math.sqrt(').replace(/√\s*(\d+(?:\.\d+)?)/g, 'Math.sqrt($1)').replace(/(\d+(?:\.\d+)?|\))\s*\^\s*(\d+(?:\.\d+)?|\([^)]+\))/g, 'Math.pow($1,$2)').replace(/\blog\(/g, 'Math.log10(').replace(/\bln\(/g, 'Math.log(').replace(/\basin\(/g, 'Math.asin(').replace(/\bacos\(/g, 'Math.acos(').replace(/\batan\(/g, 'Math.atan(').replace(/\bsin\(/g, 'Math.sin(').replace(/\bcos\(/g, 'Math.cos(').replace(/\btan\(/g, 'Math.tan(').replace(/(\d+(?:\.\d+)?)\s*%/g, '($1/100)');
+  var s = String(expr).replace(/×/g, '*').replace(/÷/g, '/').replace(/−/g, '-').replace(/(\d+(?:\.\d+)?)E([+-]?\d+(?:\.\d+)?)/g, '($1*Math.pow(10,$2))').replace(/π/g, '(Math.PI)').replace(/(^|[^A-Za-z])e(?![A-Za-z0-9])/g, '$1(Math.E)').replace(/√\s*\(/g, 'Math.sqrt(').replace(/√\s*(\d+(?:\.\d+)?)/g, 'Math.sqrt($1)').replace(/(\d+(?:\.\d+)?|\))\s*\^\s*(\d+(?:\.\d+)?|\([^)]+\))/g, 'Math.pow($1,$2)').replace(/\blog\(/g, 'Math.log10(').replace(/\bln\(/g, 'Math.log(').replace(/\basin\(/g, 'Math.asin(').replace(/\bacos\(/g, 'Math.acos(').replace(/\batan\(/g, 'Math.atan(').replace(/\bsin\(/g, 'Math.sin(').replace(/\bcos\(/g, 'Math.cos(').replace(/\btan\(/g, 'Math.tan(').replace(/(\d+(?:\.\d+)?)\s*%/g, '($1/100)');
   if (!/^[0-9+\-*/().,\s]|Math\.(PI|E|sqrt|pow|log|log10|asin|acos|atan|sin|cos|tan)/.test(s)) return NaN;
   var stripped = s.replace(/Math\.(PI|E|sqrt|pow|log10|log|asin|acos|atan|sin|cos|tan)/g, '');
   if (/[^0-9+\-*/().,\s]/.test(stripped)) return NaN;

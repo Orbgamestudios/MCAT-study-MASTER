@@ -2888,7 +2888,7 @@ function stripChoiceLabel(s, index) {
   const expected = 'ABCD'[index];
   const cleaned = sanitizeText(s);
   if (!expected) return cleaned;
-  const m = cleaned.match(/^\(?([A-Da-d])\)?[.):\-]\s+(.+)$/s);
+  const m = cleaned.match(/^\(?([A-Da-d])\)?[.):\-]\s+([\s\S]+)$/);
   if (m && m[1].toUpperCase() === expected) {
     const rest = m[2].trim();
     if (/^[A-Z]\.\s/.test(rest)) return cleaned; // looks like a name initial — keep
@@ -7646,7 +7646,7 @@ function _calcEvaluate(expr) {
     // before the lowercase-e -> Math.E rewrite (capital E is distinct).
     .replace(/(\d+(?:\.\d+)?)E([+-]?\d+(?:\.\d+)?)/g, '($1*Math.pow(10,$2))')
     .replace(/π/g, '(Math.PI)')
-    .replace(/(?<![A-Za-z])e(?![A-Za-z0-9])/g, '(Math.E)')
+    .replace(/(^|[^A-Za-z])e(?![A-Za-z0-9])/g, '$1(Math.E)')
     .replace(/√\s*\(/g, 'Math.sqrt(')
     .replace(/√\s*(\d+(?:\.\d+)?)/g, 'Math.sqrt($1)')
     .replace(/(\d+(?:\.\d+)?|\))\s*\^\s*(\d+(?:\.\d+)?|\([^)]+\))/g, 'Math.pow($1,$2)')
