@@ -70,6 +70,19 @@
     };
   }
 
+  if (window.Promise && !Promise.prototype.finally) {
+    Promise.prototype.finally = function (onFinally) {
+      var P = this.constructor;
+      var handler = typeof onFinally === 'function' ? onFinally : function () {};
+      return this.then(
+        function (value) { return P.resolve(handler()).then(function () { return value; }); },
+        function (reason) {
+          return P.resolve(handler()).then(function () { throw reason; });
+        }
+      );
+    };
+  }
+
   if (window.Element && !Element.prototype.matches) {
     Element.prototype.matches = Element.prototype.msMatchesSelector || Element.prototype.webkitMatchesSelector;
   }
@@ -133,11 +146,25 @@
             json: function () {
               try { return Promise.resolve(JSON.parse(body)); }
               catch (e) { return Promise.reject(e); }
+            },
+            arrayBuffer: function () {
+              try {
+                var binary = xhr.response || body || '';
+                var len = binary.length;
+                var bytes = new Uint8Array(len);
+                for (var i = 0; i < len; i++) bytes[i] = binary.charCodeAt(i) & 255;
+                return Promise.resolve(bytes.buffer);
+              } catch (e) {
+                return Promise.reject(e);
+              }
             }
           });
         };
         xhr.onerror = function () { reject(new TypeError('Network request failed')); };
-        xhr.send(options.body || null);
+        if (options.responseType) {
+          try { xhr.responseType = options.responseType; } catch (e) {}
+        }
+        xhr.send(options.body == null ? null : options.body);
       });
     };
   }
