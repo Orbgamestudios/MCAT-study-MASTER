@@ -12092,26 +12092,6 @@ function LessonsView({ onGoToStudy }) {
     onGoToStudy?.();
   };
 
-  // Reader takes over the tab when a lesson is open and still cached.
-  if (openId && lessonsCache[openId]) {
-    return (
-      <LessonReader
-        lesson={lessonsCache[openId]}
-        latestCorrect={latestCorrect}
-        completed={!!progress[openId]}
-        gate={gateFor(openId)}
-        quizPool={lessonQuizPoolFor(openId)}
-        onBack={() => setOpenId(null)}
-        onQuizSection={(sec) => quizSection(openId, sec)}
-        onMarkComplete={() => markComplete(openId)}
-        onPassCheckpoint={(unlockTo) => passCheckpoint(openId, unlockTo)}
-        onMaster={() => masterChapter(openId)}
-        username={session?.username}
-        onVerifyPin={verifyPin}
-      />
-    );
-  }
-
   const builtInRows = useMemo(() => {
     const relevant = attempts.filter((a) => a.file_id === NUCLEOTIDE_FILE_ID);
     const correct = relevant.filter((a) => a.correct).length;
@@ -12134,6 +12114,26 @@ function LessonsView({ onGoToStudy }) {
     const byId = new Set(rows.map((r) => r.chapterId));
     return [...rows, ...builtInRows.filter((r) => !byId.has(r.chapterId))];
   }, [rows, builtInRows]);
+
+  // Reader takes over the tab when a lesson is open and still cached.
+  if (openId && lessonsCache[openId]) {
+    return (
+      <LessonReader
+        lesson={lessonsCache[openId]}
+        latestCorrect={latestCorrect}
+        completed={!!progress[openId]}
+        gate={gateFor(openId)}
+        quizPool={lessonQuizPoolFor(openId)}
+        onBack={() => setOpenId(null)}
+        onQuizSection={(sec) => quizSection(openId, sec)}
+        onMarkComplete={() => markComplete(openId)}
+        onPassCheckpoint={(unlockTo) => passCheckpoint(openId, unlockTo)}
+        onMaster={() => masterChapter(openId)}
+        username={session?.username}
+        onVerifyPin={verifyPin}
+      />
+    );
+  }
 
   if (lessonRows.length === 0) {
     return (

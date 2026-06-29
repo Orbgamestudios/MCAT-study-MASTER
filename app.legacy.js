@@ -16520,32 +16520,6 @@ function LessonsView(_ref101) {
     }));
     onGoToStudy == null || onGoToStudy();
   };
-  if (openId && lessonsCache[openId]) {
-    return React.createElement(LessonReader, {
-      lesson: lessonsCache[openId],
-      latestCorrect: latestCorrect,
-      completed: !!progress[openId],
-      gate: gateFor(openId),
-      quizPool: lessonQuizPoolFor(openId),
-      onBack: function onBack() {
-        return setOpenId(null);
-      },
-      onQuizSection: function onQuizSection(sec) {
-        return quizSection(openId, sec);
-      },
-      onMarkComplete: function onMarkComplete() {
-        return markComplete(openId);
-      },
-      onPassCheckpoint: function onPassCheckpoint(unlockTo) {
-        return passCheckpoint(openId, unlockTo);
-      },
-      onMaster: function onMaster() {
-        return masterChapter(openId);
-      },
-      username: session == null ? void 0 : session.username,
-      onVerifyPin: verifyPin
-    });
-  }
   var builtInRows = useMemo(function () {
     var relevant = attempts.filter(function (a) {
       return a.file_id === NUCLEOTIDE_FILE_ID;
@@ -16584,6 +16558,32 @@ function LessonsView(_ref101) {
       return !byId.has(r.chapterId);
     }));
   }, [rows, builtInRows]);
+  if (openId && lessonsCache[openId]) {
+    return React.createElement(LessonReader, {
+      lesson: lessonsCache[openId],
+      latestCorrect: latestCorrect,
+      completed: !!progress[openId],
+      gate: gateFor(openId),
+      quizPool: lessonQuizPoolFor(openId),
+      onBack: function onBack() {
+        return setOpenId(null);
+      },
+      onQuizSection: function onQuizSection(sec) {
+        return quizSection(openId, sec);
+      },
+      onMarkComplete: function onMarkComplete() {
+        return markComplete(openId);
+      },
+      onPassCheckpoint: function onPassCheckpoint(unlockTo) {
+        return passCheckpoint(openId, unlockTo);
+      },
+      onMaster: function onMaster() {
+        return masterChapter(openId);
+      },
+      username: session == null ? void 0 : session.username,
+      onVerifyPin: verifyPin
+    });
+  }
   if (lessonRows.length === 0) {
     return React.createElement("div", {
       className: "space-y-4"
