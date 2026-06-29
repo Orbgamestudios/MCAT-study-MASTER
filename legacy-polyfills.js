@@ -13,6 +13,56 @@
       return out;
     };
   }
+  if (!Object.values) {
+    Object.values = function (obj) {
+      return Object.keys(obj).map(function (key) { return obj[key]; });
+    };
+  }
+  if (!Object.entries) {
+    Object.entries = function (obj) {
+      return Object.keys(obj).map(function (key) { return [key, obj[key]]; });
+    };
+  }
+
+  if (!Number.isFinite) {
+    Number.isFinite = function (value) {
+      return typeof value === 'number' && isFinite(value);
+    };
+  }
+  if (!Number.isInteger) {
+    Number.isInteger = function (value) {
+      return Number.isFinite(value) && Math.floor(value) === value;
+    };
+  }
+
+  if (!Math.sign) {
+    Math.sign = function (value) {
+      value = Number(value);
+      if (value === 0 || isNaN(value)) return value;
+      return value > 0 ? 1 : -1;
+    };
+  }
+  if (!Math.hypot) {
+    Math.hypot = function () {
+      var sum = 0;
+      for (var i = 0; i < arguments.length; i++) sum += arguments[i] * arguments[i];
+      return Math.sqrt(sum);
+    };
+  }
+  if (!Math.log10) {
+    Math.log10 = function (value) {
+      return Math.log(value) / Math.LN10;
+    };
+  }
+  if (!Math.imul) {
+    Math.imul = function (a, b) {
+      var ah = (a >>> 16) & 0xffff;
+      var al = a & 0xffff;
+      var bh = (b >>> 16) & 0xffff;
+      var bl = b & 0xffff;
+      return (al * bl + (((ah * bl + al * bh) << 16) >>> 0) | 0);
+    };
+  }
 
   if (!Array.from) {
     Array.from = function (value) {
@@ -124,6 +174,55 @@
         return encodeURIComponent(pair[0]) + '=' + encodeURIComponent(pair[1]);
       }).join('&');
     };
+  }
+  if (window.URLSearchParams && !URLSearchParams.prototype.set) {
+    URLSearchParams.prototype.set = function (key, value) {
+      if (!this._pairs) {
+        this.append(key, value);
+        return;
+      }
+      var found = false;
+      for (var i = 0; i < this._pairs.length; i++) {
+        if (this._pairs[i][0] === key) {
+          if (!found) {
+            this._pairs[i][1] = value;
+            found = true;
+          } else {
+            this._pairs.splice(i--, 1);
+          }
+        }
+      }
+      if (!found) this.append(key, value);
+    };
+  }
+
+  if (window.CanvasRenderingContext2D) {
+    var proto = CanvasRenderingContext2D.prototype;
+    if (!proto.ellipse) {
+      proto.ellipse = function (x, y, radiusX, radiusY, rotation, startAngle, endAngle, anticlockwise) {
+        this.save();
+        this.translate(x, y);
+        this.rotate(rotation || 0);
+        this.scale(radiusX, radiusY);
+        this.arc(0, 0, 1, startAngle, endAngle, !!anticlockwise);
+        this.restore();
+      };
+    }
+    if (!proto.roundRect) {
+      proto.roundRect = function (x, y, w, h, r) {
+        r = Math.max(0, Math.min(Number(r) || 0, Math.min(Math.abs(w), Math.abs(h)) / 2));
+        this.moveTo(x + r, y);
+        this.lineTo(x + w - r, y);
+        this.quadraticCurveTo(x + w, y, x + w, y + r);
+        this.lineTo(x + w, y + h - r);
+        this.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+        this.lineTo(x + r, y + h);
+        this.quadraticCurveTo(x, y + h, x, y + h - r);
+        this.lineTo(x, y + r);
+        this.quadraticCurveTo(x, y, x + r, y);
+        return this;
+      };
+    }
   }
 
   if (!window.fetch) {
