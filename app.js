@@ -2851,13 +2851,14 @@ function todayStr(d = new Date()) {
 }
 const CARS_DAILY_COUNT = 2;
 function carsDateKey(dateStr, slot = 1) {
-  return slot === 1 ? dateStr : `${dateStr}-${slot}`;
+  return slot === 1 ? dateStr : `${dateStr}#${slot}`;
 }
 function carsBaseDate(dateKey) {
-  return String(dateKey || '').replace(/-\d+$/, '');
+  const m = /^(\d{4}-\d{2}-\d{2})(?:[#-](\d+))?$/.exec(String(dateKey || ''));
+  return m ? m[1] : String(dateKey || '');
 }
 function carsSlotFor(dateKey) {
-  const m = /-(\d+)$/.exec(String(dateKey || ''));
+  const m = /^\d{4}-\d{2}-\d{2}[#-](\d+)$/.exec(String(dateKey || ''));
   return m ? Math.max(1, Number(m[1]) || 1) : 1;
 }
 function carsSlotLabel(slot) {
@@ -4669,10 +4670,16 @@ function makeApiClient(getToken) {
 
     // ---- daily CARS ----
     listCars: () => call('/cars'),
-    getCars: (date) => call(`/cars/${encodeURIComponent(date)}`),
-    getCarsPassage: (date) => call(`/cars/passage?date=${encodeURIComponent(date)}`),
+    getCars: (date) => carsSlotFor(date) > 1
+      ? Promise.reject(new ApiError(404, 'local CARS slot'))
+      : call(`/cars/${encodeURIComponent(carsBaseDate(date))}`),
+    getCarsPassage: (date) => carsSlotFor(date) > 1
+      ? Promise.reject(new ApiError(404, 'local CARS slot'))
+      : call(`/cars/passage?date=${encodeURIComponent(carsBaseDate(date))}`),
     postCars: ({ date, discipline, title, payload }) =>
-      call('/cars', { method: 'POST', body: { date, discipline, title, payload }, auth: true }),
+      carsSlotFor(date) > 1
+        ? Promise.resolve({ ok: true })
+        : call('/cars', { method: 'POST', body: { date: carsBaseDate(date), discipline, title, payload }, auth: true }),
 
     // ---- daily Connections ----
     listConnections: () => call('/connections'),
@@ -9817,6 +9824,8 @@ function CarsRunner({ date, payload, onClose, alreadyDone }) {
 function DailyCarsSlotCard({ date, slot }) {
   const { api, client, apiKey, session } = useApp();
   const slotLabel = carsSlotLabel(slot);
+  const baseDate = carsBaseDate(date);
+  const localOnly = carsSlotFor(date) > 1;
   // Seed from the local cache so the card shows instantly if today was already downloaded.
   const cached = getCarsCachePayload(date);
   const [state, setState] = useState(cached ? 'ready' : 'loading'); // loading | ready | generating | unavailable | error
@@ -9830,7 +9839,7 @@ function DailyCarsSlotCard({ date, slot }) {
     let cancelled = false;
     if (!getCarsCachePayload(date)) { setState('loading'); }
     setErr('');
-    api.getCars(date)
+    (localOnly ? Promise.reject({ status: 404 }) : api.getCars(baseDate))
       .then((d) => { if (!cancelled) { setCarsCachePayload(date, d.payload); setPayload(d.payload); setState('ready'); } })
       .catch(async (e) => {
         if (cancelled) return;
@@ -9842,35 +9851,39 @@ function DailyCarsSlotCard({ date, slot }) {
           // Preferred path: pull a real public-domain passage from Project Gutenberg,
           // then have Gemini write only the (hard) questions about it.
           let gen = null;
-          try {
-            const src = await api.getCarsPassage(date);
-            if (src?.passage) {
-              const questions = await client.generateCarsQuestions(src.passage, src.discipline);
-              if (questions?.length) {
-                gen = {
-                  passage: src.passage,
-                  discipline: src.discipline,
-                  title: src.title,
-                  source: src.source,
-                  questions,
-                };
+          if (!localOnly) {
+            try {
+              const src = await api.getCarsPassage(baseDate);
+              if (src?.passage) {
+                const questions = await client.generateCarsQuestions(src.passage, src.discipline);
+                if (questions?.length) {
+                  gen = {
+                    passage: src.passage,
+                    discipline: src.discipline,
+                    title: src.title,
+                    source: src.source,
+                    questions,
+                  };
+                }
               }
-            }
-          } catch { /* fall through to full generation */ }
+            } catch { /* fall through to full generation */ }
+          }
           // Fallback: Gemini writes the passage too (if Gutenberg fetch failed).
           if (!gen) {
             const discipline = carsDisciplineFor(date, slot);
             gen = await client.generateDailyCars(discipline);
           }
           if (!gen?.questions?.length) throw new Error('Generation returned no questions.');
-          await api.postCars({ date, discipline: gen.discipline || carsDisciplineFor(date, slot), title: gen.title || '', payload: gen });
+          if (!localOnly) await api.postCars({ date: baseDate, discipline: gen.discipline || carsDisciplineFor(date, slot), title: gen.title || '', payload: gen });
           if (!cancelled) { setCarsCachePayload(date, gen); setPayload(gen); setState('ready'); }
         } catch (ge) {
           // Someone else may have generated it in the meantime — try one more fetch.
-          try {
-            const d2 = await api.getCars(date);
-            if (!cancelled) { setCarsCachePayload(date, d2.payload); setPayload(d2.payload); setState('ready'); return; }
-          } catch {}
+          if (!localOnly) {
+            try {
+              const d2 = await api.getCars(baseDate);
+              if (!cancelled) { setCarsCachePayload(date, d2.payload); setPayload(d2.payload); setState('ready'); return; }
+            } catch {}
+          }
           if (!cancelled) { setErr(ge.message); setState('error'); }
         }
       });

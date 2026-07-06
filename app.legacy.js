@@ -2817,13 +2817,14 @@ function carsDateKey(dateStr, slot) {
   if (slot === void 0) {
     slot = 1;
   }
-  return slot === 1 ? dateStr : dateStr + "-" + slot;
+  return slot === 1 ? dateStr : dateStr + "#" + slot;
 }
 function carsBaseDate(dateKey) {
-  return String(dateKey || '').replace(/-\d+$/, '');
+  var m = /^(\d{4}-\d{2}-\d{2})(?:[#-](\d+))?$/.exec(String(dateKey || ''));
+  return m ? m[1] : String(dateKey || '');
 }
 function carsSlotFor(dateKey) {
-  var m = /-(\d+)$/.exec(String(dateKey || ''));
+  var m = /^\d{4}-\d{2}-\d{2}[#-](\d+)$/.exec(String(dateKey || ''));
   return m ? Math.max(1, Number(m[1]) || 1) : 1;
 }
 function carsSlotLabel(slot) {
@@ -5467,20 +5468,22 @@ function makeApiClient(getToken) {
       return call('/cars');
     },
     getCars: function getCars(date) {
-      return call("/cars/" + encodeURIComponent(date));
+      return carsSlotFor(date) > 1 ? Promise.reject(new ApiError(404, 'local CARS slot')) : call("/cars/" + encodeURIComponent(carsBaseDate(date)));
     },
     getCarsPassage: function getCarsPassage(date) {
-      return call("/cars/passage?date=" + encodeURIComponent(date));
+      return carsSlotFor(date) > 1 ? Promise.reject(new ApiError(404, 'local CARS slot')) : call("/cars/passage?date=" + encodeURIComponent(carsBaseDate(date)));
     },
     postCars: function postCars(_ref1) {
       var date = _ref1.date,
         discipline = _ref1.discipline,
         title = _ref1.title,
         payload = _ref1.payload;
-      return call('/cars', {
+      return carsSlotFor(date) > 1 ? Promise.resolve({
+        ok: true
+      }) : call('/cars', {
         method: 'POST',
         body: {
-          date,
+          date: carsBaseDate(date),
           discipline,
           title,
           payload
@@ -13010,6 +13013,8 @@ function DailyCarsSlotCard(_ref72) {
     apiKey = _useApp10.apiKey,
     session = _useApp10.session;
   var slotLabel = carsSlotLabel(slot);
+  var baseDate = carsBaseDate(date);
+  var localOnly = carsSlotFor(date) > 1;
   var cached = getCarsCachePayload(date);
   var _useState95 = useState(cached ? 'ready' : 'loading'),
     state = _useState95[0],
@@ -13033,7 +13038,9 @@ function DailyCarsSlotCard(_ref72) {
       setState('loading');
     }
     setErr('');
-    api.getCars(date).then(function (d) {
+    (localOnly ? Promise.reject({
+      status: 404
+    }) : api.getCars(baseDate)).then(function (d) {
       if (!cancelled) {
         setCarsCachePayload(date, d.payload);
         setPayload(d.payload);
@@ -13080,7 +13087,9 @@ function DailyCarsSlotCard(_ref72) {
               gen = null;
               _context47.p = 6;
               _context47.n = 7;
-              return api.getCarsPassage(date);
+              return localOnly ? Promise.reject({
+                status: 404
+              }) : api.getCarsPassage(baseDate);
             case 7:
               src = _context47.v;
               if (!(src != null && src.passage)) {
@@ -13143,7 +13152,9 @@ function DailyCarsSlotCard(_ref72) {
               _t28 = _context47.v;
               _context47.p = 17;
               _context47.n = 18;
-              return api.getCars(date);
+              return localOnly ? Promise.reject({
+                status: 404
+              }) : api.getCars(baseDate);
             case 18:
               d2 = _context47.v;
               if (cancelled) {
