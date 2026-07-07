@@ -3729,6 +3729,18 @@ function getCarsCache() {
 function getCarsCachePayload(date) {
   return getCarsCache()[date] || null;
 }
+function getLocalCarsDays() {
+  var cache = getCarsCache();
+  return Object.keys(cache).map(function (date) {
+    var p = cache[date] || {};
+    return {
+      date,
+      title: p.title || '',
+      discipline: p.discipline || carsDisciplineFor(date, carsSlotFor(date)),
+      local: true
+    };
+  });
+}
 function setCarsCachePayload(date, payload) {
   if (!payload) return;
   var all = getCarsCache();
@@ -15507,9 +15519,42 @@ function CarsArchive() {
   useEffect(function () {
     var cancelled = false;
     api.listCars().then(function (d) {
-      if (!cancelled) setDays(d.days || []);
+      if (cancelled) return;
+      var byDate = {};
+      var _iterator66 = _createForOfIteratorHelper(d.days || []),
+        _step66;
+      try {
+        for (_iterator66.s(); !(_step66 = _iterator66.n()).done;) {
+          var row = _step66.value;
+          byDate[row.date] = row;
+        }
+      } catch (err) {
+        _iterator66.e(err);
+      } finally {
+        _iterator66.f();
+      }
+      var _iterator67 = _createForOfIteratorHelper(getLocalCarsDays()),
+        _step67;
+      try {
+        for (_iterator67.s(); !(_step67 = _iterator67.n()).done;) {
+          var _row = _step67.value;
+          byDate[_row.date] = _objectSpread(_objectSpread({}, _row), byDate[_row.date] || {});
+        }
+      } catch (err) {
+        _iterator67.e(err);
+      } finally {
+        _iterator67.f();
+      }
+      setDays(Object.values(byDate).sort(function (a, b) {
+        return String(b.date).localeCompare(String(a.date));
+      }));
     }).catch(function (e) {
-      if (!cancelled) setErr(e.message);
+      if (!cancelled) {
+        setErr(e.message);
+        setDays(getLocalCarsDays().sort(function (a, b) {
+          return String(b.date).localeCompare(String(a.date));
+        }));
+      }
     });
     return function () {
       cancelled = true;
@@ -15697,17 +15742,17 @@ function SolvedConnectionGroup(_ref85) {
     setExplainErr = _useState234[1];
   var _useState235 = useState(function () {
       var seed = {};
-      var _iterator66 = _createForOfIteratorHelper(group.terms),
-        _step66;
+      var _iterator68 = _createForOfIteratorHelper(group.terms),
+        _step68;
       try {
-        for (_iterator66.s(); !(_step66 = _iterator66.n()).done;) {
-          var t = _step66.value;
+        for (_iterator68.s(); !(_step68 = _iterator68.n()).done;) {
+          var t = _step68.value;
           seed[t] = lookupLocalDef(t, extractions) || getTermDefCache(t) || null;
         }
       } catch (err) {
-        _iterator66.e(err);
+        _iterator68.e(err);
       } finally {
-        _iterator66.f();
+        _iterator68.f();
       }
       return seed;
     }),
@@ -15822,18 +15867,18 @@ function SolvedConnectionGroup(_ref85) {
   useEffect(function () {
     if (!open) return;
     fetchExplain();
-    var _iterator67 = _createForOfIteratorHelper(group.terms),
-      _step67;
+    var _iterator69 = _createForOfIteratorHelper(group.terms),
+      _step69;
     try {
-      for (_iterator67.s(); !(_step67 = _iterator67.n()).done;) {
-        var t = _step67.value;
+      for (_iterator69.s(); !(_step69 = _iterator69.n()).done;) {
+        var t = _step69.value;
         if (!termDefs[t]) fetchTermDef(t);
       }
       // eslint-disable-next-line
     } catch (err) {
-      _iterator67.e(err);
+      _iterator69.e(err);
     } finally {
-      _iterator67.f();
+      _iterator69.f();
     }
   }, [open]);
   return /*#__PURE__*/React.createElement("div", {
@@ -16315,18 +16360,18 @@ function DailyConnectionsCard() {
   var termPool = useMemo(function () {
     var out = [];
     var seen = new Set();
-    var _iterator68 = _createForOfIteratorHelper(files),
-      _step68;
+    var _iterator70 = _createForOfIteratorHelper(files),
+      _step70;
     try {
-      for (_iterator68.s(); !(_step68 = _iterator68.n()).done;) {
-        var f = _step68.value;
+      for (_iterator70.s(); !(_step70 = _iterator70.n()).done;) {
+        var f = _step70.value;
         var ext = extractions[f.file_id];
         if (!(ext !== null && ext !== void 0 && ext.key_terms)) continue;
-        var _iterator69 = _createForOfIteratorHelper(ext.key_terms),
-          _step69;
+        var _iterator71 = _createForOfIteratorHelper(ext.key_terms),
+          _step71;
         try {
-          for (_iterator69.s(); !(_step69 = _iterator69.n()).done;) {
-            var kt = _step69.value;
+          for (_iterator71.s(); !(_step71 = _iterator71.n()).done;) {
+            var kt = _step71.value;
             var key = (kt.term || '').trim();
             if (!key || seen.has(key.toLowerCase())) continue;
             seen.add(key.toLowerCase());
@@ -16338,15 +16383,15 @@ function DailyConnectionsCard() {
             });
           }
         } catch (err) {
-          _iterator69.e(err);
+          _iterator71.e(err);
         } finally {
-          _iterator69.f();
+          _iterator71.f();
         }
       }
     } catch (err) {
-      _iterator68.e(err);
+      _iterator70.e(err);
     } finally {
-      _iterator68.f();
+      _iterator70.f();
     }
     return out;
   }, [files, extractions]);
@@ -16361,7 +16406,7 @@ function DailyConnectionsCard() {
       setState('ready');
     }).catch(/*#__PURE__*/function () {
       var _ref91 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee50(e) {
-        var poolSet, norm, normMap, _iterator70, _step70, t, n, reconcile, buildValid, gen, lastErr, attempt, d2, _t38, _t39, _t40;
+        var poolSet, norm, normMap, _iterator72, _step72, t, n, reconcile, buildValid, gen, lastErr, attempt, d2, _t38, _t39, _t40;
         return _regenerator().w(function (_context55) {
           while (1) switch (_context55.p = _context55.n) {
             case 0:
@@ -16406,43 +16451,43 @@ function DailyConnectionsCard() {
                 return (s || '').toLowerCase().replace(/[\s\-_/]+/g, ' ').replace(/[^a-z0-9 ]/g, '').trim();
               };
               normMap = new Map();
-              _iterator70 = _createForOfIteratorHelper(termPool);
+              _iterator72 = _createForOfIteratorHelper(termPool);
               try {
-                for (_iterator70.s(); !(_step70 = _iterator70.n()).done;) {
-                  t = _step70.value;
+                for (_iterator72.s(); !(_step72 = _iterator72.n()).done;) {
+                  t = _step72.value;
                   n = norm(t.term);
                   if (n && !normMap.has(n)) normMap.set(n, t.term);
                 }
               } catch (err) {
-                _iterator70.e(err);
+                _iterator72.e(err);
               } finally {
-                _iterator70.f();
+                _iterator72.f();
               }
               reconcile = function reconcile(term) {
                 if (poolSet.has(term)) return term;
                 var n = norm(term);
                 if (!n) return null;
                 if (normMap.has(n)) return normMap.get(n);
-                var _iterator71 = _createForOfIteratorHelper(normMap),
-                  _step71;
+                var _iterator73 = _createForOfIteratorHelper(normMap),
+                  _step73;
                 try {
-                  for (_iterator71.s(); !(_step71 = _iterator71.n()).done;) {
-                    var _step71$value = _slicedToArray(_step71.value, 2),
-                      pn = _step71$value[0],
-                      canon = _step71$value[1];
+                  for (_iterator73.s(); !(_step73 = _iterator73.n()).done;) {
+                    var _step73$value = _slicedToArray(_step73.value, 2),
+                      pn = _step73$value[0],
+                      canon = _step73$value[1];
                     if (pn.includes(n) || n.includes(pn)) return canon;
                   }
                 } catch (err) {
-                  _iterator71.e(err);
+                  _iterator73.e(err);
                 } finally {
-                  _iterator71.f();
+                  _iterator73.f();
                 }
                 return null;
               };
               buildValid = /*#__PURE__*/function () {
                 var _ref92 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee49() {
                   var _gen$groups;
-                  var gen, usedTerms, _iterator72, _step72, g, _t37;
+                  var gen, usedTerms, _iterator74, _step74, g, _t37;
                   return _regenerator().w(function (_context54) {
                     while (1) switch (_context54.p = _context54.n) {
                       case 0:
@@ -16463,15 +16508,15 @@ function DailyConnectionsCard() {
                         throw new Error('Generation did not return 4 groups.');
                       case 3:
                         usedTerms = new Set();
-                        _iterator72 = _createForOfIteratorHelper(gen.groups);
+                        _iterator74 = _createForOfIteratorHelper(gen.groups);
                         _context54.p = 4;
-                        _iterator72.s();
+                        _iterator74.s();
                       case 5:
-                        if ((_step72 = _iterator72.n()).done) {
+                        if ((_step74 = _iterator74.n()).done) {
                           _context54.n = 8;
                           break;
                         }
-                        g = _step72.value;
+                        g = _step74.value;
                         if (!(!Array.isArray(g.terms) || g.terms.length !== 4)) {
                           _context54.n = 6;
                           break;
@@ -16494,10 +16539,10 @@ function DailyConnectionsCard() {
                       case 9:
                         _context54.p = 9;
                         _t37 = _context54.v;
-                        _iterator72.e(_t37);
+                        _iterator74.e(_t37);
                       case 10:
                         _context54.p = 10;
-                        _iterator72.f();
+                        _iterator74.f();
                         return _context54.f(10);
                       case 11:
                         return _context54.a(2, gen);
@@ -17080,20 +17125,20 @@ function allocateCounts(weights, total) {
   });
   var out = {};
   var used = 0;
-  var _iterator73 = _createForOfIteratorHelper(raw),
-    _step73;
+  var _iterator75 = _createForOfIteratorHelper(raw),
+    _step75;
   try {
-    for (_iterator73.s(); !(_step73 = _iterator73.n()).done;) {
-      var _step73$value = _slicedToArray(_step73.value, 2),
-        k = _step73$value[0],
-        r = _step73$value[1];
+    for (_iterator75.s(); !(_step75 = _iterator75.n()).done;) {
+      var _step75$value = _slicedToArray(_step75.value, 2),
+        k = _step75$value[0],
+        r = _step75$value[1];
       out[k] = Math.floor(r);
       used += out[k];
     }
   } catch (err) {
-    _iterator73.e(err);
+    _iterator75.e(err);
   } finally {
-    _iterator73.f();
+    _iterator75.f();
   }
   var rem = total - used;
   var fracs = raw.map(function (_ref103) {
@@ -17114,17 +17159,17 @@ function weightedSample(items, weightFn, k) {
   var out = [];
   while (out.length < k && pool.length) {
     var total = 0;
-    var _iterator74 = _createForOfIteratorHelper(pool),
-      _step74;
+    var _iterator76 = _createForOfIteratorHelper(pool),
+      _step76;
     try {
-      for (_iterator74.s(); !(_step74 = _iterator74.n()).done;) {
-        var it = _step74.value;
+      for (_iterator76.s(); !(_step76 = _iterator76.n()).done;) {
+        var it = _step76.value;
         total += Math.max(0.0001, weightFn(it));
       }
     } catch (err) {
-      _iterator74.e(err);
+      _iterator76.e(err);
     } finally {
-      _iterator74.f();
+      _iterator76.f();
     }
     var r = Math.random() * total;
     var idx = pool.length - 1;
@@ -17147,18 +17192,18 @@ function assembleSection(section, available) {
   var target = arguments.length > 2 && arguments[2] !== undefined ? arguments[2] : MINI_EXAM_PER_SECTION;
   var weights = MINI_EXAM_BLUEPRINT[section] || {};
   var bySubject = {};
-  var _iterator75 = _createForOfIteratorHelper(available),
-    _step75;
+  var _iterator77 = _createForOfIteratorHelper(available),
+    _step77;
   try {
-    for (_iterator75.s(); !(_step75 = _iterator75.n()).done;) {
-      var _it = _step75.value;
+    for (_iterator77.s(); !(_step77 = _iterator77.n()).done;) {
+      var _it = _step77.value;
       var subj = canonicalizeSubject(_it.subject) || 'Other';
       (bySubject[subj] || (bySubject[subj] = [])).push(_it);
     }
   } catch (err) {
-    _iterator75.e(err);
+    _iterator77.e(err);
   } finally {
-    _iterator75.f();
+    _iterator77.f();
   }
   var desired = Object.keys(weights).length ? allocateCounts(weights, target) : {};
   var chosen = [];
@@ -17174,39 +17219,39 @@ function assembleSection(section, available) {
     var picked = weightedSample(items, function (it) {
       return ab[chapterNum(it.chapter)] || 1;
     }, Math.min(want, items.length));
-    var _iterator76 = _createForOfIteratorHelper(picked),
-      _step76;
+    var _iterator78 = _createForOfIteratorHelper(picked),
+      _step78;
     try {
-      for (_iterator76.s(); !(_step76 = _iterator76.n()).done;) {
-        var p = _step76.value;
+      for (_iterator78.s(); !(_step78 = _iterator78.n()).done;) {
+        var p = _step78.value;
         chosen.push(p);
         used.add(p.id);
       }
     } catch (err) {
-      _iterator76.e(err);
+      _iterator78.e(err);
     } finally {
-      _iterator76.f();
+      _iterator78.f();
     }
   };
   for (var _i25 = 0, _Object$entries2 = Object.entries(desired); _i25 < _Object$entries2.length; _i25++) {
     _loop6();
   }
   if (chosen.length < target) {
-    var _iterator77 = _createForOfIteratorHelper(shuffle(available.filter(function (it) {
+    var _iterator79 = _createForOfIteratorHelper(shuffle(available.filter(function (it) {
         return !used.has(it.id);
       }))),
-      _step77;
+      _step79;
     try {
-      for (_iterator77.s(); !(_step77 = _iterator77.n()).done;) {
-        var it = _step77.value;
+      for (_iterator79.s(); !(_step79 = _iterator79.n()).done;) {
+        var it = _step79.value;
         if (chosen.length >= target) break;
         chosen.push(it);
         used.add(it.id);
       }
     } catch (err) {
-      _iterator77.e(err);
+      _iterator79.e(err);
     } finally {
-      _iterator77.f();
+      _iterator79.f();
     }
   }
   return shuffle(chosen).slice(0, target);
@@ -17241,17 +17286,17 @@ function MiniExamCard() {
   }, []);
   var sectionCounts = useMemo(function () {
     var m = {};
-    var _iterator78 = _createForOfIteratorHelper((stats === null || stats === void 0 ? void 0 : stats.by_section) || []),
-      _step78;
+    var _iterator80 = _createForOfIteratorHelper((stats === null || stats === void 0 ? void 0 : stats.by_section) || []),
+      _step80;
     try {
-      for (_iterator78.s(); !(_step78 = _iterator78.n()).done;) {
-        var row = _step78.value;
+      for (_iterator80.s(); !(_step80 = _iterator80.n()).done;) {
+        var row = _step80.value;
         if (row.section) m[row.section] = row.n;
       }
     } catch (err) {
-      _iterator78.e(err);
+      _iterator80.e(err);
     } finally {
-      _iterator78.f();
+      _iterator80.f();
     }
     return m;
   }, [stats]);
@@ -17261,7 +17306,7 @@ function MiniExamCard() {
   var target = MINI_EXAM_SECTIONS.length * MINI_EXAM_PER_SECTION;
   var start = /*#__PURE__*/function () {
     var _ref105 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee52() {
-      var items, _iterator79, _step79, section, res, picked, _iterator80, _step80, q, _t42, _t43;
+      var items, _iterator81, _step81, section, res, picked, _iterator82, _step82, q, _t42, _t43;
       return _regenerator().w(function (_context57) {
         while (1) switch (_context57.p = _context57.n) {
           case 0:
@@ -17269,15 +17314,15 @@ function MiniExamCard() {
             setErr('');
             _context57.p = 1;
             items = [];
-            _iterator79 = _createForOfIteratorHelper(MINI_EXAM_SECTIONS);
+            _iterator81 = _createForOfIteratorHelper(MINI_EXAM_SECTIONS);
             _context57.p = 2;
-            _iterator79.s();
+            _iterator81.s();
           case 3:
-            if ((_step79 = _iterator79.n()).done) {
+            if ((_step81 = _iterator81.n()).done) {
               _context57.n = 6;
               break;
             }
-            section = _step79.value;
+            section = _step81.value;
             _context57.n = 4;
             return api.examBankQuestions({
               section,
@@ -17290,10 +17335,10 @@ function MiniExamCard() {
           case 4:
             res = _context57.v;
             picked = assembleSection(section, (res === null || res === void 0 ? void 0 : res.questions) || [], MINI_EXAM_PER_SECTION);
-            _iterator80 = _createForOfIteratorHelper(picked);
+            _iterator82 = _createForOfIteratorHelper(picked);
             try {
-              for (_iterator80.s(); !(_step80 = _iterator80.n()).done;) {
-                q = _step80.value;
+              for (_iterator82.s(); !(_step82 = _iterator82.n()).done;) {
+                q = _step82.value;
                 items.push({
                   id: q.id,
                   mode: 'mc',
@@ -17308,9 +17353,9 @@ function MiniExamCard() {
                 });
               }
             } catch (err) {
-              _iterator80.e(err);
+              _iterator82.e(err);
             } finally {
-              _iterator80.f();
+              _iterator82.f();
             }
           case 5:
             _context57.n = 3;
@@ -17321,10 +17366,10 @@ function MiniExamCard() {
           case 7:
             _context57.p = 7;
             _t42 = _context57.v;
-            _iterator79.e(_t42);
+            _iterator81.e(_t42);
           case 8:
             _context57.p = 8;
-            _iterator79.f();
+            _iterator81.f();
             return _context57.f(8);
           case 9:
             if (items.length) {
@@ -17460,17 +17505,17 @@ function DailyExamCard(_ref106) {
       return x.id;
     }));
     var seen = new Set();
-    var _iterator81 = _createForOfIteratorHelper(attempts),
-      _step81;
+    var _iterator83 = _createForOfIteratorHelper(attempts),
+      _step83;
     try {
-      for (_iterator81.s(); !(_step81 = _iterator81.n()).done;) {
-        var a = _step81.value;
+      for (_iterator83.s(); !(_step83 = _iterator83.n()).done;) {
+        var a = _step83.value;
         if (ids.has(a.question_id) && a.ts && todayStr(new Date(a.ts)) === today) seen.add(a.question_id);
       }
     } catch (err) {
-      _iterator81.e(err);
+      _iterator83.e(err);
     } finally {
-      _iterator81.f();
+      _iterator83.f();
     }
     return seen.size;
   }, [items, attempts, today]);
@@ -17642,11 +17687,11 @@ function DailyExamCard(_ref106) {
 // later wrong answer automatically un-masters (resurfaces) the section.
 function lessonLatestCorrect(attempts) {
   var best = {};
-  var _iterator82 = _createForOfIteratorHelper(attempts),
-    _step82;
+  var _iterator84 = _createForOfIteratorHelper(attempts),
+    _step84;
   try {
-    for (_iterator82.s(); !(_step82 = _iterator82.n()).done;) {
-      var a = _step82.value;
+    for (_iterator84.s(); !(_step84 = _iterator84.n()).done;) {
+      var a = _step84.value;
       var cur = best[a.question_id];
       if (!cur || a.ts > cur.ts) best[a.question_id] = {
         ts: a.ts,
@@ -17654,9 +17699,9 @@ function lessonLatestCorrect(attempts) {
       };
     }
   } catch (err) {
-    _iterator82.e(err);
+    _iterator84.e(err);
   } finally {
-    _iterator82.f();
+    _iterator84.f();
   }
   var out = {};
   for (var k in best) out[k] = best[k].correct;
@@ -17668,20 +17713,20 @@ function lessonSectionStatus(sec, latestCorrect) {
   var ids = Array.isArray(sec.check_ids) ? sec.check_ids : [];
   var correct = 0,
     attempted = 0;
-  var _iterator83 = _createForOfIteratorHelper(ids),
-    _step83;
+  var _iterator85 = _createForOfIteratorHelper(ids),
+    _step85;
   try {
-    for (_iterator83.s(); !(_step83 = _iterator83.n()).done;) {
-      var id = _step83.value;
+    for (_iterator85.s(); !(_step85 = _iterator85.n()).done;) {
+      var id = _step85.value;
       if (id in latestCorrect) {
         attempted++;
         if (latestCorrect[id]) correct++;
       }
     }
   } catch (err) {
-    _iterator83.e(err);
+    _iterator85.e(err);
   } finally {
-    _iterator83.f();
+    _iterator85.f();
   }
   var thr = typeof sec.mastery_threshold === 'number' ? sec.mastery_threshold : 1.0;
   var mastered = ids.length > 0 && correct / ids.length >= thr;
@@ -18559,17 +18604,17 @@ function LessonReader(_ref115) {
   var poolThrough = function poolThrough(end) {
     var ids = new Set();
     for (var k = 0; k < end; k++) {
-      var _iterator84 = _createForOfIteratorHelper(sections[k].check_ids || []),
-        _step84;
+      var _iterator86 = _createForOfIteratorHelper(sections[k].check_ids || []),
+        _step86;
       try {
-        for (_iterator84.s(); !(_step84 = _iterator84.n()).done;) {
-          var id = _step84.value;
+        for (_iterator86.s(); !(_step86 = _iterator86.n()).done;) {
+          var id = _step86.value;
           ids.add(id);
         }
       } catch (err) {
-        _iterator84.e(err);
+        _iterator86.e(err);
       } finally {
-        _iterator84.f();
+        _iterator86.f();
       }
     }
     return quizPool.filter(function (x) {
@@ -18767,33 +18812,33 @@ function LessonsView(_ref116) {
     setError = _useState342[1];
   var fileToChapter = useMemo(function () {
     var m = {};
-    var _iterator85 = _createForOfIteratorHelper(files),
-      _step85;
+    var _iterator87 = _createForOfIteratorHelper(files),
+      _step87;
     try {
-      for (_iterator85.s(); !(_step85 = _iterator85.n()).done;) {
-        var f = _step85.value;
+      for (_iterator87.s(); !(_step87 = _iterator87.n()).done;) {
+        var f = _step87.value;
         if (f.chapter_id) m[f.file_id] = f.chapter_id;
       }
     } catch (err) {
-      _iterator85.e(err);
+      _iterator87.e(err);
     } finally {
-      _iterator85.f();
+      _iterator87.f();
     }
     return m;
   }, [files]);
   var chapterToFile = useMemo(function () {
     var m = {};
-    var _iterator86 = _createForOfIteratorHelper(files),
-      _step86;
+    var _iterator88 = _createForOfIteratorHelper(files),
+      _step88;
     try {
-      for (_iterator86.s(); !(_step86 = _iterator86.n()).done;) {
-        var f = _step86.value;
+      for (_iterator88.s(); !(_step88 = _iterator88.n()).done;) {
+        var f = _step88.value;
         if (f.chapter_id) m[f.chapter_id] = f.file_id;
       }
     } catch (err) {
-      _iterator86.e(err);
+      _iterator88.e(err);
     } finally {
-      _iterator86.f();
+      _iterator88.f();
     }
     return m;
   }, [files]);
@@ -18803,7 +18848,7 @@ function LessonsView(_ref116) {
   useEffect(function () {
     var cancelled = false;
     _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee55() {
-      var data, m, _iterator87, _step87, _ch$stages2, ch, _t46;
+      var data, m, _iterator89, _step89, _ch$stages2, ch, _t46;
       return _regenerator().w(function (_context60) {
         while (1) switch (_context60.p = _context60.n) {
           case 0:
@@ -18819,16 +18864,16 @@ function LessonsView(_ref116) {
             return _context60.a(2);
           case 2:
             m = {};
-            _iterator87 = _createForOfIteratorHelper((data === null || data === void 0 ? void 0 : data.chapters) || []);
+            _iterator89 = _createForOfIteratorHelper((data === null || data === void 0 ? void 0 : data.chapters) || []);
             try {
-              for (_iterator87.s(); !(_step87 = _iterator87.n()).done;) {
-                ch = _step87.value;
+              for (_iterator89.s(); !(_step89 = _iterator89.n()).done;) {
+                ch = _step89.value;
                 m[ch.id] = !!((_ch$stages2 = ch.stages) !== null && _ch$stages2 !== void 0 && (_ch$stages2 = _ch$stages2.lesson) !== null && _ch$stages2 !== void 0 && _ch$stages2.done);
               }
             } catch (err) {
-              _iterator87.e(err);
+              _iterator89.e(err);
             } finally {
-              _iterator87.f();
+              _iterator89.f();
             }
             setAvailMap(m);
             _context60.n = 4;
@@ -19112,11 +19157,11 @@ function LessonsView(_ref116) {
     // Seed every processed chapter so ones you haven't answered questions for
     // yet still show up (with 0/0 stats) rather than only appearing after a
     // first attempt is recorded.
-    var _iterator88 = _createForOfIteratorHelper(files),
-      _step88;
+    var _iterator90 = _createForOfIteratorHelper(files),
+      _step90;
     try {
-      for (_iterator88.s(); !(_step88 = _iterator88.n()).done;) {
-        var f = _step88.value;
+      for (_iterator90.s(); !(_step90 = _iterator90.n()).done;) {
+        var f = _step90.value;
         if (!f.file_id) continue;
         var q = questions[f.file_id];
         if (!q || !q.mc) continue; // only fully processed chapters
@@ -19128,15 +19173,15 @@ function LessonsView(_ref116) {
         };
       }
     } catch (err) {
-      _iterator88.e(err);
+      _iterator90.e(err);
     } finally {
-      _iterator88.f();
+      _iterator90.f();
     }
-    var _iterator89 = _createForOfIteratorHelper(attempts),
-      _step89;
+    var _iterator91 = _createForOfIteratorHelper(attempts),
+      _step91;
     try {
-      for (_iterator89.s(); !(_step89 = _iterator89.n()).done;) {
-        var a = _step89.value;
+      for (_iterator91.s(); !(_step91 = _iterator91.n()).done;) {
+        var a = _step91.value;
         var key = a.file_id;
         if (!chapterFileIds.has(key)) continue;
         if (!byChapter[key]) byChapter[key] = {
@@ -19149,24 +19194,24 @@ function LessonsView(_ref116) {
         if (a.correct) byChapter[key].correct++;
       }
     } catch (err) {
-      _iterator89.e(err);
+      _iterator91.e(err);
     } finally {
-      _iterator89.f();
+      _iterator91.f();
     }
     var wrongIds = new Set();
     var seenIds = new Set();
-    var _iterator90 = _createForOfIteratorHelper(attempts),
-      _step90;
+    var _iterator92 = _createForOfIteratorHelper(attempts),
+      _step92;
     try {
-      for (_iterator90.s(); !(_step90 = _iterator90.n()).done;) {
-        var _a = _step90.value;
+      for (_iterator92.s(); !(_step92 = _iterator92.n()).done;) {
+        var _a = _step92.value;
         seenIds.add(_a.question_id);
         if (!_a.correct) wrongIds.add(_a.question_id);
       }
     } catch (err) {
-      _iterator90.e(err);
+      _iterator92.e(err);
     } finally {
-      _iterator90.f();
+      _iterator92.f();
     }
     var out = Object.entries(byChapter).map(function (_ref120) {
       var _ref121 = _slicedToArray(_ref120, 2),
@@ -19248,18 +19293,18 @@ function LessonsView(_ref116) {
     if (!pool.length) return;
     var wrongIds = new Set();
     var seenIds = new Set();
-    var _iterator91 = _createForOfIteratorHelper(attempts),
-      _step91;
+    var _iterator93 = _createForOfIteratorHelper(attempts),
+      _step93;
     try {
-      for (_iterator91.s(); !(_step91 = _iterator91.n()).done;) {
-        var a = _step91.value;
+      for (_iterator93.s(); !(_step93 = _iterator93.n()).done;) {
+        var a = _step93.value;
         seenIds.add(a.question_id);
         if (!a.correct) wrongIds.add(a.question_id);
       }
     } catch (err) {
-      _iterator91.e(err);
+      _iterator93.e(err);
     } finally {
-      _iterator91.f();
+      _iterator93.f();
     }
     var misses = pool.filter(function (x) {
       return wrongIds.has(x.id);
@@ -19470,11 +19515,11 @@ function LessonsView(_ref116) {
   var subjectGroups = function () {
     var order = [];
     var map = {};
-    var _iterator92 = _createForOfIteratorHelper(lessonRows),
-      _step92;
+    var _iterator94 = _createForOfIteratorHelper(lessonRows),
+      _step94;
     try {
-      for (_iterator92.s(); !(_step92 = _iterator92.n()).done;) {
-        var r = _step92.value;
+      for (_iterator94.s(); !(_step94 = _iterator94.n()).done;) {
+        var r = _step94.value;
         var s = r.subject || 'Other';
         if (!map[s]) {
           map[s] = [];
@@ -19483,9 +19528,9 @@ function LessonsView(_ref116) {
         map[s].push(r);
       }
     } catch (err) {
-      _iterator92.e(err);
+      _iterator94.e(err);
     } finally {
-      _iterator92.f();
+      _iterator94.f();
     }
     return order.map(function (s) {
       return [s, map[s]];
@@ -19850,36 +19895,36 @@ function predictMcatScores(attempts) {
     return (b.ts || 0) - (a.ts || 0);
   });
   var bySubject = new Map();
-  var _iterator93 = _createForOfIteratorHelper(sorted),
-    _step93;
+  var _iterator95 = _createForOfIteratorHelper(sorted),
+    _step95;
   try {
-    for (_iterator93.s(); !(_step93 = _iterator93.n()).done;) {
-      var a = _step93.value;
+    for (_iterator95.s(); !(_step95 = _iterator95.n()).done;) {
+      var a = _step95.value;
       if (!a.subject) continue;
       var subj = normalizeSubject(a.subject);
       if (!bySubject.has(subj)) bySubject.set(subj, []);
       bySubject.get(subj).push(a);
     }
   } catch (err) {
-    _iterator93.e(err);
+    _iterator95.e(err);
   } finally {
-    _iterator93.f();
+    _iterator95.f();
   }
   var posteriors = new Map();
-  var _iterator94 = _createForOfIteratorHelper(bySubject),
-    _step94;
+  var _iterator96 = _createForOfIteratorHelper(bySubject),
+    _step96;
   try {
-    for (_iterator94.s(); !(_step94 = _iterator94.n()).done;) {
-      var _step94$value = _slicedToArray(_step94.value, 2),
-        _subj = _step94$value[0],
-        list = _step94$value[1];
+    for (_iterator96.s(); !(_step96 = _iterator96.n()).done;) {
+      var _step96$value = _slicedToArray(_step96.value, 2),
+        _subj = _step96$value[0],
+        list = _step96$value[1];
       var p = subjectPosterior(list);
       if (p) posteriors.set(_subj, p);
     }
   } catch (err) {
-    _iterator94.e(err);
+    _iterator96.e(err);
   } finally {
-    _iterator94.f();
+    _iterator96.f();
   }
   var sections = MCAT_SECTIONS.map(function (sec) {
     var present = Object.entries(sec.weights).map(function (_ref125) {
@@ -19903,21 +19948,21 @@ function predictMcatScores(attempts) {
     }, 0);
     var mean = 0,
       variance = 0;
-    var _iterator95 = _createForOfIteratorHelper(present),
-      _step95;
+    var _iterator97 = _createForOfIteratorHelper(present),
+      _step97;
     try {
-      for (_iterator95.s(); !(_step95 = _iterator95.n()).done;) {
-        var _step95$value = _step95.value,
-          weight = _step95$value.weight,
-          post = _step95$value.post;
+      for (_iterator97.s(); !(_step97 = _iterator97.n()).done;) {
+        var _step97$value = _step97.value,
+          weight = _step97$value.weight,
+          post = _step97$value.post;
         var w = weight / wSum;
         mean += w * post.mean;
         variance += w * w * post.variance;
       }
     } catch (err) {
-      _iterator95.e(err);
+      _iterator97.e(err);
     } finally {
-      _iterator95.f();
+      _iterator97.f();
     }
     var score = SECTION_MIN + SECTION_RANGE * mean;
     var stdev = SECTION_RANGE * Math.sqrt(variance);
@@ -19953,20 +19998,20 @@ function predictMcatScores(attempts) {
       return s + Math.pow(x.stdev, 2);
     }, 0) / done.length;
     var imputedStdev = Math.max(Math.sqrt(meanVar) * 2, 2.5);
-    var _iterator96 = _createForOfIteratorHelper(sections),
-      _step96;
+    var _iterator98 = _createForOfIteratorHelper(sections),
+      _step98;
     try {
-      for (_iterator96.s(); !(_step96 = _iterator96.n()).done;) {
-        var s = _step96.value;
+      for (_iterator98.s(); !(_step98 = _iterator98.n()).done;) {
+        var s = _step98.value;
         if (s.completed) continue;
         s.imputed = true;
         s.score = meanScore;
         s.stdev = imputedStdev;
       }
     } catch (err) {
-      _iterator96.e(err);
+      _iterator98.e(err);
     } finally {
-      _iterator96.f();
+      _iterator98.f();
     }
   }
   var contributing = sections.filter(function (s) {
@@ -20118,12 +20163,12 @@ function StatsView() {
     var bySubject = {};
     var missByQid = {};
     var seenByQid = {};
-    var _iterator97 = _createForOfIteratorHelper(attempts),
-      _step97;
+    var _iterator99 = _createForOfIteratorHelper(attempts),
+      _step99;
     try {
-      for (_iterator97.s(); !(_step97 = _iterator97.n()).done;) {
+      for (_iterator99.s(); !(_step99 = _iterator99.n()).done;) {
         var _a$mode, _a$subject;
-        var a = _step97.value;
+        var a = _step99.value;
         overall.total++;
         if (a.correct) overall.correct++;
         var m = byMode[_a$mode = a.mode] || (byMode[_a$mode] = {
@@ -20153,57 +20198,57 @@ function StatsView() {
 
       // Build a question lookup so missed questions can show their text.
     } catch (err) {
-      _iterator97.e(err);
+      _iterator99.e(err);
     } finally {
-      _iterator97.f();
+      _iterator99.f();
     }
     var qLookup = {};
     for (var _i26 = 0, _Object$keys3 = Object.keys(questions); _i26 < _Object$keys3.length; _i26++) {
       var fid = _Object$keys3[_i26];
       var qb = questions[fid] || {};
-      var _iterator98 = _createForOfIteratorHelper(qb.mc || []),
-        _step98;
+      var _iterator100 = _createForOfIteratorHelper(qb.mc || []),
+        _step100;
       try {
-        for (_iterator98.s(); !(_step98 = _iterator98.n()).done;) {
-          var q = _step98.value;
+        for (_iterator100.s(); !(_step100 = _iterator100.n()).done;) {
+          var q = _step100.value;
           qLookup[q.id] = _objectSpread(_objectSpread({}, q), {}, {
             mode: 'mc',
             file_id: fid
           });
         }
       } catch (err) {
-        _iterator98.e(err);
+        _iterator100.e(err);
       } finally {
-        _iterator98.f();
+        _iterator100.f();
       }
-      var _iterator99 = _createForOfIteratorHelper(qb.short || []),
-        _step99;
+      var _iterator101 = _createForOfIteratorHelper(qb.short || []),
+        _step101;
       try {
-        for (_iterator99.s(); !(_step99 = _iterator99.n()).done;) {
-          var _q3 = _step99.value;
+        for (_iterator101.s(); !(_step101 = _iterator101.n()).done;) {
+          var _q3 = _step101.value;
           qLookup[_q3.id] = _objectSpread(_objectSpread({}, _q3), {}, {
             mode: 'short',
             file_id: fid
           });
         }
       } catch (err) {
-        _iterator99.e(err);
+        _iterator101.e(err);
       } finally {
-        _iterator99.f();
+        _iterator101.f();
       }
     }
     var fileLookup = {};
-    var _iterator100 = _createForOfIteratorHelper(files),
-      _step100;
+    var _iterator102 = _createForOfIteratorHelper(files),
+      _step102;
     try {
-      for (_iterator100.s(); !(_step100 = _iterator100.n()).done;) {
-        var f = _step100.value;
+      for (_iterator102.s(); !(_step102 = _iterator102.n()).done;) {
+        var f = _step102.value;
         fileLookup[f.file_id] = f;
       }
     } catch (err) {
-      _iterator100.e(err);
+      _iterator102.e(err);
     } finally {
-      _iterator100.f();
+      _iterator102.f();
     }
     var topMisses = Object.entries(missByQid).map(function (_ref128) {
       var _ref129 = _slicedToArray(_ref128, 2),
@@ -20851,11 +20896,11 @@ function EraseQuizStatsSection() {
   // before confirming a delete.
   var days = useMemo(function () {
     var dayMap = new Map();
-    var _iterator101 = _createForOfIteratorHelper(attempts),
-      _step101;
+    var _iterator103 = _createForOfIteratorHelper(attempts),
+      _step103;
     try {
-      for (_iterator101.s(); !(_step101 = _iterator101.n()).done;) {
-        var a = _step101.value;
+      for (_iterator103.s(); !(_step103 = _iterator103.n()).done;) {
+        var a = _step103.value;
         var ts = a.ts || 0;
         var d = new Date(ts);
         // Local-day key: YYYY-MM-DD in the user's tz.
@@ -20896,9 +20941,9 @@ function EraseQuizStatsSection() {
         if (a.correct) q.correct++;
       }
     } catch (err) {
-      _iterator101.e(err);
+      _iterator103.e(err);
     } finally {
-      _iterator101.f();
+      _iterator103.f();
     }
     return Array.from(dayMap.values()).map(function (b) {
       return _objectSpread(_objectSpread({}, b), {}, {
@@ -21057,7 +21102,7 @@ function PublishAllPanel() {
   });
   var publishAll = /*#__PURE__*/function () {
     var _ref145 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee60() {
-      var okCount, errCount, lastErr, _iterator102, _step102, _loop7, _t50;
+      var okCount, errCount, lastErr, _iterator104, _step104, _loop7, _t50;
       return _regenerator().w(function (_context66) {
         while (1) switch (_context66.p = _context66.n) {
           case 0:
@@ -21077,14 +21122,14 @@ function PublishAllPanel() {
             lastErr = {
               msg: ''
             };
-            _iterator102 = _createForOfIteratorHelper(publishable);
+            _iterator104 = _createForOfIteratorHelper(publishable);
             _context66.p = 2;
             _loop7 = /*#__PURE__*/_regenerator().m(function _loop7() {
               var f, _qb$mc, _qb$twoPart, _qb$short, chapterId, created, ext, qb, pushes, _i28, _pushes2, _pushes2$_i, stage, payload, _t49;
               return _regenerator().w(function (_context65) {
                 while (1) switch (_context65.p = _context65.n) {
                   case 0:
-                    f = _step102.value;
+                    f = _step104.value;
                     _context65.p = 1;
                     chapterId = f.chapter_id;
                     if (chapterId) {
@@ -21144,9 +21189,9 @@ function PublishAllPanel() {
                 }
               }, _loop7, null, [[1, 7]]);
             });
-            _iterator102.s();
+            _iterator104.s();
           case 3:
-            if ((_step102 = _iterator102.n()).done) {
+            if ((_step104 = _iterator104.n()).done) {
               _context66.n = 5;
               break;
             }
@@ -21160,10 +21205,10 @@ function PublishAllPanel() {
           case 6:
             _context66.p = 6;
             _t50 = _context66.v;
-            _iterator102.e(_t50);
+            _iterator104.e(_t50);
           case 7:
             _context66.p = 7;
-            _iterator102.f();
+            _iterator104.f();
             return _context66.f(7);
           case 8:
             setBusy(false);
@@ -21293,7 +21338,7 @@ function FlagFixesPanel() {
   };
   var runPipeline = /*#__PURE__*/function () {
     var _ref146 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee61() {
-      var current, processedCount, _iterator103, _step103, _loop8, _ret3, _t54;
+      var current, processedCount, _iterator105, _step105, _loop8, _ret3, _t54;
       return _regenerator().w(function (_context68) {
         while (1) switch (_context68.p = _context68.n) {
           case 0:
@@ -21321,14 +21366,14 @@ function FlagFixesPanel() {
             setProcessedLog([]);
             current = _toConsumableArray(queue);
             processedCount = 0;
-            _iterator103 = _createForOfIteratorHelper(pending);
+            _iterator105 = _createForOfIteratorHelper(pending);
             _context68.p = 3;
             _loop8 = /*#__PURE__*/_regenerator().m(function _loop8() {
               var flag, fix, fileId, qbank, cleanParts, nextTp, nextMc, updated, _fix$choices3, _updated, _t51, _t52, _t53;
               return _regenerator().w(function (_context67) {
                 while (1) switch (_context67.p = _context67.n) {
                   case 0:
-                    flag = _step103.value;
+                    flag = _step105.value;
                     _context67.p = 1;
                     setStatus({
                       kind: 'info',
@@ -21493,9 +21538,9 @@ function FlagFixesPanel() {
                 }
               }, _loop8, null, [[8, 10], [3, 5], [1, 12]]);
             });
-            _iterator103.s();
+            _iterator105.s();
           case 4:
-            if ((_step103 = _iterator103.n()).done) {
+            if ((_step105 = _iterator105.n()).done) {
               _context68.n = 7;
               break;
             }
@@ -21516,10 +21561,10 @@ function FlagFixesPanel() {
           case 8:
             _context68.p = 8;
             _t54 = _context68.v;
-            _iterator103.e(_t54);
+            _iterator105.e(_t54);
           case 9:
             _context68.p = 9;
-            _iterator103.f();
+            _iterator105.f();
             return _context68.f(9);
           case 10:
             saveQueue(current);
@@ -22167,17 +22212,17 @@ function ServerStatsPayload(_ref157) {
   var days = [];
   for (var i = 6; i >= 0; i--) days.push(today - i);
   var dailyByBucket = {};
-  var _iterator104 = _createForOfIteratorHelper(data.daily || []),
-    _step104;
+  var _iterator106 = _createForOfIteratorHelper(data.daily || []),
+    _step106;
   try {
-    for (_iterator104.s(); !(_step104 = _iterator104.n()).done;) {
-      var d = _step104.value;
+    for (_iterator106.s(); !(_step106 = _iterator106.n()).done;) {
+      var d = _step106.value;
       dailyByBucket[d.day_bucket] = d;
     }
   } catch (err) {
-    _iterator104.e(err);
+    _iterator106.e(err);
   } finally {
-    _iterator104.f();
+    _iterator106.f();
   }
   var dailySeries = days.map(function (b) {
     var r = dailyByBucket[b];
@@ -22860,7 +22905,7 @@ function BankTab() {
   // signed in with a key can advance a chapter.
   var contributeChapter = /*#__PURE__*/function () {
     var _ref165 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee70(chapter, stages) {
-      var full, _iterator105, _step105, _loop9, localFile, refreshed, localFileId, fileRecord, _t64, _t65, _t66;
+      var full, _iterator107, _step107, _loop9, localFile, refreshed, localFileId, fileRecord, _t64, _t65, _t66;
       return _regenerator().w(function (_context78) {
         while (1) switch (_context78.p = _context78.n) {
           case 0:
@@ -22897,14 +22942,14 @@ function BankTab() {
             }
             throw new Error('Chapter has no extraction yet — only the uploader can do that step.');
           case 5:
-            _iterator105 = _createForOfIteratorHelper(stages);
+            _iterator107 = _createForOfIteratorHelper(stages);
             _context78.p = 6;
             _loop9 = /*#__PURE__*/_regenerator().m(function _loop9() {
               var stage, newMc, hasBaseline, baseline, termCovered, missingTerms, termExtraction, termQs, twoPart, short;
               return _regenerator().w(function (_context77) {
                 while (1) switch (_context77.n) {
                   case 0:
-                    stage = _step105.value;
+                    stage = _step107.value;
                     if (!(stage === 'mc')) {
                       _context77.n = 6;
                       break;
@@ -23008,9 +23053,9 @@ function BankTab() {
                 }
               }, _loop9);
             });
-            _iterator105.s();
+            _iterator107.s();
           case 7:
-            if ((_step105 = _iterator105.n()).done) {
+            if ((_step107 = _iterator107.n()).done) {
               _context78.n = 9;
               break;
             }
@@ -23024,10 +23069,10 @@ function BankTab() {
           case 10:
             _context78.p = 10;
             _t64 = _context78.v;
-            _iterator105.e(_t64);
+            _iterator107.e(_t64);
           case 11:
             _context78.p = 11;
-            _iterator105.f();
+            _iterator107.f();
             return _context78.f(11);
           case 12:
             // If the user already has this chapter in their local library, refresh it
@@ -23141,19 +23186,19 @@ function BankTab() {
 
   // Group by subject, then sort each group by chapter number.
   var bySubject = {};
-  var _iterator106 = _createForOfIteratorHelper(data.chapters),
-    _step106;
+  var _iterator108 = _createForOfIteratorHelper(data.chapters),
+    _step108;
   try {
-    for (_iterator106.s(); !(_step106 = _iterator106.n()).done;) {
-      var ch = _step106.value;
+    for (_iterator108.s(); !(_step108 = _iterator108.n()).done;) {
+      var ch = _step108.value;
       var subj = ch.subject || 'Other';
       if (!bySubject[subj]) bySubject[subj] = [];
       bySubject[subj].push(ch);
     }
   } catch (err) {
-    _iterator106.e(err);
+    _iterator108.e(err);
   } finally {
-    _iterator106.f();
+    _iterator108.f();
   }
   var localChapterIds = new Set(files.map(function (f) {
     return f.chapter_id;
@@ -23169,11 +23214,11 @@ function BankTab() {
     if (bi !== -1) return 1;
     return a.localeCompare(b);
   });
-  var _iterator107 = _createForOfIteratorHelper(subjects),
-    _step107;
+  var _iterator109 = _createForOfIteratorHelper(subjects),
+    _step109;
   try {
-    for (_iterator107.s(); !(_step107 = _iterator107.n()).done;) {
-      var s = _step107.value;
+    for (_iterator109.s(); !(_step109 = _iterator109.n()).done;) {
+      var s = _step109.value;
       bySubject[s].sort(function (a, b) {
         var an = parseChapterNum(a),
           bn = parseChapterNum(b);
@@ -23182,9 +23227,9 @@ function BankTab() {
       });
     }
   } catch (err) {
-    _iterator107.e(err);
+    _iterator109.e(err);
   } finally {
-    _iterator107.f();
+    _iterator109.f();
   }
   var filterLc = filter.toLowerCase();
   var filtered = function filtered(chs) {
@@ -23757,7 +23802,7 @@ function Shell() {
       return carsDateKey(d, i + 1);
     });
     Promise.all(keys.map(function (key) {
-      return api.getCars(key).then(function (res) {
+      return getCarsCachePayload(key) ? Promise.resolve(!getCarsResults()[key]) : api.getCars(key).then(function (res) {
         setCarsCachePayload(key, res.payload);
         return !getCarsResults()[key];
       }).catch(function () {

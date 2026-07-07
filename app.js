@@ -2980,6 +2980,18 @@ function validateMCQuestions(arr) {
 // Local cache of downloaded CARS payloads so a day opens instantly / offline.
 function getCarsCache() { try { return JSON.parse(localStorage.getItem('mcat:carsCache')) || {}; } catch { return {}; } }
 function getCarsCachePayload(date) { return getCarsCache()[date] || null; }
+function getLocalCarsDays() {
+  const cache = getCarsCache();
+  return Object.keys(cache).map((date) => {
+    const p = cache[date] || {};
+    return {
+      date,
+      title: p.title || '',
+      discipline: p.discipline || carsDisciplineFor(date, carsSlotFor(date)),
+      local: true,
+    };
+  });
+}
 function setCarsCachePayload(date, payload) {
   if (!payload) return;
   const all = getCarsCache();
@@ -10181,8 +10193,19 @@ function CarsArchive() {
   useEffect(() => {
     let cancelled = false;
     api.listCars()
-      .then((d) => { if (!cancelled) setDays(d.days || []); })
-      .catch((e) => { if (!cancelled) setErr(e.message); });
+      .then((d) => {
+        if (cancelled) return;
+        const byDate = {};
+        for (const row of (d.days || [])) byDate[row.date] = row;
+        for (const row of getLocalCarsDays()) byDate[row.date] = { ...row, ...(byDate[row.date] || {}) };
+        setDays(Object.values(byDate).sort((a, b) => String(b.date).localeCompare(String(a.date))));
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          setErr(e.message);
+          setDays(getLocalCarsDays().sort((a, b) => String(b.date).localeCompare(String(a.date))));
+        }
+      });
     return () => { cancelled = true; };
   }, [api]);
 
@@ -15462,6 +15485,9 @@ function Shell() {
     const d = todayStr();
     const keys = Array.from({ length: CARS_DAILY_COUNT }).map((_, i) => carsDateKey(d, i + 1));
     Promise.all(keys.map((key) =>
+      getCarsCachePayload(key)
+        ? Promise.resolve(!getCarsResults()[key])
+        :
       api.getCars(key)
         .then((res) => { setCarsCachePayload(key, res.payload); return !getCarsResults()[key]; })
         .catch(() => false)
