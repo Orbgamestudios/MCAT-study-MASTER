@@ -3610,6 +3610,13 @@ function getCarsResults() {
     return {};
   }
 }
+function getCarsResult(date) {
+  var all = getCarsResults();
+  if (all[date]) return all[date];
+  var slot = carsSlotFor(date);
+  if (slot > 1) return all["".concat(carsBaseDate(date), "-").concat(slot)] || null;
+  return null;
+}
 function setCarsResult(date, result) {
   var all = getCarsResults();
   all[date] = result;
@@ -3727,7 +3734,11 @@ function getCarsCache() {
   }
 }
 function getCarsCachePayload(date) {
-  return getCarsCache()[date] || null;
+  var cache = getCarsCache();
+  if (cache[date]) return cache[date];
+  var slot = carsSlotFor(date);
+  if (slot > 1) return cache["".concat(carsBaseDate(date), "-").concat(slot)] || null;
+  return null;
 }
 function getLocalCarsDays() {
   var cache = getCarsCache();
@@ -15034,7 +15045,7 @@ function CarsRunner(_ref82) {
     addAttempt = _useApp10.addAttempt,
     flushSync = _useApp10.flushSync;
   var questions = payload.questions || [];
-  var savedResult = persistResult && alreadyDone ? getCarsResults()[date] || null : null;
+  var savedResult = persistResult && alreadyDone ? getCarsResult(date) : null;
   var _useState199 = useState(function () {
       return savedResult && savedResult.picks || {};
     }),
@@ -15438,12 +15449,24 @@ function DailyCarsSlotCard(_ref83) {
     _useState220 = _slicedToArray(_useState219, 2),
     tick = _useState220[0],
     setTick = _useState220[1];
-  var result = getCarsResults()[date];
+  var result = getCarsResult(date);
   useEffect(function () {
     var cancelled = false;
-    if (!getCarsCachePayload(date)) {
-      setState('loading');
+    var cachedNow = getCarsCachePayload(date);
+    if (cachedNow) {
+      setPayload(cachedNow);
+      setState('ready');
+      return function () {
+        cancelled = true;
+      };
     }
+    if (localOnly && getCarsResult(date)) {
+      setState('done');
+      return function () {
+        cancelled = true;
+      };
+    }
+    setState('loading');
     setErr('');
     (localOnly ? Promise.reject({
       status: 404
@@ -15610,6 +15633,11 @@ function DailyCarsSlotCard(_ref83) {
   }, "Daily CARS \xB7 ", slotLabel), /*#__PURE__*/React.createElement("p", {
     className: "text-sm text-[var(--text-muted)] mt-1"
   }, "Generating today's passage with Gemini \u2014 about 20 seconds\u2026")));
+  if (state === 'done') return card(/*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("h2", {
+    className: "font-semibold text-[var(--text-strong)]"
+  }, "Daily CARS \xB7 ", slotLabel), /*#__PURE__*/React.createElement("p", {
+    className: "text-sm text-[var(--text-muted)] mt-1"
+  }, "Completed today", result ? " \xB7 ".concat(result.score, "/").concat(result.total) : '', ". The saved passage itself is not in this browser's cache, so it will not regenerate on reload.")));
   if (state === 'unavailable') return card(/*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("h2", {
     className: "font-semibold text-[var(--text-strong)]"
   }, "Daily CARS \xB7 ", slotLabel), /*#__PURE__*/React.createElement("p", {
@@ -15707,7 +15735,6 @@ function CarsArchive() {
     expanded = _useState230[0],
     setExpanded = _useState230[1];
   var today = todayStr();
-  var results = getCarsResults();
   useEffect(function () {
     var cancelled = false;
     api.listCars().then(function (d) {
@@ -15824,7 +15851,7 @@ function CarsArchive() {
   }, "No CARS days yet \u2014 the first appears once today's is generated."), days && days.length > 0 && /*#__PURE__*/React.createElement("ul", {
     className: "divide-y divide-[var(--border-soft)]"
   }, visibleDays.map(function (d) {
-    var r = results[d.date];
+    var r = getCarsResult(d.date);
     var baseDate = carsBaseDate(d.date);
     var slot = carsSlotFor(d.date);
     return /*#__PURE__*/React.createElement("li", {
@@ -22732,7 +22759,7 @@ function AuditModal(_ref160) {
   });
   var runVerify = /*#__PURE__*/function () {
     var _ref161 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee66() {
-      var mcOnly, results, flagged, _t60, _t61;
+      var mcOnly, _results, flagged, _t60, _t61;
       return _regenerator().w(function (_context73) {
         while (1) switch (_context73.p = _context73.n) {
           case 0:
@@ -22760,8 +22787,8 @@ function AuditModal(_ref160) {
             _context73.n = 3;
             return client.auditQuestions(mcOnly);
           case 3:
-            results = _context73.v;
-            flagged = results.filter(function (r) {
+            _results = _context73.v;
+            flagged = _results.filter(function (r) {
               return !r.correct;
             }).map(function (r) {
               return _objectSpread(_objectSpread({}, r), {}, {
@@ -24138,9 +24165,9 @@ function Shell() {
       return carsDateKey(d, i + 1);
     });
     Promise.all(keys.map(function (key) {
-      return getCarsCachePayload(key) ? Promise.resolve(!getCarsResults()[key]) : api.getCars(key).then(function (res) {
+      return getCarsCachePayload(key) || getCarsResult(key) ? Promise.resolve(!getCarsResult(key)) : api.getCars(key).then(function (res) {
         setCarsCachePayload(key, res.payload);
-        return !getCarsResults()[key];
+        return !getCarsResult(key);
       }).catch(function () {
         return false;
       });

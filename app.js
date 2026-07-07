@@ -2872,6 +2872,13 @@ function carsDisciplineFor(dateStr, slot = 1) {
   return CARS_DISCIPLINES[(dayOfYear + slot - 1) % CARS_DISCIPLINES.length];
 }
 function getCarsResults() { try { return JSON.parse(localStorage.getItem('mcat:cars')) || {}; } catch { return {}; } }
+function getCarsResult(date) {
+  const all = getCarsResults();
+  if (all[date]) return all[date];
+  const slot = carsSlotFor(date);
+  if (slot > 1) return all[`${carsBaseDate(date)}-${slot}`] || null;
+  return null;
+}
 function setCarsResult(date, result) {
   const all = getCarsResults();
   all[date] = result;
@@ -2979,7 +2986,13 @@ function validateMCQuestions(arr) {
 
 // Local cache of downloaded CARS payloads so a day opens instantly / offline.
 function getCarsCache() { try { return JSON.parse(localStorage.getItem('mcat:carsCache')) || {}; } catch { return {}; } }
-function getCarsCachePayload(date) { return getCarsCache()[date] || null; }
+function getCarsCachePayload(date) {
+  const cache = getCarsCache();
+  if (cache[date]) return cache[date];
+  const slot = carsSlotFor(date);
+  if (slot > 1) return cache[`${carsBaseDate(date)}-${slot}`] || null;
+  return null;
+}
 function getLocalCarsDays() {
   const cache = getCarsCache();
   return Object.keys(cache).map((date) => {
@@ -9880,7 +9893,7 @@ function downloadCarsPdf({ date, payload, questions, picks, score, elapsedMs }) 
 function CarsRunner({ date, payload, onClose, alreadyDone, label = 'Daily CARS', subject = 'CARS', fileIdPrefix = 'cars', chapterPrefix = 'Daily CARS', persistResult = true }) {
   const { addAttempt, flushSync } = useApp();
   const questions = payload.questions || [];
-  const savedResult = persistResult && alreadyDone ? (getCarsResults()[date] || null) : null;
+  const savedResult = persistResult && alreadyDone ? getCarsResult(date) : null;
   const [picks, setPicks] = useState(() => (savedResult && savedResult.picks) || {});
   // attempt → graded → review. Never reveals answers before 'review'.
   const [phase, setPhase] = useState(alreadyDone ? 'review' : 'attempt');
@@ -10229,11 +10242,21 @@ function DailyCarsSlotCard({ date, slot }) {
   const [err, setErr] = useState('');
   const [running, setRunning] = useState(false);
   const [tick, setTick] = useState(0);
-  const result = getCarsResults()[date];
+  const result = getCarsResult(date);
 
   useEffect(() => {
     let cancelled = false;
-    if (!getCarsCachePayload(date)) { setState('loading'); }
+    const cachedNow = getCarsCachePayload(date);
+    if (cachedNow) {
+      setPayload(cachedNow);
+      setState('ready');
+      return () => { cancelled = true; };
+    }
+    if (localOnly && getCarsResult(date)) {
+      setState('done');
+      return () => { cancelled = true; };
+    }
+    setState('loading');
     setErr('');
     (localOnly ? Promise.reject({ status: 404 }) : api.getCars(baseDate))
       .then((d) => { if (!cancelled) { setCarsCachePayload(date, d.payload); setPayload(d.payload); setState('ready'); } })
@@ -10295,6 +10318,14 @@ function DailyCarsSlotCard({ date, slot }) {
     <div>
       <h2 className="font-semibold text-[var(--text-strong)]">Daily CARS · {slotLabel}</h2>
       <p className="text-sm text-[var(--text-muted)] mt-1">Generating today's passage with Gemini — about 20 seconds…</p>
+    </div>
+  );
+  if (state === 'done') return card(
+    <div>
+      <h2 className="font-semibold text-[var(--text-strong)]">Daily CARS · {slotLabel}</h2>
+      <p className="text-sm text-[var(--text-muted)] mt-1">
+        Completed today{result ? ` · ${result.score}/${result.total}` : ''}. The saved passage itself is not in this browser's cache, so it will not regenerate on reload.
+      </p>
     </div>
   );
   if (state === 'unavailable') return card(
@@ -10372,7 +10403,6 @@ function CarsArchive() {
   const [loadingDate, setLoadingDate] = useState(null);
   const [expanded, setExpanded] = useState(false);
   const today = todayStr();
-  const results = getCarsResults();
 
   useEffect(() => {
     let cancelled = false;
@@ -10429,7 +10459,7 @@ function CarsArchive() {
       {days && days.length > 0 && (
         <ul className="divide-y divide-[var(--border-soft)]">
           {visibleDays.map((d) => {
-            const r = results[d.date];
+            const r = getCarsResult(d.date);
             const baseDate = carsBaseDate(d.date);
             const slot = carsSlotFor(d.date);
             return (
@@ -15774,11 +15804,11 @@ function Shell() {
     const d = todayStr();
     const keys = Array.from({ length: CARS_DAILY_COUNT }).map((_, i) => carsDateKey(d, i + 1));
     Promise.all(keys.map((key) =>
-      getCarsCachePayload(key)
-        ? Promise.resolve(!getCarsResults()[key])
+      getCarsCachePayload(key) || getCarsResult(key)
+        ? Promise.resolve(!getCarsResult(key))
         :
       api.getCars(key)
-        .then((res) => { setCarsCachePayload(key, res.payload); return !getCarsResults()[key]; })
+        .then((res) => { setCarsCachePayload(key, res.payload); return !getCarsResult(key); })
         .catch(() => false)
     )).then((ready) => setCarsReady(ready.some(Boolean)));
   }, [api]);
