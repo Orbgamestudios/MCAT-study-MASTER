@@ -14395,7 +14395,8 @@ var PRACTICE_PASSAGE_SECTIONS = [{
 function PracticePassagesView() {
   var _useApp0 = useApp(),
     client = _useApp0.client,
-    apiKey = _useApp0.apiKey;
+    apiKey = _useApp0.apiKey,
+    attempts = _useApp0.attempts;
   var _useState169 = useState(function () {
       return storage.get('mcat:practicePassageSection', 'bb');
     }),
@@ -14477,7 +14478,9 @@ function PracticePassagesView() {
   }();
   return /*#__PURE__*/React.createElement("div", {
     className: "space-y-4 sm:space-y-5"
-  }, /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement(PassageMcatPredictionCard, {
+    attempts: attempts
+  }), /*#__PURE__*/React.createElement("div", {
     className: "bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-5 space-y-4"
   }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("h2", {
     className: "font-semibold text-[var(--text-strong)]"
@@ -20032,14 +20035,158 @@ function predictMcatScores(attempts) {
     total
   };
 }
-function McatPredictionCard() {
-  var _useApp23 = useApp(),
-    attempts = _useApp23.attempts;
+var PASSAGE_MCAT_SECTIONS = [{
+  key: 'cp',
+  label: 'C/P'
+}, {
+  key: 'cars',
+  label: 'CARS'
+}, {
+  key: 'bb',
+  label: 'B/B'
+}, {
+  key: 'ps',
+  label: 'P/S'
+}];
+function passageSectionForAttempt(a) {
+  var fid = String((a === null || a === void 0 ? void 0 : a.file_id) || '');
+  if (fid.startsWith('passage_cp_')) return 'cp';
+  if (fid.startsWith('passage_bb_')) return 'bb';
+  if (fid.startsWith('passage_ps_')) return 'ps';
+  if (fid.startsWith('passage_cars_') || fid.startsWith('cars_')) return 'cars';
+  return null;
+}
+function predictPassageMcatScores(attempts) {
+  var sorted = attempts.slice().sort(function (a, b) {
+    return (b.ts || 0) - (a.ts || 0);
+  });
+  var bySection = new Map(PASSAGE_MCAT_SECTIONS.map(function (s) {
+    return [s.key, []];
+  }));
+  var _iterator99 = _createForOfIteratorHelper(sorted),
+    _step99;
+  try {
+    for (_iterator99.s(); !(_step99 = _iterator99.n()).done;) {
+      var a = _step99.value;
+      var section = passageSectionForAttempt(a);
+      if (section) bySection.get(section).push(a);
+    }
+  } catch (err) {
+    _iterator99.e(err);
+  } finally {
+    _iterator99.f();
+  }
+  var sections = PASSAGE_MCAT_SECTIONS.map(function (sec) {
+    var post = subjectPosterior(bySection.get(sec.key) || []);
+    if (!post) return _objectSpread(_objectSpread({}, sec), {}, {
+      completed: false
+    });
+    var score = SECTION_MIN + SECTION_RANGE * post.mean;
+    return _objectSpread(_objectSpread({}, sec), {}, {
+      completed: true,
+      n: post.n,
+      accuracy: post.accuracy,
+      score: Math.max(SECTION_MIN, Math.min(SECTION_MAX, score)),
+      stdev: SECTION_RANGE * Math.sqrt(post.variance)
+    });
+  });
+  var done = sections.filter(function (s) {
+    return s.completed;
+  });
+  if (done.length > 0 && done.length < sections.length) {
+    var meanScore = done.reduce(function (s, x) {
+      return s + x.score;
+    }, 0) / done.length;
+    var meanVar = done.reduce(function (s, x) {
+      return s + Math.pow(x.stdev, 2);
+    }, 0) / done.length;
+    var imputedStdev = Math.max(Math.sqrt(meanVar) * 2, 2.5);
+    var _iterator100 = _createForOfIteratorHelper(sections),
+      _step100;
+    try {
+      for (_iterator100.s(); !(_step100 = _iterator100.n()).done;) {
+        var s = _step100.value;
+        if (s.completed) continue;
+        s.imputed = true;
+        s.score = meanScore;
+        s.stdev = imputedStdev;
+      }
+    } catch (err) {
+      _iterator100.e(err);
+    } finally {
+      _iterator100.f();
+    }
+  }
+  var contributing = sections.filter(function (s) {
+    return s.completed || s.imputed;
+  });
+  var total = done.length ? {
+    score: contributing.reduce(function (acc, x) {
+      return acc + x.score;
+    }, 0),
+    stdev: Math.sqrt(contributing.reduce(function (acc, x) {
+      return acc + Math.pow(x.stdev, 2);
+    }, 0)),
+    sectionsCompleted: done.length,
+    questionCount: done.reduce(function (acc, x) {
+      return acc + x.n;
+    }, 0),
+    allFour: done.length === PASSAGE_MCAT_SECTIONS.length
+  } : null;
+  return {
+    sections,
+    total
+  };
+}
+function PassageMcatPredictionCard(_ref128) {
+  var attempts = _ref128.attempts;
   var _useMemo2 = useMemo(function () {
-      return predictMcatScores(attempts);
+      return predictPassageMcatScores(attempts || []);
     }, [attempts]),
     sections = _useMemo2.sections,
     total = _useMemo2.total;
+  var fmt = function fmt(n) {
+    return n.toFixed(1).replace(/\.0$/, '');
+  };
+  return /*#__PURE__*/React.createElement("div", {
+    className: "bg-[var(--bg-card)] border border-[var(--accent-border)] rounded-2xl p-4 sm:p-5"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "flex items-start justify-between gap-3"
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "text-xs uppercase tracking-wide text-[var(--text-muted)]"
+  }, "Passage-only predicted MCAT"), /*#__PURE__*/React.createElement("div", {
+    className: "text-4xl font-bold text-[var(--text-strong)] mt-1"
+  }, total ? Math.round(total.score) : '—', total && /*#__PURE__*/React.createElement("span", {
+    className: "text-base font-medium text-[var(--text-muted)] ml-2"
+  }, "\xB1 ", fmt(total.stdev)))), total && /*#__PURE__*/React.createElement("div", {
+    className: "text-right text-xs text-[var(--text-faint)]"
+  }, total.questionCount, " question", total.questionCount === 1 ? '' : 's')), /*#__PURE__*/React.createElement("p", {
+    className: "text-xs text-[var(--text-muted)] mt-2"
+  }, "Based only on generated Passage tab sets and Daily CARS attempts. Missing sections are estimated from the sections you have completed."), /*#__PURE__*/React.createElement("div", {
+    className: "grid grid-cols-2 sm:grid-cols-4 gap-2 mt-4"
+  }, sections.map(function (s) {
+    return /*#__PURE__*/React.createElement("div", {
+      key: s.key,
+      className: "rounded-lg border border-[var(--border-soft)] bg-[var(--bg-elev-soft)] px-3 py-2"
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "flex items-baseline justify-between gap-2"
+    }, /*#__PURE__*/React.createElement("span", {
+      className: "text-sm font-semibold text-[var(--text-strong)]"
+    }, s.label), /*#__PURE__*/React.createElement("span", {
+      className: "text-sm font-mono text-[var(--text)]"
+    }, s.score ? Math.round(s.score) : '—')), /*#__PURE__*/React.createElement("div", {
+      className: "text-[11px] text-[var(--text-faint)] mt-0.5"
+    }, s.completed ? "".concat(s.n, " q \xB7 ").concat(Math.round(s.accuracy * 100), "%") : s.imputed ? 'estimated' : 'no data'));
+  })));
+}
+function McatPredictionCard() {
+  var _useApp23 = useApp(),
+    attempts = _useApp23.attempts;
+  var _useMemo3 = useMemo(function () {
+      return predictMcatScores(attempts);
+    }, [attempts]),
+    sections = _useMemo3.sections,
+    total = _useMemo3.total;
   var _useState347 = useState(false),
     _useState348 = _slicedToArray(_useState347, 2),
     expanded = _useState348[0],
@@ -20163,12 +20310,12 @@ function StatsView() {
     var bySubject = {};
     var missByQid = {};
     var seenByQid = {};
-    var _iterator99 = _createForOfIteratorHelper(attempts),
-      _step99;
+    var _iterator101 = _createForOfIteratorHelper(attempts),
+      _step101;
     try {
-      for (_iterator99.s(); !(_step99 = _iterator99.n()).done;) {
+      for (_iterator101.s(); !(_step101 = _iterator101.n()).done;) {
         var _a$mode, _a$subject;
-        var a = _step99.value;
+        var a = _step101.value;
         overall.total++;
         if (a.correct) overall.correct++;
         var m = byMode[_a$mode = a.mode] || (byMode[_a$mode] = {
@@ -20198,62 +20345,62 @@ function StatsView() {
 
       // Build a question lookup so missed questions can show their text.
     } catch (err) {
-      _iterator99.e(err);
+      _iterator101.e(err);
     } finally {
-      _iterator99.f();
+      _iterator101.f();
     }
     var qLookup = {};
     for (var _i26 = 0, _Object$keys3 = Object.keys(questions); _i26 < _Object$keys3.length; _i26++) {
       var fid = _Object$keys3[_i26];
       var qb = questions[fid] || {};
-      var _iterator100 = _createForOfIteratorHelper(qb.mc || []),
-        _step100;
+      var _iterator102 = _createForOfIteratorHelper(qb.mc || []),
+        _step102;
       try {
-        for (_iterator100.s(); !(_step100 = _iterator100.n()).done;) {
-          var q = _step100.value;
+        for (_iterator102.s(); !(_step102 = _iterator102.n()).done;) {
+          var q = _step102.value;
           qLookup[q.id] = _objectSpread(_objectSpread({}, q), {}, {
             mode: 'mc',
             file_id: fid
           });
         }
       } catch (err) {
-        _iterator100.e(err);
+        _iterator102.e(err);
       } finally {
-        _iterator100.f();
+        _iterator102.f();
       }
-      var _iterator101 = _createForOfIteratorHelper(qb.short || []),
-        _step101;
+      var _iterator103 = _createForOfIteratorHelper(qb.short || []),
+        _step103;
       try {
-        for (_iterator101.s(); !(_step101 = _iterator101.n()).done;) {
-          var _q3 = _step101.value;
+        for (_iterator103.s(); !(_step103 = _iterator103.n()).done;) {
+          var _q3 = _step103.value;
           qLookup[_q3.id] = _objectSpread(_objectSpread({}, _q3), {}, {
             mode: 'short',
             file_id: fid
           });
         }
       } catch (err) {
-        _iterator101.e(err);
+        _iterator103.e(err);
       } finally {
-        _iterator101.f();
+        _iterator103.f();
       }
     }
     var fileLookup = {};
-    var _iterator102 = _createForOfIteratorHelper(files),
-      _step102;
+    var _iterator104 = _createForOfIteratorHelper(files),
+      _step104;
     try {
-      for (_iterator102.s(); !(_step102 = _iterator102.n()).done;) {
-        var f = _step102.value;
+      for (_iterator104.s(); !(_step104 = _iterator104.n()).done;) {
+        var f = _step104.value;
         fileLookup[f.file_id] = f;
       }
     } catch (err) {
-      _iterator102.e(err);
+      _iterator104.e(err);
     } finally {
-      _iterator102.f();
+      _iterator104.f();
     }
-    var topMisses = Object.entries(missByQid).map(function (_ref128) {
-      var _ref129 = _slicedToArray(_ref128, 2),
-        qid = _ref129[0],
-        misses = _ref129[1];
+    var topMisses = Object.entries(missByQid).map(function (_ref129) {
+      var _ref130 = _slicedToArray(_ref129, 2),
+        qid = _ref130[0],
+        misses = _ref130[1];
       var q = qLookup[qid];
       var text = q ? q.mode === 'mc' ? q.question : q.prompt : qid;
       var chapter = q && fileLookup[q.file_id] ? fileLookup[q.file_id].chapter : '—';
@@ -20295,10 +20442,10 @@ function StatsView() {
     className: "font-semibold mb-3 text-[var(--text-strong)]"
   }, "By subject"), /*#__PURE__*/React.createElement("div", {
     className: "space-y-3"
-  }, Object.entries(stats.bySubject).map(function (_ref130) {
-    var _ref131 = _slicedToArray(_ref130, 2),
-      subject = _ref131[0],
-      s = _ref131[1];
+  }, Object.entries(stats.bySubject).map(function (_ref131) {
+    var _ref132 = _slicedToArray(_ref131, 2),
+      subject = _ref132[0],
+      s = _ref132[1];
     return /*#__PURE__*/React.createElement(StatBar, {
       key: subject,
       label: subject,
@@ -20311,16 +20458,16 @@ function StatsView() {
     className: "font-semibold mb-3 text-[var(--text-strong)]"
   }, "By chapter"), /*#__PURE__*/React.createElement("div", {
     className: "space-y-3"
-  }, Object.entries(stats.byChapter).sort(function (_ref132, _ref133) {
-    var _ref134 = _slicedToArray(_ref132, 2),
-      a = _ref134[1];
+  }, Object.entries(stats.byChapter).sort(function (_ref133, _ref134) {
     var _ref135 = _slicedToArray(_ref133, 2),
-      b = _ref135[1];
+      a = _ref135[1];
+    var _ref136 = _slicedToArray(_ref134, 2),
+      b = _ref136[1];
     return a.correct / a.total - b.correct / b.total;
-  }).map(function (_ref136) {
-    var _ref137 = _slicedToArray(_ref136, 2),
-      fid = _ref137[0],
-      s = _ref137[1];
+  }).map(function (_ref137) {
+    var _ref138 = _slicedToArray(_ref137, 2),
+      fid = _ref138[0],
+      s = _ref138[1];
     return /*#__PURE__*/React.createElement(StatBar, {
       key: fid,
       label: "".concat(s.subject, " \u2014 ").concat(s.chapter),
@@ -20360,8 +20507,8 @@ function StatsView() {
 }
 
 // ---------- settings ----------
-function SettingsPanel(_ref138) {
-  var onClose = _ref138.onClose;
+function SettingsPanel(_ref139) {
+  var onClose = _ref139.onClose;
   var _useApp25 = useApp(),
     palette = _useApp25.palette,
     mode = _useApp25.mode,
@@ -20412,7 +20559,7 @@ function SettingsPanel(_ref138) {
     keyBusy = _useState356[0],
     setKeyBusy = _useState356[1];
   var saveKey = /*#__PURE__*/function () {
-    var _ref139 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee58() {
+    var _ref140 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee58() {
       var trimmed, _t48;
       return _regenerator().w(function (_context63) {
         while (1) switch (_context63.p = _context63.n) {
@@ -20457,7 +20604,7 @@ function SettingsPanel(_ref138) {
       }, _callee58, null, [[3, 5, 6, 7]]);
     }));
     return function saveKey() {
-      return _ref139.apply(this, arguments);
+      return _ref140.apply(this, arguments);
     };
   }();
   var paletteOpts = [['cold', '❄️', 'Cold'], ['warm', '🍂', 'Warm'], ['duo', '🗿', 'Rio'], ['tropical', '🌴', 'Tropical'], ['madison', '🏛️', 'Madison'], ['gambit', '🃏', 'Gambit']];
@@ -20475,11 +20622,11 @@ function SettingsPanel(_ref138) {
     className: "text-xs uppercase tracking-wide text-[var(--text-muted)] mb-2"
   }, "Colour"), /*#__PURE__*/React.createElement("div", {
     className: "grid grid-cols-4 gap-2"
-  }, paletteOpts.map(function (_ref140) {
-    var _ref141 = _slicedToArray(_ref140, 3),
-      k = _ref141[0],
-      emoji = _ref141[1],
-      label = _ref141[2];
+  }, paletteOpts.map(function (_ref141) {
+    var _ref142 = _slicedToArray(_ref141, 3),
+      k = _ref142[0],
+      emoji = _ref142[1],
+      label = _ref142[2];
     return /*#__PURE__*/React.createElement("button", {
       key: k,
       onClick: function onClick() {
@@ -20495,11 +20642,11 @@ function SettingsPanel(_ref138) {
     className: "text-xs uppercase tracking-wide text-[var(--text-muted)] mt-4 mb-2"
   }, "Mode"), /*#__PURE__*/React.createElement("div", {
     className: "grid grid-cols-3 gap-2"
-  }, modeOpts.map(function (_ref142) {
-    var _ref143 = _slicedToArray(_ref142, 3),
-      k = _ref143[0],
-      emoji = _ref143[1],
-      label = _ref143[2];
+  }, modeOpts.map(function (_ref143) {
+    var _ref144 = _slicedToArray(_ref143, 3),
+      k = _ref144[0],
+      emoji = _ref144[1],
+      label = _ref144[2];
     return /*#__PURE__*/React.createElement("button", {
       key: k,
       onClick: function onClick() {
@@ -20896,11 +21043,11 @@ function EraseQuizStatsSection() {
   // before confirming a delete.
   var days = useMemo(function () {
     var dayMap = new Map();
-    var _iterator103 = _createForOfIteratorHelper(attempts),
-      _step103;
+    var _iterator105 = _createForOfIteratorHelper(attempts),
+      _step105;
     try {
-      for (_iterator103.s(); !(_step103 = _iterator103.n()).done;) {
-        var a = _step103.value;
+      for (_iterator105.s(); !(_step105 = _iterator105.n()).done;) {
+        var a = _step105.value;
         var ts = a.ts || 0;
         var d = new Date(ts);
         // Local-day key: YYYY-MM-DD in the user's tz.
@@ -20941,9 +21088,9 @@ function EraseQuizStatsSection() {
         if (a.correct) q.correct++;
       }
     } catch (err) {
-      _iterator103.e(err);
+      _iterator105.e(err);
     } finally {
-      _iterator103.f();
+      _iterator105.f();
     }
     return Array.from(dayMap.values()).map(function (b) {
       return _objectSpread(_objectSpread({}, b), {}, {
@@ -20971,7 +21118,7 @@ function EraseQuizStatsSection() {
     }) + " \xB7 ".concat(key);
   };
   var eraseDay = /*#__PURE__*/function () {
-    var _ref144 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee59(b) {
+    var _ref145 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee59(b) {
       var label, res, _res$serverDeleted;
       return _regenerator().w(function (_context64) {
         while (1) switch (_context64.n) {
@@ -21010,7 +21157,7 @@ function EraseQuizStatsSection() {
       }, _callee59);
     }));
     return function eraseDay(_x60) {
-      return _ref144.apply(this, arguments);
+      return _ref145.apply(this, arguments);
     };
   }();
   return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
@@ -21101,8 +21248,8 @@ function PublishAllPanel() {
     return f.chapter_id;
   });
   var publishAll = /*#__PURE__*/function () {
-    var _ref145 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee60() {
-      var okCount, errCount, lastErr, _iterator104, _step104, _loop7, _t50;
+    var _ref146 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee60() {
+      var okCount, errCount, lastErr, _iterator106, _step106, _loop7, _t50;
       return _regenerator().w(function (_context66) {
         while (1) switch (_context66.p = _context66.n) {
           case 0:
@@ -21122,14 +21269,14 @@ function PublishAllPanel() {
             lastErr = {
               msg: ''
             };
-            _iterator104 = _createForOfIteratorHelper(publishable);
+            _iterator106 = _createForOfIteratorHelper(publishable);
             _context66.p = 2;
             _loop7 = /*#__PURE__*/_regenerator().m(function _loop7() {
               var f, _qb$mc, _qb$twoPart, _qb$short, chapterId, created, ext, qb, pushes, _i28, _pushes2, _pushes2$_i, stage, payload, _t49;
               return _regenerator().w(function (_context65) {
                 while (1) switch (_context65.p = _context65.n) {
                   case 0:
-                    f = _step104.value;
+                    f = _step106.value;
                     _context65.p = 1;
                     chapterId = f.chapter_id;
                     if (chapterId) {
@@ -21189,9 +21336,9 @@ function PublishAllPanel() {
                 }
               }, _loop7, null, [[1, 7]]);
             });
-            _iterator104.s();
+            _iterator106.s();
           case 3:
-            if ((_step104 = _iterator104.n()).done) {
+            if ((_step106 = _iterator106.n()).done) {
               _context66.n = 5;
               break;
             }
@@ -21205,10 +21352,10 @@ function PublishAllPanel() {
           case 6:
             _context66.p = 6;
             _t50 = _context66.v;
-            _iterator104.e(_t50);
+            _iterator106.e(_t50);
           case 7:
             _context66.p = 7;
-            _iterator104.f();
+            _iterator106.f();
             return _context66.f(7);
           case 8:
             setBusy(false);
@@ -21229,7 +21376,7 @@ function PublishAllPanel() {
       }, _callee60, null, [[2, 6, 7, 8]]);
     }));
     return function publishAll() {
-      return _ref145.apply(this, arguments);
+      return _ref146.apply(this, arguments);
     };
   }();
   return /*#__PURE__*/React.createElement("div", {
@@ -21337,8 +21484,8 @@ function FlagFixesPanel() {
     return (err === null || err === void 0 ? void 0 : err.status) === 429 || /quota|rate.?limit|exceeded/i.test((err === null || err === void 0 ? void 0 : err.message) || '');
   };
   var runPipeline = /*#__PURE__*/function () {
-    var _ref146 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee61() {
-      var current, processedCount, _iterator105, _step105, _loop8, _ret3, _t54;
+    var _ref147 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee61() {
+      var current, processedCount, _iterator107, _step107, _loop8, _ret3, _t54;
       return _regenerator().w(function (_context68) {
         while (1) switch (_context68.p = _context68.n) {
           case 0:
@@ -21366,14 +21513,14 @@ function FlagFixesPanel() {
             setProcessedLog([]);
             current = _toConsumableArray(queue);
             processedCount = 0;
-            _iterator105 = _createForOfIteratorHelper(pending);
+            _iterator107 = _createForOfIteratorHelper(pending);
             _context68.p = 3;
             _loop8 = /*#__PURE__*/_regenerator().m(function _loop8() {
               var flag, fix, fileId, qbank, cleanParts, nextTp, nextMc, updated, _fix$choices3, _updated, _t51, _t52, _t53;
               return _regenerator().w(function (_context67) {
                 while (1) switch (_context67.p = _context67.n) {
                   case 0:
-                    flag = _step105.value;
+                    flag = _step107.value;
                     _context67.p = 1;
                     setStatus({
                       kind: 'info',
@@ -21538,9 +21685,9 @@ function FlagFixesPanel() {
                 }
               }, _loop8, null, [[8, 10], [3, 5], [1, 12]]);
             });
-            _iterator105.s();
+            _iterator107.s();
           case 4:
-            if ((_step105 = _iterator105.n()).done) {
+            if ((_step107 = _iterator107.n()).done) {
               _context68.n = 7;
               break;
             }
@@ -21561,10 +21708,10 @@ function FlagFixesPanel() {
           case 8:
             _context68.p = 8;
             _t54 = _context68.v;
-            _iterator105.e(_t54);
+            _iterator107.e(_t54);
           case 9:
             _context68.p = 9;
-            _iterator105.f();
+            _iterator107.f();
             return _context68.f(9);
           case 10:
             saveQueue(current);
@@ -21579,7 +21726,7 @@ function FlagFixesPanel() {
       }, _callee61, null, [[3, 8, 9, 10]]);
     }));
     return function runPipeline() {
-      return _ref146.apply(this, arguments);
+      return _ref147.apply(this, arguments);
     };
   }();
   if (!queue.length) return null;
@@ -21624,11 +21771,11 @@ function FlagFixesPanel() {
     });
   })));
 }
-function FlagRow(_ref147) {
+function FlagRow(_ref148) {
   var _f$question_snapshot, _f$question_snapshot2, _f$question_snapshot3, _f$question_snapshot4;
-  var f = _ref147.flag,
-    onRemove = _ref147.onRemove,
-    onRequeue = _ref147.onRequeue;
+  var f = _ref148.flag,
+    onRemove = _ref148.onRemove,
+    onRequeue = _ref148.onRequeue;
   var _useState377 = useState(false),
     _useState378 = _slicedToArray(_useState377, 2),
     amending = _useState378[0],
@@ -21758,7 +21905,7 @@ function CloudBankPanel() {
     return extractions[f.file_id] && ((_questions$f$file_id9 = questions[f.file_id]) === null || _questions$f$file_id9 === void 0 ? void 0 : _questions$f$file_id9.mc);
   });
   var publish = /*#__PURE__*/function () {
-    var _ref148 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee62() {
+    var _ref149 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee62() {
       var bank, res, _t55;
       return _regenerator().w(function (_context69) {
         while (1) switch (_context69.p = _context69.n) {
@@ -21809,11 +21956,11 @@ function CloudBankPanel() {
       }, _callee62, null, [[1, 3, 4, 5]]);
     }));
     return function publish() {
-      return _ref148.apply(this, arguments);
+      return _ref149.apply(this, arguments);
     };
   }();
   var pull = /*#__PURE__*/function () {
-    var _ref149 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee63() {
+    var _ref150 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee63() {
       var bank, _i29, _Object$keys4, fid, _i30, _Object$keys5, _fid, n, _t56;
       return _regenerator().w(function (_context70) {
         while (1) switch (_context70.p = _context70.n) {
@@ -21871,7 +22018,7 @@ function CloudBankPanel() {
       }, _callee63, null, [[2, 4, 5, 6]]);
     }));
     return function pull() {
-      return _ref149.apply(this, arguments);
+      return _ref150.apply(this, arguments);
     };
   }();
   var remoteAge = remote ? function () {
@@ -21913,10 +22060,10 @@ function CloudBankPanel() {
     className: "text-xs text-[var(--text-faint)]"
   }, "No locally processed chapters \u2014 process some in the Library, or pull from cloud if you have one."));
 }
-function exportBank(_ref150) {
-  var files = _ref150.files,
-    extractions = _ref150.extractions,
-    questions = _ref150.questions;
+function exportBank(_ref151) {
+  var files = _ref151.files,
+    extractions = _ref151.extractions,
+    questions = _ref151.questions;
   var data = {
     version: 1,
     exported_at: new Date().toISOString(),
@@ -21939,8 +22086,8 @@ function exportBank(_ref150) {
 }
 
 // ---------- account ----------
-function AccountPanel(_ref151) {
-  var onClose = _ref151.onClose;
+function AccountPanel(_ref152) {
+  var onClose = _ref152.onClose;
   var _useApp30 = useApp(),
     session = _useApp30.session,
     setSession = _useApp30.setSession,
@@ -22000,7 +22147,7 @@ function AccountPanel(_ref151) {
     }, "Log out")));
   }
   var submit = /*#__PURE__*/function () {
-    var _ref153 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee65() {
+    var _ref154 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee65() {
       var res, _t58, _t59;
       return _regenerator().w(function (_context72) {
         while (1) switch (_context72.p = _context72.n) {
@@ -22067,17 +22214,17 @@ function AccountPanel(_ref151) {
       }, _callee65, null, [[3, 8, 9, 10]]);
     }));
     return function submit() {
-      return _ref153.apply(this, arguments);
+      return _ref154.apply(this, arguments);
     };
   }();
   return /*#__PURE__*/React.createElement("div", {
     className: "bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-5 max-w-sm mx-auto"
   }, /*#__PURE__*/React.createElement("div", {
     className: "flex gap-1 mb-4"
-  }, [['login', 'Log in'], ['signup', 'Sign up']].map(function (_ref154) {
-    var _ref155 = _slicedToArray(_ref154, 2),
-      k = _ref155[0],
-      label = _ref155[1];
+  }, [['login', 'Log in'], ['signup', 'Sign up']].map(function (_ref155) {
+    var _ref156 = _slicedToArray(_ref155, 2),
+      k = _ref156[0],
+      label = _ref156[1];
     return /*#__PURE__*/React.createElement("button", {
       key: k,
       onClick: function onClick() {
@@ -22129,8 +22276,8 @@ function AccountPanel(_ref151) {
 function pct(c, t) {
   return t ? Math.round(c / t * 100) : 0;
 }
-function Leaderboard(_ref156) {
-  var onPickUser = _ref156.onPickUser;
+function Leaderboard(_ref157) {
+  var onPickUser = _ref157.onPickUser;
   var _useApp31 = useApp(),
     api = _useApp31.api;
   var _useState397 = useState(null),
@@ -22187,9 +22334,9 @@ function Leaderboard(_ref156) {
     }, pct(u.correct, u.total), "%")));
   })));
 }
-function ServerStatsPayload(_ref157) {
+function ServerStatsPayload(_ref158) {
   var _data$bySubject, _data$byChapter, _data$byMode;
-  var data = _ref157.data;
+  var data = _ref158.data;
   if (!data) return null;
   var overall = data.overall || {
     total: 0,
@@ -22212,17 +22359,17 @@ function ServerStatsPayload(_ref157) {
   var days = [];
   for (var i = 6; i >= 0; i--) days.push(today - i);
   var dailyByBucket = {};
-  var _iterator106 = _createForOfIteratorHelper(data.daily || []),
-    _step106;
+  var _iterator108 = _createForOfIteratorHelper(data.daily || []),
+    _step108;
   try {
-    for (_iterator106.s(); !(_step106 = _iterator106.n()).done;) {
-      var d = _step106.value;
+    for (_iterator108.s(); !(_step108 = _iterator108.n()).done;) {
+      var d = _step108.value;
       dailyByBucket[d.day_bucket] = d;
     }
   } catch (err) {
-    _iterator106.e(err);
+    _iterator108.e(err);
   } finally {
-    _iterator106.f();
+    _iterator108.f();
   }
   var dailySeries = days.map(function (b) {
     var r = dailyByBucket[b];
@@ -22344,9 +22491,9 @@ function ServerStatsPayload(_ref157) {
 }
 
 // ---------- audit modal: Gemini correctness check (no deletion) ----------
-function AuditModal(_ref158) {
-  var chapter = _ref158.chapter,
-    onClose = _ref158.onClose;
+function AuditModal(_ref159) {
+  var chapter = _ref159.chapter,
+    onClose = _ref159.onClose;
   var _useApp32 = useApp(),
     api = _useApp32.api,
     client = _useApp32.client,
@@ -22395,7 +22542,7 @@ function AuditModal(_ref158) {
     return f.chapter_id === chapter.id;
   });
   var runVerify = /*#__PURE__*/function () {
-    var _ref159 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee66() {
+    var _ref160 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee66() {
       var mcOnly, results, flagged, _t60, _t61;
       return _regenerator().w(function (_context73) {
         while (1) switch (_context73.p = _context73.n) {
@@ -22470,11 +22617,11 @@ function AuditModal(_ref158) {
       }, _callee66, null, [[4, 6], [2, 8]]);
     }));
     return function runVerify() {
-      return _ref159.apply(this, arguments);
+      return _ref160.apply(this, arguments);
     };
   }();
   var acceptFix = /*#__PURE__*/function () {
-    var _ref160 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee67(flag) {
+    var _ref161 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee67(flag) {
       var updated, qbank, localUpdated, _t62;
       return _regenerator().w(function (_context74) {
         while (1) switch (_context74.p = _context74.n) {
@@ -22525,7 +22672,7 @@ function AuditModal(_ref158) {
       }, _callee67, null, [[1, 3]]);
     }));
     return function acceptFix(_x61) {
-      return _ref160.apply(this, arguments);
+      return _ref161.apply(this, arguments);
     };
   }();
   return /*#__PURE__*/React.createElement("div", {
@@ -22606,9 +22753,9 @@ function AuditModal(_ref158) {
 }
 
 // ---------- collaborative bank (chapters) ----------
-function StageDot(_ref161) {
-  var stage = _ref161.stage,
-    label = _ref161.label;
+function StageDot(_ref162) {
+  var stage = _ref162.stage,
+    label = _ref162.label;
   var done = stage === null || stage === void 0 ? void 0 : stage.done;
   var partial = (stage === null || stage === void 0 ? void 0 : stage.terms_missing) > 0;
   var cls = done && !partial ? 'bg-[var(--success-bg-strong)] text-[var(--success-text)] border-[var(--success-border)]' : done && partial ? 'bg-[var(--warning-bg)] text-[var(--warning-text)] border-[var(--warning-text-strong)]' : 'bg-[var(--bg-elev)] text-[var(--text-faint)] border-[var(--border)]';
@@ -22621,16 +22768,16 @@ function StageDot(_ref161) {
     className: "text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded border ".concat(cls)
   }, label, (stage === null || stage === void 0 ? void 0 : stage.count) != null ? " ".concat(stage.count) : '');
 }
-function ChapterRow(_ref162) {
+function ChapterRow(_ref163) {
   var _s$extraction, _chapter$stages, _chapter$stages2, _chapter$stages3, _chapter$stages4, _chapter$stages5;
-  var chapter = _ref162.chapter,
-    onDownload = _ref162.onDownload,
-    onContribute = _ref162.onContribute,
-    onAudit = _ref162.onAudit,
-    busy = _ref162.busy,
-    downloaded = _ref162.downloaded,
-    canContribute = _ref162.canContribute,
-    contributorMode = _ref162.contributorMode;
+  var chapter = _ref163.chapter,
+    onDownload = _ref163.onDownload,
+    onContribute = _ref163.onContribute,
+    onAudit = _ref163.onAudit,
+    busy = _ref163.busy,
+    downloaded = _ref163.downloaded,
+    canContribute = _ref163.canContribute,
+    contributorMode = _ref163.contributorMode;
   var ago = function () {
     var ms = Date.now() - chapter.updated_at;
     var m = Math.round(ms / 60000);
@@ -22810,7 +22957,7 @@ function BankTab() {
     }
   }, [data, seenAt]);
   var downloadOne = /*#__PURE__*/function () {
-    var _ref163 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee68(chapter) {
+    var _ref164 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee68(chapter) {
       var full, localFileId, fileRecord;
       return _regenerator().w(function (_context75) {
         while (1) switch (_context75.n) {
@@ -22849,11 +22996,11 @@ function BankTab() {
       }, _callee68);
     }));
     return function downloadOne(_x62) {
-      return _ref163.apply(this, arguments);
+      return _ref164.apply(this, arguments);
     };
   }();
   var downloadChapter = /*#__PURE__*/function () {
-    var _ref164 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee69(chapter) {
+    var _ref165 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee69(chapter) {
       var full, _t63;
       return _regenerator().w(function (_context76) {
         while (1) switch (_context76.p = _context76.n) {
@@ -22896,7 +23043,7 @@ function BankTab() {
       }, _callee69, null, [[2, 4, 5, 6]]);
     }));
     return function downloadChapter(_x63) {
-      return _ref164.apply(this, arguments);
+      return _ref165.apply(this, arguments);
     };
   }();
 
@@ -22904,8 +23051,8 @@ function BankTab() {
   // to fill in missing stages. PDF is not required for mc/two_part/short, so anyone
   // signed in with a key can advance a chapter.
   var contributeChapter = /*#__PURE__*/function () {
-    var _ref165 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee70(chapter, stages) {
-      var full, _iterator107, _step107, _loop9, localFile, refreshed, localFileId, fileRecord, _t64, _t65, _t66;
+    var _ref166 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee70(chapter, stages) {
+      var full, _iterator109, _step109, _loop9, localFile, refreshed, localFileId, fileRecord, _t64, _t65, _t66;
       return _regenerator().w(function (_context78) {
         while (1) switch (_context78.p = _context78.n) {
           case 0:
@@ -22942,14 +23089,14 @@ function BankTab() {
             }
             throw new Error('Chapter has no extraction yet — only the uploader can do that step.');
           case 5:
-            _iterator107 = _createForOfIteratorHelper(stages);
+            _iterator109 = _createForOfIteratorHelper(stages);
             _context78.p = 6;
             _loop9 = /*#__PURE__*/_regenerator().m(function _loop9() {
               var stage, newMc, hasBaseline, baseline, termCovered, missingTerms, termExtraction, termQs, twoPart, short;
               return _regenerator().w(function (_context77) {
                 while (1) switch (_context77.n) {
                   case 0:
-                    stage = _step107.value;
+                    stage = _step109.value;
                     if (!(stage === 'mc')) {
                       _context77.n = 6;
                       break;
@@ -23053,9 +23200,9 @@ function BankTab() {
                 }
               }, _loop9);
             });
-            _iterator107.s();
+            _iterator109.s();
           case 7:
-            if ((_step107 = _iterator107.n()).done) {
+            if ((_step109 = _iterator109.n()).done) {
               _context78.n = 9;
               break;
             }
@@ -23069,10 +23216,10 @@ function BankTab() {
           case 10:
             _context78.p = 10;
             _t64 = _context78.v;
-            _iterator107.e(_t64);
+            _iterator109.e(_t64);
           case 11:
             _context78.p = 11;
-            _iterator107.f();
+            _iterator109.f();
             return _context78.f(11);
           case 12:
             // If the user already has this chapter in their local library, refresh it
@@ -23150,7 +23297,7 @@ function BankTab() {
       }, _callee70, null, [[13, 15], [6, 10, 11, 12], [3, 17, 18, 19]]);
     }));
     return function contributeChapter(_x64, _x65) {
-      return _ref165.apply(this, arguments);
+      return _ref166.apply(this, arguments);
     };
   }();
   if (err) {
@@ -23186,19 +23333,19 @@ function BankTab() {
 
   // Group by subject, then sort each group by chapter number.
   var bySubject = {};
-  var _iterator108 = _createForOfIteratorHelper(data.chapters),
-    _step108;
+  var _iterator110 = _createForOfIteratorHelper(data.chapters),
+    _step110;
   try {
-    for (_iterator108.s(); !(_step108 = _iterator108.n()).done;) {
-      var ch = _step108.value;
+    for (_iterator110.s(); !(_step110 = _iterator110.n()).done;) {
+      var ch = _step110.value;
       var subj = ch.subject || 'Other';
       if (!bySubject[subj]) bySubject[subj] = [];
       bySubject[subj].push(ch);
     }
   } catch (err) {
-    _iterator108.e(err);
+    _iterator110.e(err);
   } finally {
-    _iterator108.f();
+    _iterator110.f();
   }
   var localChapterIds = new Set(files.map(function (f) {
     return f.chapter_id;
@@ -23214,11 +23361,11 @@ function BankTab() {
     if (bi !== -1) return 1;
     return a.localeCompare(b);
   });
-  var _iterator109 = _createForOfIteratorHelper(subjects),
-    _step109;
+  var _iterator111 = _createForOfIteratorHelper(subjects),
+    _step111;
   try {
-    for (_iterator109.s(); !(_step109 = _iterator109.n()).done;) {
-      var s = _step109.value;
+    for (_iterator111.s(); !(_step111 = _iterator111.n()).done;) {
+      var s = _step111.value;
       bySubject[s].sort(function (a, b) {
         var an = parseChapterNum(a),
           bn = parseChapterNum(b);
@@ -23227,9 +23374,9 @@ function BankTab() {
       });
     }
   } catch (err) {
-    _iterator109.e(err);
+    _iterator111.e(err);
   } finally {
-    _iterator109.f();
+    _iterator111.f();
   }
   var filterLc = filter.toLowerCase();
   var filtered = function filtered(chs) {
@@ -23395,7 +23542,7 @@ function BanksBrowser() {
     };
   }, [api, tick]);
   var download = /*#__PURE__*/function () {
-    var _ref166 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee71(username) {
+    var _ref167 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee71(username) {
       var localCount, msg, bank, _i31, _Object$keys6, fid, _i32, _Object$keys7, _fid2, n, _t67;
       return _regenerator().w(function (_context79) {
         while (1) switch (_context79.p = _context79.n) {
@@ -23458,7 +23605,7 @@ function BanksBrowser() {
       }, _callee71, null, [[3, 5, 6, 7]]);
     }));
     return function download(_x66) {
-      return _ref166.apply(this, arguments);
+      return _ref167.apply(this, arguments);
     };
   }();
   if (err) {
@@ -23521,9 +23668,9 @@ function BanksBrowser() {
     }, busy === b.username ? 'Downloading…' : session ? 'Download' : 'Sign in'));
   }))));
 }
-function UserProfile(_ref167) {
-  var username = _ref167.username,
-    onBack = _ref167.onBack;
+function UserProfile(_ref168) {
+  var username = _ref168.username,
+    onBack = _ref168.onBack;
   var _useApp35 = useApp(),
     api = _useApp35.api;
   var _useState443 = useState(null),
@@ -23875,9 +24022,9 @@ function Shell() {
   useEffect(function () {
     tabRef.current = tab;
   }, [tab]);
-  var tabKeys = tabs.map(function (_ref168) {
-    var _ref169 = _slicedToArray(_ref168, 1),
-      k = _ref169[0];
+  var tabKeys = tabs.map(function (_ref169) {
+    var _ref170 = _slicedToArray(_ref169, 1),
+      k = _ref170[0];
     return k;
   });
 
@@ -23961,10 +24108,10 @@ function Shell() {
     className: "hidden sm:inline text-xs text-[var(--text-faint)] font-mono"
   }, MODEL)), /*#__PURE__*/React.createElement("nav", {
     className: "flex items-center justify-center gap-1 overflow-x-auto order-3 sm:order-2 w-full sm:w-auto"
-  }, tabs.map(function (_ref170) {
-    var _ref171 = _slicedToArray(_ref170, 2),
-      k = _ref171[0],
-      label = _ref171[1];
+  }, tabs.map(function (_ref171) {
+    var _ref172 = _slicedToArray(_ref171, 2),
+      k = _ref172[0],
+      label = _ref172[1];
     return /*#__PURE__*/React.createElement("button", {
       key: k,
       onClick: function onClick() {

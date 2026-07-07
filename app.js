@@ -9327,7 +9327,7 @@ const PRACTICE_PASSAGE_SECTIONS = [
 ];
 
 function PracticePassagesView() {
-  const { client, apiKey } = useApp();
+  const { client, apiKey, attempts } = useApp();
   const [sectionKey, setSectionKey] = useState(() => storage.get('mcat:practicePassageSection', 'bb'));
   const [focus, setFocus] = useState('');
   const [state, setState] = useState('idle');
@@ -9360,6 +9360,7 @@ function PracticePassagesView() {
 
   return (
     <div className="space-y-4 sm:space-y-5">
+      <PassageMcatPredictionCard attempts={attempts} />
       <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-5 space-y-4">
         <div>
           <h2 className="font-semibold text-[var(--text-strong)]">Practice passages</h2>
@@ -12975,6 +12976,111 @@ function predictMcatScores(attempts) {
     allFour: done.length === MCAT_SECTIONS.length,
   } : null;
   return { sections, total };
+}
+
+const PASSAGE_MCAT_SECTIONS = [
+  { key: 'cp', label: 'C/P' },
+  { key: 'cars', label: 'CARS' },
+  { key: 'bb', label: 'B/B' },
+  { key: 'ps', label: 'P/S' },
+];
+
+function passageSectionForAttempt(a) {
+  const fid = String(a?.file_id || '');
+  if (fid.startsWith('passage_cp_')) return 'cp';
+  if (fid.startsWith('passage_bb_')) return 'bb';
+  if (fid.startsWith('passage_ps_')) return 'ps';
+  if (fid.startsWith('passage_cars_') || fid.startsWith('cars_')) return 'cars';
+  return null;
+}
+
+function predictPassageMcatScores(attempts) {
+  const sorted = attempts.slice().sort((a, b) => (b.ts || 0) - (a.ts || 0));
+  const bySection = new Map(PASSAGE_MCAT_SECTIONS.map((s) => [s.key, []]));
+  for (const a of sorted) {
+    const section = passageSectionForAttempt(a);
+    if (section) bySection.get(section).push(a);
+  }
+
+  const sections = PASSAGE_MCAT_SECTIONS.map((sec) => {
+    const post = subjectPosterior(bySection.get(sec.key) || []);
+    if (!post) return { ...sec, completed: false };
+    const score = SECTION_MIN + SECTION_RANGE * post.mean;
+    return {
+      ...sec,
+      completed: true,
+      n: post.n,
+      accuracy: post.accuracy,
+      score: Math.max(SECTION_MIN, Math.min(SECTION_MAX, score)),
+      stdev: SECTION_RANGE * Math.sqrt(post.variance),
+    };
+  });
+
+  const done = sections.filter((s) => s.completed);
+  if (done.length > 0 && done.length < sections.length) {
+    const meanScore = done.reduce((s, x) => s + x.score, 0) / done.length;
+    const meanVar = done.reduce((s, x) => s + x.stdev ** 2, 0) / done.length;
+    const imputedStdev = Math.max(Math.sqrt(meanVar) * 2, 2.5);
+    for (const s of sections) {
+      if (s.completed) continue;
+      s.imputed = true;
+      s.score = meanScore;
+      s.stdev = imputedStdev;
+    }
+  }
+
+  const contributing = sections.filter((s) => s.completed || s.imputed);
+  const total = done.length ? {
+    score: contributing.reduce((acc, x) => acc + x.score, 0),
+    stdev: Math.sqrt(contributing.reduce((acc, x) => acc + x.stdev ** 2, 0)),
+    sectionsCompleted: done.length,
+    questionCount: done.reduce((acc, x) => acc + x.n, 0),
+    allFour: done.length === PASSAGE_MCAT_SECTIONS.length,
+  } : null;
+  return { sections, total };
+}
+
+function PassageMcatPredictionCard({ attempts }) {
+  const { sections, total } = useMemo(() => predictPassageMcatScores(attempts || []), [attempts]);
+  const fmt = (n) => n.toFixed(1).replace(/\.0$/, '');
+  return (
+    <div className="bg-[var(--bg-card)] border border-[var(--accent-border)] rounded-2xl p-4 sm:p-5">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Passage-only predicted MCAT</div>
+          <div className="text-4xl font-bold text-[var(--text-strong)] mt-1">
+            {total ? Math.round(total.score) : '—'}
+            {total && <span className="text-base font-medium text-[var(--text-muted)] ml-2">± {fmt(total.stdev)}</span>}
+          </div>
+        </div>
+        {total && (
+          <div className="text-right text-xs text-[var(--text-faint)]">
+            {total.questionCount} question{total.questionCount === 1 ? '' : 's'}
+          </div>
+        )}
+      </div>
+      <p className="text-xs text-[var(--text-muted)] mt-2">
+        Based only on generated Passage tab sets and Daily CARS attempts. Missing sections are estimated from the sections you have completed.
+      </p>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-4">
+        {sections.map((s) => (
+          <div key={s.key} className="rounded-lg border border-[var(--border-soft)] bg-[var(--bg-elev-soft)] px-3 py-2">
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="text-sm font-semibold text-[var(--text-strong)]">{s.label}</span>
+              <span className="text-sm font-mono text-[var(--text)]">
+                {s.score ? Math.round(s.score) : '—'}
+              </span>
+            </div>
+            <div className="text-[11px] text-[var(--text-faint)] mt-0.5">
+              {s.completed
+                ? `${s.n} q · ${Math.round(s.accuracy * 100)}%`
+                : s.imputed ? 'estimated' : 'no data'}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 function McatPredictionCard() {
