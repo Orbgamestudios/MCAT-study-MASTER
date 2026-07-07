@@ -9886,6 +9886,11 @@ function CarsRunner({ date, payload, onClose, alreadyDone, label = 'Daily CARS',
   const [phase, setPhase] = useState(alreadyDone ? 'review' : 'attempt');
   const finalizedRef = useRef(false);
   const scrollRef = useRef(null);
+  const passageBlockRef = useRef(null);
+  const questionPanelRef = useRef(null);
+  const [currentIdx, setCurrentIdx] = useState(0);
+  const [passageSeen, setPassageSeen] = useState(alreadyDone);
+  const [panelH, setPanelH] = useState(190);
   // Elapsed-time timer. Ticks only during the 'attempt' phase, freezes
   // the moment the user submits, and resets back to 0 if they retry.
   const [elapsedMs, setElapsedMs] = useState(0);
@@ -9907,20 +9912,26 @@ function CarsRunner({ date, payload, onClose, alreadyDone, label = 'Daily CARS',
 
   const answeredCount = Object.keys(picks).length;
   const allAnswered = answeredCount === questions.length && questions.length > 0;
+  const currentQ = questions[currentIdx] || null;
+  const currentPicked = currentQ ? picks[currentQ.id] : null;
+  const currentAnswered = currentPicked != null;
   const computedScore = questions.reduce((n, q) => n + (picks[q.id] === q.correct_index ? 1 : 0), 0);
   // Fall back to a stored score for old results saved before per-question picks were kept.
   const score = (answeredCount === 0 && savedResult) ? (savedResult.score || 0) : computedScore;
   const missed = questions.length - score;
 
   const pick = (q, i) => {
-    if (phase !== 'attempt') return;
+    if (phase !== 'attempt' || !passageSeen || picks[q.id] != null) return;
     sfxTap(); vibrateTap();
+    const correct = i === q.correct_index;
+    playSfx(correct ? 'correct' : 'wrong');
+    if (correct) vibrateCorrect(); else vibrateWrong();
     setPicks((p) => ({ ...p, [q.id]: i }));
   };
 
   const scrollTop = () => { if (scrollRef.current) scrollRef.current.scrollTop = 0; };
 
-  const submit = () => {
+  const finish = () => {
     if (!allAnswered) return;
     if (score === questions.length) { playSfx('correct'); vibrateCorrect(); }
     else { playSfx('wrong'); vibrateWrong(); }
@@ -9955,6 +9966,9 @@ function CarsRunner({ date, payload, onClose, alreadyDone, label = 'Daily CARS',
     // Reset the elapsed timer so the second attempt starts fresh.
     setElapsedMs(0);
     startRef.current = null;
+    setPicks({});
+    setCurrentIdx(0);
+    setPassageSeen(false);
     setPhase('attempt');
     scrollTop();
   };
@@ -9962,6 +9976,41 @@ function CarsRunner({ date, payload, onClose, alreadyDone, label = 'Daily CARS',
   const goReview = () => { setPhase('review'); scrollTop(); };
 
   const exportPdf = () => downloadCarsPdf({ date, payload, questions, picks, score, elapsedMs });
+
+  useLayoutEffect(() => {
+    const measure = () => {
+      if (questionPanelRef.current) setPanelH(questionPanelRef.current.offsetHeight || 190);
+    };
+    measure();
+    const ro = typeof ResizeObserver !== 'undefined' && questionPanelRef.current
+      ? new ResizeObserver(measure)
+      : null;
+    if (ro) ro.observe(questionPanelRef.current);
+    window.addEventListener('resize', measure);
+    return () => {
+      if (ro) ro.disconnect();
+      window.removeEventListener('resize', measure);
+    };
+  }, [phase, currentIdx, currentPicked, passageSeen]);
+
+  useEffect(() => {
+    if (phase !== 'attempt' || passageSeen) return;
+    const scroller = scrollRef.current;
+    const passageEl = passageBlockRef.current;
+    if (!scroller || !passageEl) return;
+    const check = () => {
+      const bottom = passageEl.getBoundingClientRect().bottom;
+      const unlockLine = window.innerHeight - panelH - 12;
+      if (bottom <= unlockLine) setPassageSeen(true);
+    };
+    check();
+    scroller.addEventListener('scroll', check);
+    window.addEventListener('resize', check);
+    return () => {
+      scroller.removeEventListener('scroll', check);
+      window.removeEventListener('resize', check);
+    };
+  }, [phase, passageSeen, panelH]);
 
   // While the runner is open, lock the underlying page scroll so flick-scrolling
   // doesn't drift the BankTab content behind it (iOS Safari is especially loose
@@ -10046,7 +10095,7 @@ function CarsRunner({ date, payload, onClose, alreadyDone, label = 'Daily CARS',
         ) : (
           <>
             {/* Passage */}
-            <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-6">
+            <div ref={passageBlockRef} className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-6">
               <div className="text-[10px] uppercase tracking-wide text-[var(--text-faint)] mb-2">
                 {payload.discipline}{payload.source ? ` · ${payload.source}` : ''}
               </div>
@@ -10056,46 +10105,113 @@ function CarsRunner({ date, payload, onClose, alreadyDone, label = 'Daily CARS',
               <PassageTable table={payload.table} />
             </div>
 
+            {phase === 'attempt' && <div aria-hidden="true" style={{ height: panelH + 24 }} />}
             {phase === 'review' && (
-              <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 text-center">
-                <span className="text-sm text-[var(--text-muted)]">Score: </span>
-                <span className="text-lg font-bold text-[var(--text-strong)]">{score}/{questions.length}</span>
-              </div>
-            )}
-
-            {questions.map((q, i) => (
-              <CarsQuestion
-                key={q.id}
-                q={q}
-                index={i}
-                picked={picks[q.id] != null ? picks[q.id] : null}
-                onPick={(idx) => pick(q, idx)}
-                reveal={phase === 'review'}
-              />
-            ))}
-
-            {phase === 'attempt' && (
-              <button
-                onClick={submit}
-                disabled={!allAnswered}
-                className="w-full text-sm py-3 bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] disabled:opacity-40 rounded-lg font-semibold"
-              >
-                {allAnswered ? 'Submit answers' : `Answer all ${questions.length} to submit (${answeredCount}/${questions.length})`}
-              </button>
-            )}
-            {phase === 'review' && (
-              <div className="flex gap-2">
-                <button onClick={exportPdf} className="flex-1 text-sm py-3 border border-[var(--border)] hover:bg-[var(--bg-hover)] rounded-lg font-medium">
-                  Download PDF
-                </button>
-                <button onClick={onClose} className="flex-1 text-sm py-3 bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] rounded-lg font-medium">
-                  Done
-                </button>
-              </div>
+              <>
+                <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 text-center">
+                  <span className="text-sm text-[var(--text-muted)]">Score: </span>
+                  <span className="text-lg font-bold text-[var(--text-strong)]">{score}/{questions.length}</span>
+                </div>
+                {questions.map((q, i) => (
+                  <CarsQuestion
+                    key={q.id}
+                    q={q}
+                    index={i}
+                    picked={picks[q.id] != null ? picks[q.id] : null}
+                    onPick={(idx) => pick(q, idx)}
+                    reveal
+                  />
+                ))}
+                <div className="flex gap-2">
+                  <button onClick={exportPdf} className="flex-1 text-sm py-3 border border-[var(--border)] hover:bg-[var(--bg-hover)] rounded-lg font-medium">
+                    Download PDF
+                  </button>
+                  <button onClick={onClose} className="flex-1 text-sm py-3 bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] rounded-lg font-medium">
+                    Done
+                  </button>
+                </div>
+              </>
             )}
           </>
         )}
       </div>
+      {phase === 'attempt' && currentQ && (
+        <div ref={questionPanelRef} className="fixed inset-x-0 bottom-0 z-50 bg-[var(--bg)] border-t border-[var(--border-soft)] px-3 py-3 sm:px-6" style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
+          <div className="max-w-3xl mx-auto space-y-3">
+            <div className="flex items-start gap-2">
+              <span className="text-[var(--text-faint)] font-mono text-sm shrink-0">{currentIdx + 1}/{questions.length}</span>
+              <div className="min-w-0 flex-1">
+                <div className="text-[10px] uppercase tracking-wide text-[var(--accent-text)]">
+                  {currentQ.category}{currentQ.subtype ? ` · ${currentQ.subtype}` : ''}
+                </div>
+                <p className="text-sm sm:text-base leading-relaxed text-[var(--text-strong)] mt-0.5">{currentQ.question}</p>
+              </div>
+            </div>
+            {!passageSeen ? (
+              <div className="text-xs text-[var(--text-muted)] bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg px-3 py-2">
+                Scroll to the end of the passage to unlock the answer choices.
+              </div>
+            ) : (
+              <>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {(currentQ.choices || []).map((choice, i) => {
+                    const picked = currentPicked === i;
+                    const correct = currentQ.correct_index === i;
+                    let cls = 'border-[var(--border)] hover:bg-[var(--bg-hover)]';
+                    if (currentAnswered) {
+                      if (correct) cls = 'border-[var(--success-border)] bg-[var(--success-bg-strong)]';
+                      else if (picked) cls = 'border-[var(--danger-border)] bg-[var(--danger-bg-strong)]';
+                      else cls = 'border-[var(--border-soft)] opacity-60';
+                    }
+                    return (
+                      <button
+                        key={i}
+                        onClick={() => pick(currentQ, i)}
+                        disabled={currentAnswered}
+                        data-no-haptic
+                        className={`text-left border rounded-lg px-3 py-2 text-sm transition-colors ${cls}`}
+                      >
+                        <span className="text-[var(--text-faint)] mr-2">{String.fromCharCode(65 + i)}.</span>
+                        {choice}
+                      </button>
+                    );
+                  })}
+                </div>
+                {currentAnswered && (
+                  <div className="bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg p-3 space-y-2">
+                    <div className={currentPicked === currentQ.correct_index ? 'text-[var(--success-text)] font-medium text-sm' : 'text-[var(--danger-text)] font-medium text-sm'}>
+                      {currentPicked === currentQ.correct_index
+                        ? 'Correct'
+                        : `Incorrect — answer is ${String.fromCharCode(65 + currentQ.correct_index)}, you chose ${String.fromCharCode(65 + currentPicked)}`}
+                    </div>
+                    {currentQ.explanation && <div className="text-sm text-[var(--text)]">{currentQ.explanation}</div>}
+                    {Array.isArray(currentQ.choice_explanations) && currentQ.choice_explanations.length > 0 && (
+                      <ul className="space-y-1 pt-1 border-t border-[var(--border-soft)]">
+                        {currentQ.choice_explanations.map((ce, i) => (
+                          <li key={i} className="text-xs text-[var(--text-muted)]">
+                            <span className={`font-medium ${i === currentQ.correct_index ? 'text-[var(--success-text)]' : 'text-[var(--text-faint)]'}`}>{String.fromCharCode(65 + i)}.</span> {ce}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    <div className="flex justify-end">
+                      {currentIdx < questions.length - 1 ? (
+                        <button onClick={() => setCurrentIdx((i) => i + 1)} className="text-sm px-4 py-2 bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] rounded-lg font-medium">
+                          Next question
+                        </button>
+                      ) : (
+                        <button onClick={finish} className="text-sm px-4 py-2 bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] rounded-lg font-medium">
+                          Finish passage
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
