@@ -94,6 +94,8 @@ var KEYS = {
   // timestamp — last time the user reviewed the Bank tab
   cars: 'mcat:cars',
   // { [date]: { score, total, completed_at } } — daily CARS results
+  practicePassages: 'mcat:practicePassages',
+  // locally generated Passage-tab sets
   connectionsResults: 'mcat:connectionsResults',
   // { [date]: { solved, mistakes, completed_at } }
   lessonsCache: 'mcat:lessonsCache',
@@ -14429,41 +14431,191 @@ var PRACTICE_PASSAGE_SECTIONS = [{
   name: 'Critical Analysis and Reasoning',
   subject: 'CARS'
 }];
-function PracticePassagesView() {
+function getPracticePassageBank() {
+  var arr = storage.get(KEYS.practicePassages, []) || [];
+  return Array.isArray(arr) ? arr : [];
+}
+function setPracticePassageBank(entries) {
+  storage.set(KEYS.practicePassages, entries);
+  window.dispatchEvent(new Event('mcat:practicePassagesChanged'));
+}
+function savePracticePassage(entry) {
+  var existing = getPracticePassageBank().filter(function (p) {
+    return p.id !== entry.id;
+  });
+  setPracticePassageBank([entry].concat(_toConsumableArray(existing)).slice(0, 80));
+}
+function practicePassageFileId(entry) {
+  return "passage_".concat(entry.sectionKey, "_").concat(entry.id);
+}
+function practicePassageResult(entry, attempts) {
+  var _entry$payload;
+  var questions = ((_entry$payload = entry.payload) === null || _entry$payload === void 0 ? void 0 : _entry$payload.questions) || [];
+  var questionIds = new Set(questions.map(function (q) {
+    return q.id;
+  }).filter(Boolean));
+  var picks = {};
+  var correct = 0;
+  var completedAt = 0;
+  var _iterator66 = _createForOfIteratorHelper(attempts || []),
+    _step66;
+  try {
+    for (_iterator66.s(); !(_step66 = _iterator66.n()).done;) {
+      var a = _step66.value;
+      if (a.file_id !== practicePassageFileId(entry)) continue;
+      if (questionIds.size && !questionIds.has(a.question_id)) continue;
+      if (picks[a.question_id] != null) continue;
+      var idx = ['A', 'B', 'C', 'D'].indexOf(a.user_answer);
+      if (idx < 0) continue;
+      picks[a.question_id] = idx;
+      if (a.correct) correct++;
+      completedAt = Math.max(completedAt, a.ts || a.created_at || 0);
+    }
+  } catch (err) {
+    _iterator66.e(err);
+  } finally {
+    _iterator66.f();
+  }
+  var answered = Object.keys(picks).length;
+  return {
+    done: questions.length > 0 && answered >= questions.length,
+    answered,
+    score: correct,
+    total: questions.length,
+    completed_at: completedAt,
+    picks
+  };
+}
+function PracticePassageBankList(_ref77) {
+  var _PRACTICE_PASSAGE_SEC, _open$sectionKey;
+  var _ref77$sectionKey = _ref77.sectionKey,
+    sectionKey = _ref77$sectionKey === void 0 ? '' : _ref77$sectionKey,
+    _ref77$title = _ref77.title,
+    title = _ref77$title === void 0 ? 'Generated passage bank' : _ref77$title;
   var _useApp0 = useApp(),
-    client = _useApp0.client,
-    apiKey = _useApp0.apiKey,
     attempts = _useApp0.attempts;
   var _useState169 = useState(function () {
-      return storage.get('mcat:practicePassageSection', 'bb');
+      return getPracticePassageBank();
     }),
     _useState170 = _slicedToArray(_useState169, 2),
-    sectionKey = _useState170[0],
-    setSectionKey = _useState170[1];
-  var _useState171 = useState(''),
+    entries = _useState170[0],
+    setEntries = _useState170[1];
+  var _useState171 = useState(null),
     _useState172 = _slicedToArray(_useState171, 2),
-    focus = _useState172[0],
-    setFocus = _useState172[1];
-  var _useState173 = useState('idle'),
+    open = _useState172[0],
+    setOpen = _useState172[1];
+  useEffect(function () {
+    var sync = function sync() {
+      return setEntries(getPracticePassageBank());
+    };
+    window.addEventListener('mcat:practicePassagesChanged', sync);
+    window.addEventListener('storage', sync);
+    return function () {
+      window.removeEventListener('mcat:practicePassagesChanged', sync);
+      window.removeEventListener('storage', sync);
+    };
+  }, []);
+  var visible = entries.filter(function (entry) {
+    return !sectionKey || entry.sectionKey === sectionKey;
+  }).sort(function (a, b) {
+    return (b.created_at || 0) - (a.created_at || 0);
+  });
+  var openResult = open ? practicePassageResult(open, attempts) : null;
+  return /*#__PURE__*/React.createElement("div", {
+    className: "bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-5"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "flex items-baseline justify-between gap-3 mb-1"
+  }, /*#__PURE__*/React.createElement("h3", {
+    className: "font-semibold text-[var(--text-strong)]"
+  }, title), /*#__PURE__*/React.createElement("span", {
+    className: "text-xs text-[var(--text-faint)]"
+  }, visible.length, " saved")), /*#__PURE__*/React.createElement("p", {
+    className: "text-sm text-[var(--text-muted)] mb-3"
+  }, "Generated passages are saved locally here so you can reopen or finish them later."), visible.length === 0 ? /*#__PURE__*/React.createElement("div", {
+    className: "text-sm text-[var(--text-muted)] bg-[var(--bg-elev-soft)] border border-dashed border-[var(--border-soft)] rounded-lg p-3"
+  }, "No generated passages saved for this section yet.") : /*#__PURE__*/React.createElement("ul", {
+    className: "divide-y divide-[var(--border-soft)]"
+  }, visible.map(function (entry) {
+    var _entry$payload2, _entry$payload3;
+    var section = PRACTICE_PASSAGE_SECTIONS.find(function (s) {
+      return s.key === entry.sectionKey;
+    });
+    var done = practicePassageResult(entry, attempts);
+    return /*#__PURE__*/React.createElement("li", {
+      key: entry.id,
+      className: "py-2.5 flex items-center gap-3"
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "min-w-0 flex-1"
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "text-sm text-[var(--text)]"
+    }, /*#__PURE__*/React.createElement("span", {
+      className: "font-medium"
+    }, ((_entry$payload2 = entry.payload) === null || _entry$payload2 === void 0 ? void 0 : _entry$payload2.title) || entry.title || 'Generated passage'), /*#__PURE__*/React.createElement("span", {
+      className: "text-[var(--text-muted)]"
+    }, " \xB7 ", (section === null || section === void 0 ? void 0 : section.label) || entry.sectionLabel)), /*#__PURE__*/React.createElement("div", {
+      className: "text-xs text-[var(--text-faint)]"
+    }, ((_entry$payload3 = entry.payload) === null || _entry$payload3 === void 0 ? void 0 : _entry$payload3.discipline) || entry.discipline || (section === null || section === void 0 ? void 0 : section.name), done.done ? /*#__PURE__*/React.createElement("span", {
+      className: "text-[var(--success-text)]"
+    }, " \xB7 done ", done.score, "/", done.total) : done.answered > 0 ? /*#__PURE__*/React.createElement("span", {
+      className: "text-[var(--warning-text-strong)]"
+    }, " \xB7 in progress ", done.answered, "/", done.total) : /*#__PURE__*/React.createElement("span", null, " \xB7 not started"))), /*#__PURE__*/React.createElement("button", {
+      onClick: function onClick() {
+        return setOpen(entry);
+      },
+      className: "shrink-0 text-xs px-3 py-1.5 rounded bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)]"
+    }, done.done ? 'Review' : done.answered > 0 ? 'Continue' : 'Start'));
+  })), open && openResult && /*#__PURE__*/React.createElement(CarsRunner, {
+    date: open.id,
+    payload: open.payload,
+    onClose: function onClose() {
+      return setOpen(null);
+    },
+    alreadyDone: openResult.done,
+    label: "Practice ".concat(open.sectionLabel || '').trim(),
+    subject: open.subject || ((_PRACTICE_PASSAGE_SEC = PRACTICE_PASSAGE_SECTIONS.find(function (s) {
+      return s.key === open.sectionKey;
+    })) === null || _PRACTICE_PASSAGE_SEC === void 0 ? void 0 : _PRACTICE_PASSAGE_SEC.subject) || '',
+    fileIdPrefix: "passage_".concat(open.sectionKey),
+    chapterPrefix: "Practice ".concat(open.sectionLabel || ((_open$sectionKey = open.sectionKey) === null || _open$sectionKey === void 0 ? void 0 : _open$sectionKey.toUpperCase()) || '').trim(),
+    persistResult: false,
+    savedResultOverride: openResult
+  }));
+}
+function PracticePassagesView() {
+  var _useApp1 = useApp(),
+    client = _useApp1.client,
+    apiKey = _useApp1.apiKey,
+    attempts = _useApp1.attempts;
+  var _useState173 = useState(function () {
+      return storage.get('mcat:practicePassageSection', 'bb');
+    }),
     _useState174 = _slicedToArray(_useState173, 2),
-    state = _useState174[0],
-    setState = _useState174[1];
+    sectionKey = _useState174[0],
+    setSectionKey = _useState174[1];
   var _useState175 = useState(''),
     _useState176 = _slicedToArray(_useState175, 2),
-    err = _useState176[0],
-    setErr = _useState176[1];
-  var _useState177 = useState(null),
+    focus = _useState176[0],
+    setFocus = _useState176[1];
+  var _useState177 = useState('idle'),
     _useState178 = _slicedToArray(_useState177, 2),
-    payload = _useState178[0],
-    setPayload = _useState178[1];
+    state = _useState178[0],
+    setState = _useState178[1];
   var _useState179 = useState(''),
     _useState180 = _slicedToArray(_useState179, 2),
-    runId = _useState180[0],
-    setRunId = _useState180[1];
-  var _useState181 = useState(false),
+    err = _useState180[0],
+    setErr = _useState180[1];
+  var _useState181 = useState(null),
     _useState182 = _slicedToArray(_useState181, 2),
-    open = _useState182[0],
-    setOpen = _useState182[1];
+    payload = _useState182[0],
+    setPayload = _useState182[1];
+  var _useState183 = useState(''),
+    _useState184 = _slicedToArray(_useState183, 2),
+    runId = _useState184[0],
+    setRunId = _useState184[1];
+  var _useState185 = useState(false),
+    _useState186 = _slicedToArray(_useState185, 2),
+    open = _useState186[0],
+    setOpen = _useState186[1];
   var selected = PRACTICE_PASSAGE_SECTIONS.find(function (s) {
     return s.key === sectionKey;
   }) || PRACTICE_PASSAGE_SECTIONS[1];
@@ -14472,8 +14624,8 @@ function PracticePassagesView() {
     storage.set('mcat:practicePassageSection', key);
   };
   var generate = /*#__PURE__*/function () {
-    var _ref77 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee44() {
-      var out, _t30;
+    var _ref78 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee44() {
+      var out, id, _t30;
       return _regenerator().w(function (_context49) {
         while (1) switch (_context49.p = _context49.n) {
           case 0:
@@ -14494,8 +14646,20 @@ function PracticePassagesView() {
             });
           case 3:
             out = _context49.v;
+            id = String(Date.now());
+            savePracticePassage({
+              id,
+              sectionKey: selected.key,
+              sectionLabel: selected.label,
+              subject: selected.subject,
+              focus: focus.trim(),
+              title: out.title || 'Generated passage',
+              discipline: out.discipline || selected.name,
+              created_at: Date.now(),
+              payload: out
+            });
             setPayload(out);
-            setRunId("".concat(selected.key, "_").concat(Date.now()));
+            setRunId(id);
             setState('ready');
             _context49.n = 5;
             break;
@@ -14510,7 +14674,7 @@ function PracticePassagesView() {
       }, _callee44, null, [[2, 4]]);
     }));
     return function generate() {
-      return _ref77.apply(this, arguments);
+      return _ref78.apply(this, arguments);
     };
   }();
   return /*#__PURE__*/React.createElement("div", {
@@ -14584,30 +14748,33 @@ function PracticePassagesView() {
     fileIdPrefix: "passage_".concat(selected.key),
     chapterPrefix: "Practice ".concat(selected.label),
     persistResult: false
+  }), /*#__PURE__*/React.createElement(PracticePassageBankList, {
+    sectionKey: selected.key,
+    title: "".concat(selected.label, " generated passage bank")
   }), /*#__PURE__*/React.createElement(FreePassagePractice, null));
 }
 function StudyView() {
   // 'launcher' | 'active' | 'summary' | 'flashcards'
-  var _useState183 = useState('launcher'),
-    _useState184 = _slicedToArray(_useState183, 2),
-    phase = _useState184[0],
-    setPhase = _useState184[1];
-  var _useState185 = useState([]),
-    _useState186 = _slicedToArray(_useState185, 2),
-    items = _useState186[0],
-    setItems = _useState186[1];
-  var _useState187 = useState([]),
+  var _useState187 = useState('launcher'),
     _useState188 = _slicedToArray(_useState187, 2),
-    flashItems = _useState188[0],
-    setFlashItems = _useState188[1];
+    phase = _useState188[0],
+    setPhase = _useState188[1];
   var _useState189 = useState([]),
     _useState190 = _slicedToArray(_useState189, 2),
-    results = _useState190[0],
-    setResults = _useState190[1];
-  var _useState191 = useState('0:00'),
+    items = _useState190[0],
+    setItems = _useState190[1];
+  var _useState191 = useState([]),
     _useState192 = _slicedToArray(_useState191, 2),
-    elapsedTime = _useState192[0],
-    setElapsedTime = _useState192[1];
+    flashItems = _useState192[0],
+    setFlashItems = _useState192[1];
+  var _useState193 = useState([]),
+    _useState194 = _slicedToArray(_useState193, 2),
+    results = _useState194[0],
+    setResults = _useState194[1];
+  var _useState195 = useState('0:00'),
+    _useState196 = _slicedToArray(_useState195, 2),
+    elapsedTime = _useState196[0],
+    setElapsedTime = _useState196[1];
   var timerRefHolder = useRef(null);
   var start = function start(picked) {
     setItems(picked);
@@ -14720,9 +14887,9 @@ function StudyView() {
 var BIRD_GAP = 5; // px below the speech bubble
 var BIRD_SHIFT = 4; // px horizontal nudge (negative = rightward)
 
-function BirdHero(_ref78) {
-  var username = _ref78.username,
-    quote = _ref78.quote;
+function BirdHero(_ref79) {
+  var username = _ref79.username,
+    quote = _ref79.quote;
   return /*#__PURE__*/React.createElement("div", {
     className: "relative bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl px-4 sm:px-6 pt-5 sm:pt-6 pb-0 overflow-hidden"
   }, /*#__PURE__*/React.createElement("div", {
@@ -14754,21 +14921,21 @@ function BirdHero(_ref78) {
 
 // ---------- home: recent activity feed ----------
 function HomeActivity() {
-  var _useApp1 = useApp(),
-    api = _useApp1.api,
-    session = _useApp1.session;
-  var _useState193 = useState(null),
-    _useState194 = _slicedToArray(_useState193, 2),
-    rows = _useState194[0],
-    setRows = _useState194[1];
-  var _useState195 = useState(''),
-    _useState196 = _slicedToArray(_useState195, 2),
-    err = _useState196[0],
-    setErr = _useState196[1];
-  var _useState197 = useState(0),
+  var _useApp10 = useApp(),
+    api = _useApp10.api,
+    session = _useApp10.session;
+  var _useState197 = useState(null),
     _useState198 = _slicedToArray(_useState197, 2),
-    tick = _useState198[0],
-    setTick = _useState198[1];
+    rows = _useState198[0],
+    setRows = _useState198[1];
+  var _useState199 = useState(''),
+    _useState200 = _slicedToArray(_useState199, 2),
+    err = _useState200[0],
+    setErr = _useState200[1];
+  var _useState201 = useState(0),
+    _useState202 = _slicedToArray(_useState201, 2),
+    tick = _useState202[0],
+    setTick = _useState202[1];
 
   // Refetch on a slow interval so the green-dot status stays accurate.
   useEffect(function () {
@@ -14850,12 +15017,12 @@ function HomeActivity() {
 // ---------- daily CARS ----------
 // reveal=false: attempt mode — selectable, no correct/incorrect shown.
 // reveal=true:  review mode — locked, answers + explanations shown.
-function CarsQuestion(_ref79) {
-  var q = _ref79.q,
-    index = _ref79.index,
-    picked = _ref79.picked,
-    onPick = _ref79.onPick,
-    reveal = _ref79.reveal;
+function CarsQuestion(_ref80) {
+  var q = _ref80.q,
+    index = _ref80.index,
+    picked = _ref80.picked,
+    onPick = _ref80.onPick,
+    reveal = _ref80.reveal;
   var letters = ['A', 'B', 'C', 'D'];
   var noPick = picked == null;
   return /*#__PURE__*/React.createElement("div", {
@@ -14907,8 +15074,8 @@ function CarsQuestion(_ref79) {
     }, letters[i], "."), " ", ce);
   }))));
 }
-function PassageTable(_ref80) {
-  var table = _ref80.table;
+function PassageTable(_ref81) {
+  var table = _ref81.table;
   if (!table || !Array.isArray(table.columns) || !Array.isArray(table.rows) || !table.columns.length || !table.rows.length) return null;
   return /*#__PURE__*/React.createElement("div", {
     className: "my-4 overflow-x-auto rounded-lg border border-[var(--border-soft)]"
@@ -14943,13 +15110,13 @@ function PassageTable(_ref80) {
 // the no-build, CDN-only setup intact and yields a text-selectable PDF. Bundles the
 // passage, every question with the user's pick vs. the correct answer, and all
 // explanations, so it can be dropped straight into a chat with Claude to analyse misses.
-function downloadCarsPdf(_ref81) {
-  var date = _ref81.date,
-    payload = _ref81.payload,
-    questions = _ref81.questions,
-    picks = _ref81.picks,
-    score = _ref81.score,
-    elapsedMs = _ref81.elapsedMs;
+function downloadCarsPdf(_ref82) {
+  var date = _ref82.date,
+    payload = _ref82.payload,
+    questions = _ref82.questions,
+    picks = _ref82.picks,
+    score = _ref82.score,
+    elapsedMs = _ref82.elapsedMs;
   var letters = ['A', 'B', 'C', 'D'];
   var esc = function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>]/g, function (c) {
@@ -15026,59 +15193,68 @@ function downloadCarsPdf(_ref81) {
     setTimeout(go, 800);
   }
 }
-function CarsRunner(_ref82) {
-  var date = _ref82.date,
-    payload = _ref82.payload,
-    onClose = _ref82.onClose,
-    alreadyDone = _ref82.alreadyDone,
-    _ref82$label = _ref82.label,
-    label = _ref82$label === void 0 ? 'Daily CARS' : _ref82$label,
-    _ref82$subject = _ref82.subject,
-    subject = _ref82$subject === void 0 ? 'CARS' : _ref82$subject,
-    _ref82$fileIdPrefix = _ref82.fileIdPrefix,
-    fileIdPrefix = _ref82$fileIdPrefix === void 0 ? 'cars' : _ref82$fileIdPrefix,
-    _ref82$chapterPrefix = _ref82.chapterPrefix,
-    chapterPrefix = _ref82$chapterPrefix === void 0 ? 'Daily CARS' : _ref82$chapterPrefix,
-    _ref82$persistResult = _ref82.persistResult,
-    persistResult = _ref82$persistResult === void 0 ? true : _ref82$persistResult;
-  var _useApp10 = useApp(),
-    addAttempt = _useApp10.addAttempt,
-    flushSync = _useApp10.flushSync;
+function CarsRunner(_ref83) {
+  var date = _ref83.date,
+    payload = _ref83.payload,
+    onClose = _ref83.onClose,
+    alreadyDone = _ref83.alreadyDone,
+    _ref83$label = _ref83.label,
+    label = _ref83$label === void 0 ? 'Daily CARS' : _ref83$label,
+    _ref83$subject = _ref83.subject,
+    subject = _ref83$subject === void 0 ? 'CARS' : _ref83$subject,
+    _ref83$fileIdPrefix = _ref83.fileIdPrefix,
+    fileIdPrefix = _ref83$fileIdPrefix === void 0 ? 'cars' : _ref83$fileIdPrefix,
+    _ref83$chapterPrefix = _ref83.chapterPrefix,
+    chapterPrefix = _ref83$chapterPrefix === void 0 ? 'Daily CARS' : _ref83$chapterPrefix,
+    _ref83$persistResult = _ref83.persistResult,
+    persistResult = _ref83$persistResult === void 0 ? true : _ref83$persistResult,
+    _ref83$savedResultOve = _ref83.savedResultOverride,
+    savedResultOverride = _ref83$savedResultOve === void 0 ? null : _ref83$savedResultOve;
+  var _useApp11 = useApp(),
+    addAttempt = _useApp11.addAttempt,
+    flushSync = _useApp11.flushSync;
   var questions = payload.questions || [];
-  var savedResult = persistResult && alreadyDone ? getCarsResult(date) : null;
-  var _useState199 = useState(function () {
-      return savedResult && savedResult.picks || {};
+  var savedResult = savedResultOverride || (persistResult && alreadyDone ? getCarsResult(date) : null);
+  var initialPicks = savedResult && savedResult.picks || {};
+  var _useState203 = useState(function () {
+      return initialPicks;
     }),
-    _useState200 = _slicedToArray(_useState199, 2),
-    picks = _useState200[0],
-    setPicks = _useState200[1];
+    _useState204 = _slicedToArray(_useState203, 2),
+    picks = _useState204[0],
+    setPicks = _useState204[1];
   // attempt → graded → review. Never reveals answers before 'review'.
-  var _useState201 = useState(alreadyDone ? 'review' : 'attempt'),
-    _useState202 = _slicedToArray(_useState201, 2),
-    phase = _useState202[0],
-    setPhase = _useState202[1];
+  var _useState205 = useState(alreadyDone ? 'review' : 'attempt'),
+    _useState206 = _slicedToArray(_useState205, 2),
+    phase = _useState206[0],
+    setPhase = _useState206[1];
   var finalizedRef = useRef(false);
   var scrollRef = useRef(null);
   var passageBlockRef = useRef(null);
   var questionPanelRef = useRef(null);
-  var _useState203 = useState(0),
-    _useState204 = _slicedToArray(_useState203, 2),
-    currentIdx = _useState204[0],
-    setCurrentIdx = _useState204[1];
-  var _useState205 = useState(alreadyDone),
-    _useState206 = _slicedToArray(_useState205, 2),
-    passageSeen = _useState206[0],
-    setPassageSeen = _useState206[1];
-  var _useState207 = useState(190),
+  var _useState207 = useState(function () {
+      if (alreadyDone) return 0;
+      var idx = questions.findIndex(function (q) {
+        return initialPicks[q.id] == null;
+      });
+      return idx >= 0 ? idx : 0;
+    }),
     _useState208 = _slicedToArray(_useState207, 2),
-    panelH = _useState208[0],
-    setPanelH = _useState208[1];
+    currentIdx = _useState208[0],
+    setCurrentIdx = _useState208[1];
+  var _useState209 = useState(alreadyDone),
+    _useState210 = _slicedToArray(_useState209, 2),
+    passageSeen = _useState210[0],
+    setPassageSeen = _useState210[1];
+  var _useState211 = useState(190),
+    _useState212 = _slicedToArray(_useState211, 2),
+    panelH = _useState212[0],
+    setPanelH = _useState212[1];
   // Elapsed-time timer. Ticks only during the 'attempt' phase, freezes
   // the moment the user submits, and resets back to 0 if they retry.
-  var _useState209 = useState(0),
-    _useState210 = _slicedToArray(_useState209, 2),
-    elapsedMs = _useState210[0],
-    setElapsedMs = _useState210[1];
+  var _useState213 = useState(0),
+    _useState214 = _slicedToArray(_useState213, 2),
+    elapsedMs = _useState214[0],
+    setElapsedMs = _useState214[1];
   var startRef = useRef(null);
   useEffect(function () {
     if (phase !== 'attempt') {
@@ -15145,6 +15321,7 @@ function CarsRunner(_ref82) {
       var firstScore = score;
       var firstPicks = _objectSpread({}, picks);
       questions.forEach(function (q) {
+        if (initialPicks[q.id] != null) return;
         addAttempt({
           question_id: q.id,
           mode: 'mc',
@@ -15415,40 +15592,40 @@ function CarsRunner(_ref82) {
 }
 
 // Home card — today's CARS. Generates the set if nobody has yet (and the user has a key).
-function DailyCarsSlotCard(_ref83) {
+function DailyCarsSlotCard(_ref84) {
   var _payload$questions;
-  var date = _ref83.date,
-    slot = _ref83.slot;
-  var _useApp11 = useApp(),
-    api = _useApp11.api,
-    client = _useApp11.client,
-    apiKey = _useApp11.apiKey,
-    session = _useApp11.session;
+  var date = _ref84.date,
+    slot = _ref84.slot;
+  var _useApp12 = useApp(),
+    api = _useApp12.api,
+    client = _useApp12.client,
+    apiKey = _useApp12.apiKey,
+    session = _useApp12.session;
   var slotLabel = carsSlotLabel(slot);
   var baseDate = carsBaseDate(date);
   var localOnly = carsSlotFor(date) > 1;
   // Seed from the local cache so the card shows instantly if today was already downloaded.
   var cached = getCarsCachePayload(date);
-  var _useState211 = useState(cached ? 'ready' : 'loading'),
-    _useState212 = _slicedToArray(_useState211, 2),
-    state = _useState212[0],
-    setState = _useState212[1]; // loading | ready | generating | unavailable | error
-  var _useState213 = useState(cached),
-    _useState214 = _slicedToArray(_useState213, 2),
-    payload = _useState214[0],
-    setPayload = _useState214[1];
-  var _useState215 = useState(''),
+  var _useState215 = useState(cached ? 'ready' : 'loading'),
     _useState216 = _slicedToArray(_useState215, 2),
-    err = _useState216[0],
-    setErr = _useState216[1];
-  var _useState217 = useState(false),
+    state = _useState216[0],
+    setState = _useState216[1]; // loading | ready | generating | unavailable | error
+  var _useState217 = useState(cached),
     _useState218 = _slicedToArray(_useState217, 2),
-    running = _useState218[0],
-    setRunning = _useState218[1];
-  var _useState219 = useState(0),
+    payload = _useState218[0],
+    setPayload = _useState218[1];
+  var _useState219 = useState(''),
     _useState220 = _slicedToArray(_useState219, 2),
-    tick = _useState220[0],
-    setTick = _useState220[1];
+    err = _useState220[0],
+    setErr = _useState220[1];
+  var _useState221 = useState(false),
+    _useState222 = _slicedToArray(_useState221, 2),
+    running = _useState222[0],
+    setRunning = _useState222[1];
+  var _useState223 = useState(0),
+    _useState224 = _slicedToArray(_useState223, 2),
+    tick = _useState224[0],
+    setTick = _useState224[1];
   var result = getCarsResult(date);
   useEffect(function () {
     var cancelled = false;
@@ -15477,7 +15654,7 @@ function DailyCarsSlotCard(_ref83) {
         setState('ready');
       }
     }).catch(/*#__PURE__*/function () {
-      var _ref84 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee45(e) {
+      var _ref85 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee45(e) {
         var _gen, gen, src, questions, discipline, d2, _t31, _t32, _t33;
         return _regenerator().w(function (_context50) {
           while (1) switch (_context50.p = _context50.n) {
@@ -15613,7 +15790,7 @@ function DailyCarsSlotCard(_ref83) {
         }, _callee45, null, [[16, 19], [5, 9], [4, 15]]);
       }));
       return function (_x53) {
-        return _ref84.apply(this, arguments);
+        return _ref85.apply(this, arguments);
       };
     }());
     return function () {
@@ -15712,57 +15889,57 @@ function DailyCarsCard() {
   }));
 }
 function CarsArchive() {
-  var _useApp12 = useApp(),
-    api = _useApp12.api;
-  var _useState221 = useState(null),
-    _useState222 = _slicedToArray(_useState221, 2),
-    days = _useState222[0],
-    setDays = _useState222[1];
-  var _useState223 = useState(''),
-    _useState224 = _slicedToArray(_useState223, 2),
-    err = _useState224[0],
-    setErr = _useState224[1];
+  var _useApp13 = useApp(),
+    api = _useApp13.api;
   var _useState225 = useState(null),
     _useState226 = _slicedToArray(_useState225, 2),
-    open = _useState226[0],
-    setOpen = _useState226[1]; // { date, payload }
-  var _useState227 = useState(null),
+    days = _useState226[0],
+    setDays = _useState226[1];
+  var _useState227 = useState(''),
     _useState228 = _slicedToArray(_useState227, 2),
-    loadingDate = _useState228[0],
-    setLoadingDate = _useState228[1];
-  var _useState229 = useState(false),
+    err = _useState228[0],
+    setErr = _useState228[1];
+  var _useState229 = useState(null),
     _useState230 = _slicedToArray(_useState229, 2),
-    expanded = _useState230[0],
-    setExpanded = _useState230[1];
+    open = _useState230[0],
+    setOpen = _useState230[1]; // { date, payload }
+  var _useState231 = useState(null),
+    _useState232 = _slicedToArray(_useState231, 2),
+    loadingDate = _useState232[0],
+    setLoadingDate = _useState232[1];
+  var _useState233 = useState(false),
+    _useState234 = _slicedToArray(_useState233, 2),
+    expanded = _useState234[0],
+    setExpanded = _useState234[1];
   var today = todayStr();
   useEffect(function () {
     var cancelled = false;
     api.listCars().then(function (d) {
       if (cancelled) return;
       var byDate = {};
-      var _iterator66 = _createForOfIteratorHelper(d.days || []),
-        _step66;
-      try {
-        for (_iterator66.s(); !(_step66 = _iterator66.n()).done;) {
-          var row = _step66.value;
-          byDate[row.date] = row;
-        }
-      } catch (err) {
-        _iterator66.e(err);
-      } finally {
-        _iterator66.f();
-      }
-      var _iterator67 = _createForOfIteratorHelper(getLocalCarsDays()),
+      var _iterator67 = _createForOfIteratorHelper(d.days || []),
         _step67;
       try {
         for (_iterator67.s(); !(_step67 = _iterator67.n()).done;) {
-          var _row = _step67.value;
-          byDate[_row.date] = _objectSpread(_objectSpread({}, _row), byDate[_row.date] || {});
+          var row = _step67.value;
+          byDate[row.date] = row;
         }
       } catch (err) {
         _iterator67.e(err);
       } finally {
         _iterator67.f();
+      }
+      var _iterator68 = _createForOfIteratorHelper(getLocalCarsDays()),
+        _step68;
+      try {
+        for (_iterator68.s(); !(_step68 = _iterator68.n()).done;) {
+          var _row = _step68.value;
+          byDate[_row.date] = _objectSpread(_objectSpread({}, _row), byDate[_row.date] || {});
+        }
+      } catch (err) {
+        _iterator68.e(err);
+      } finally {
+        _iterator68.f();
       }
       setDays(Object.values(byDate).sort(function (a, b) {
         return String(b.date).localeCompare(String(a.date));
@@ -15780,7 +15957,7 @@ function CarsArchive() {
     };
   }, [api]);
   var openDay = /*#__PURE__*/function () {
-    var _ref85 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee46(date) {
+    var _ref86 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee46(date) {
       var cachedPayload, d, _t34;
       return _regenerator().w(function (_context51) {
         while (1) switch (_context51.p = _context51.n) {
@@ -15824,7 +16001,7 @@ function CarsArchive() {
       }, _callee46, null, [[2, 4, 5, 6]]);
     }));
     return function openDay(_x54) {
-      return _ref85.apply(this, arguments);
+      return _ref86.apply(this, arguments);
     };
   }();
 
@@ -15929,59 +16106,59 @@ function lookupLocalDef(term, extractions) {
   }
   return null;
 }
-function SolvedConnectionGroup(_ref86) {
-  var group = _ref86.group,
-    date = _ref86.date;
-  var _useApp13 = useApp(),
-    client = _useApp13.client,
-    apiKey = _useApp13.apiKey,
-    extractions = _useApp13.extractions;
+function SolvedConnectionGroup(_ref87) {
+  var group = _ref87.group,
+    date = _ref87.date;
+  var _useApp14 = useApp(),
+    client = _useApp14.client,
+    apiKey = _useApp14.apiKey,
+    extractions = _useApp14.extractions;
   var c = CONNECTIONS_COLORS[group.difficulty];
-  var _useState231 = useState(false),
-    _useState232 = _slicedToArray(_useState231, 2),
-    open = _useState232[0],
-    setOpen = _useState232[1];
-  var _useState233 = useState(null),
-    _useState234 = _slicedToArray(_useState233, 2),
-    flippedTerm = _useState234[0],
-    setFlippedTerm = _useState234[1];
-  var _useState235 = useState(function () {
+  var _useState235 = useState(false),
+    _useState236 = _slicedToArray(_useState235, 2),
+    open = _useState236[0],
+    setOpen = _useState236[1];
+  var _useState237 = useState(null),
+    _useState238 = _slicedToArray(_useState237, 2),
+    flippedTerm = _useState238[0],
+    setFlippedTerm = _useState238[1];
+  var _useState239 = useState(function () {
       return getConnExplain(date, group.category);
     }),
-    _useState236 = _slicedToArray(_useState235, 2),
-    explain = _useState236[0],
-    setExplain = _useState236[1];
-  var _useState237 = useState(false),
-    _useState238 = _slicedToArray(_useState237, 2),
-    explainBusy = _useState238[0],
-    setExplainBusy = _useState238[1];
-  var _useState239 = useState(''),
     _useState240 = _slicedToArray(_useState239, 2),
-    explainErr = _useState240[0],
-    setExplainErr = _useState240[1];
-  var _useState241 = useState(function () {
+    explain = _useState240[0],
+    setExplain = _useState240[1];
+  var _useState241 = useState(false),
+    _useState242 = _slicedToArray(_useState241, 2),
+    explainBusy = _useState242[0],
+    setExplainBusy = _useState242[1];
+  var _useState243 = useState(''),
+    _useState244 = _slicedToArray(_useState243, 2),
+    explainErr = _useState244[0],
+    setExplainErr = _useState244[1];
+  var _useState245 = useState(function () {
       var seed = {};
-      var _iterator68 = _createForOfIteratorHelper(group.terms),
-        _step68;
+      var _iterator69 = _createForOfIteratorHelper(group.terms),
+        _step69;
       try {
-        for (_iterator68.s(); !(_step68 = _iterator68.n()).done;) {
-          var t = _step68.value;
+        for (_iterator69.s(); !(_step69 = _iterator69.n()).done;) {
+          var t = _step69.value;
           seed[t] = lookupLocalDef(t, extractions) || getTermDefCache(t) || null;
         }
       } catch (err) {
-        _iterator68.e(err);
+        _iterator69.e(err);
       } finally {
-        _iterator68.f();
+        _iterator69.f();
       }
       return seed;
     }),
-    _useState242 = _slicedToArray(_useState241, 2),
-    termDefs = _useState242[0],
-    setTermDefs = _useState242[1];
-  var _useState243 = useState({}),
-    _useState244 = _slicedToArray(_useState243, 2),
-    termBusy = _useState244[0],
-    setTermBusy = _useState244[1];
+    _useState246 = _slicedToArray(_useState245, 2),
+    termDefs = _useState246[0],
+    setTermDefs = _useState246[1];
+  var _useState247 = useState({}),
+    _useState248 = _slicedToArray(_useState247, 2),
+    termBusy = _useState248[0],
+    setTermBusy = _useState248[1];
   var fetchExplain = useCallback(/*#__PURE__*/_asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee47() {
     var text, _t35;
     return _regenerator().w(function (_context52) {
@@ -16025,7 +16202,7 @@ function SolvedConnectionGroup(_ref86) {
     }, _callee47, null, [[3, 5, 6, 7]]);
   })), [client, apiKey, group.category, group.terms, date, explain, explainBusy]);
   var fetchTermDef = useCallback(/*#__PURE__*/function () {
-    var _ref88 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee48(term) {
+    var _ref89 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee48(term) {
       var def, _t36;
       return _regenerator().w(function (_context53) {
         while (1) switch (_context53.p = _context53.n) {
@@ -16077,7 +16254,7 @@ function SolvedConnectionGroup(_ref86) {
       }, _callee48, null, [[3, 5, 6, 7]]);
     }));
     return function (_x55) {
-      return _ref88.apply(this, arguments);
+      return _ref89.apply(this, arguments);
     };
   }(), [client, apiKey, group.category, termDefs, termBusy]);
 
@@ -16086,18 +16263,18 @@ function SolvedConnectionGroup(_ref86) {
   useEffect(function () {
     if (!open) return;
     fetchExplain();
-    var _iterator69 = _createForOfIteratorHelper(group.terms),
-      _step69;
+    var _iterator70 = _createForOfIteratorHelper(group.terms),
+      _step70;
     try {
-      for (_iterator69.s(); !(_step69 = _iterator69.n()).done;) {
-        var t = _step69.value;
+      for (_iterator70.s(); !(_step70 = _iterator70.n()).done;) {
+        var t = _step70.value;
         if (!termDefs[t]) fetchTermDef(t);
       }
       // eslint-disable-next-line
     } catch (err) {
-      _iterator69.e(err);
+      _iterator70.e(err);
     } finally {
-      _iterator69.f();
+      _iterator70.f();
     }
   }, [open]);
   return /*#__PURE__*/React.createElement("div", {
@@ -16213,20 +16390,20 @@ function seededShuffle(arr, seedStr) {
   var out = arr.slice();
   for (var _i23 = out.length - 1; _i23 > 0; _i23--) {
     var j = Math.floor(rng() * (_i23 + 1));
-    var _ref89 = [out[j], out[_i23]];
-    out[_i23] = _ref89[0];
-    out[j] = _ref89[1];
+    var _ref90 = [out[j], out[_i23]];
+    out[_i23] = _ref90[0];
+    out[j] = _ref90[1];
   }
   return out;
 }
-function ConnectionsRunner(_ref90) {
-  var date = _ref90.date,
-    payload = _ref90.payload,
-    onClose = _ref90.onClose,
-    alreadyDone = _ref90.alreadyDone;
-  var _useApp14 = useApp(),
-    addAttempt = _useApp14.addAttempt,
-    flushSync = _useApp14.flushSync;
+function ConnectionsRunner(_ref91) {
+  var date = _ref91.date,
+    payload = _ref91.payload,
+    onClose = _ref91.onClose,
+    alreadyDone = _ref91.alreadyDone;
+  var _useApp15 = useApp(),
+    addAttempt = _useApp15.addAttempt,
+    flushSync = _useApp15.flushSync;
   var groups = useMemo(function () {
     // Sort by canonical difficulty order so the reveal-on-solve sequence reads green → purple.
     var list = (payload.groups || []).map(function (g) {
@@ -16255,13 +16432,13 @@ function ConnectionsRunner(_ref90) {
   }, [groups]);
   var savedResult = alreadyDone ? getConnectionsResults()[date] || null : null;
   var startSolved = (savedResult === null || savedResult === void 0 ? void 0 : savedResult.solvedCategories) || [];
-  var _useState245 = useState(function () {
+  var _useState249 = useState(function () {
       return startSolved;
     }),
-    _useState246 = _slicedToArray(_useState245, 2),
-    solved = _useState246[0],
-    setSolved = _useState246[1]; // [categoryName...] in solve order
-  var _useState247 = useState(function () {
+    _useState250 = _slicedToArray(_useState249, 2),
+    solved = _useState250[0],
+    setSolved = _useState250[1]; // [categoryName...] in solve order
+  var _useState251 = useState(function () {
       var remaining = allTerms.filter(function (t) {
         return !startSolved.some(function (cat) {
           var _groups$find;
@@ -16272,32 +16449,32 @@ function ConnectionsRunner(_ref90) {
       });
       return seededShuffle(remaining, "connections:".concat(date));
     }),
-    _useState248 = _slicedToArray(_useState247, 2),
-    order = _useState248[0],
-    setOrder = _useState248[1];
-  var _useState249 = useState([]),
-    _useState250 = _slicedToArray(_useState249, 2),
-    selected = _useState250[0],
-    setSelected = _useState250[1];
-  var _useState251 = useState((savedResult === null || savedResult === void 0 ? void 0 : savedResult.mistakes) || 0),
     _useState252 = _slicedToArray(_useState251, 2),
-    mistakes = _useState252[0],
-    setMistakes = _useState252[1];
-  var _useState253 = useState(function () {
+    order = _useState252[0],
+    setOrder = _useState252[1];
+  var _useState253 = useState([]),
+    _useState254 = _slicedToArray(_useState253, 2),
+    selected = _useState254[0],
+    setSelected = _useState254[1];
+  var _useState255 = useState((savedResult === null || savedResult === void 0 ? void 0 : savedResult.mistakes) || 0),
+    _useState256 = _slicedToArray(_useState255, 2),
+    mistakes = _useState256[0],
+    setMistakes = _useState256[1];
+  var _useState257 = useState(function () {
       if (!savedResult) return 'play';
       return savedResult.won ? 'won' : 'lost';
     }),
-    _useState254 = _slicedToArray(_useState253, 2),
-    phase = _useState254[0],
-    setPhase = _useState254[1];
-  var _useState255 = useState(''),
-    _useState256 = _slicedToArray(_useState255, 2),
-    message = _useState256[0],
-    setMessage = _useState256[1];
-  var _useState257 = useState(false),
     _useState258 = _slicedToArray(_useState257, 2),
-    shaking = _useState258[0],
-    setShaking = _useState258[1];
+    phase = _useState258[0],
+    setPhase = _useState258[1];
+  var _useState259 = useState(''),
+    _useState260 = _slicedToArray(_useState259, 2),
+    message = _useState260[0],
+    setMessage = _useState260[1];
+  var _useState261 = useState(false),
+    _useState262 = _slicedToArray(_useState261, 2),
+    shaking = _useState262[0],
+    setShaking = _useState262[1];
   var finalizedRef = useRef(!!savedResult);
   var solvedGroups = solved.map(function (cat) {
     return groups.find(function (g) {
@@ -16336,9 +16513,9 @@ function ConnectionsRunner(_ref90) {
       var out = o.slice();
       for (var i = out.length - 1; i > 0; i--) {
         var j = Math.floor(Math.random() * (i + 1));
-        var _ref91 = [out[j], out[i]];
-        out[i] = _ref91[0];
-        out[j] = _ref91[1];
+        var _ref92 = [out[j], out[i]];
+        out[i] = _ref92[0];
+        out[j] = _ref92[1];
       }
       return out;
     });
@@ -16544,53 +16721,53 @@ function ConnectionsRunner(_ref90) {
 // Home card — today's Connections puzzle. Generates if nobody has yet (and the user has a key).
 function DailyConnectionsCard() {
   var _result$solvedCategor;
-  var _useApp15 = useApp(),
-    api = _useApp15.api,
-    client = _useApp15.client,
-    apiKey = _useApp15.apiKey,
-    session = _useApp15.session,
-    extractions = _useApp15.extractions,
-    files = _useApp15.files;
+  var _useApp16 = useApp(),
+    api = _useApp16.api,
+    client = _useApp16.client,
+    apiKey = _useApp16.apiKey,
+    session = _useApp16.session,
+    extractions = _useApp16.extractions,
+    files = _useApp16.files;
   var today = todayStr();
   var cached = getConnectionsCachePayload(today);
-  var _useState259 = useState(cached ? 'ready' : 'loading'),
-    _useState260 = _slicedToArray(_useState259, 2),
-    state = _useState260[0],
-    setState = _useState260[1]; // loading | ready | generating | unavailable | needs-terms | error
-  var _useState261 = useState(cached),
-    _useState262 = _slicedToArray(_useState261, 2),
-    payload = _useState262[0],
-    setPayload = _useState262[1];
-  var _useState263 = useState(''),
+  var _useState263 = useState(cached ? 'ready' : 'loading'),
     _useState264 = _slicedToArray(_useState263, 2),
-    err = _useState264[0],
-    setErr = _useState264[1];
-  var _useState265 = useState(false),
+    state = _useState264[0],
+    setState = _useState264[1]; // loading | ready | generating | unavailable | needs-terms | error
+  var _useState265 = useState(cached),
     _useState266 = _slicedToArray(_useState265, 2),
-    running = _useState266[0],
-    setRunning = _useState266[1];
-  var _useState267 = useState(0),
+    payload = _useState266[0],
+    setPayload = _useState266[1];
+  var _useState267 = useState(''),
     _useState268 = _slicedToArray(_useState267, 2),
-    tick = _useState268[0],
-    setTick = _useState268[1];
+    err = _useState268[0],
+    setErr = _useState268[1];
+  var _useState269 = useState(false),
+    _useState270 = _slicedToArray(_useState269, 2),
+    running = _useState270[0],
+    setRunning = _useState270[1];
+  var _useState271 = useState(0),
+    _useState272 = _slicedToArray(_useState271, 2),
+    tick = _useState272[0],
+    setTick = _useState272[1];
   var result = getConnectionsResults()[today];
 
   // Build the term pool from every chapter's extracted key_terms.
   var termPool = useMemo(function () {
     var out = [];
     var seen = new Set();
-    var _iterator70 = _createForOfIteratorHelper(files),
-      _step70;
+    var _iterator71 = _createForOfIteratorHelper(files),
+      _step71;
     try {
-      for (_iterator70.s(); !(_step70 = _iterator70.n()).done;) {
-        var f = _step70.value;
+      for (_iterator71.s(); !(_step71 = _iterator71.n()).done;) {
+        var f = _step71.value;
         var ext = extractions[f.file_id];
         if (!(ext !== null && ext !== void 0 && ext.key_terms)) continue;
-        var _iterator71 = _createForOfIteratorHelper(ext.key_terms),
-          _step71;
+        var _iterator72 = _createForOfIteratorHelper(ext.key_terms),
+          _step72;
         try {
-          for (_iterator71.s(); !(_step71 = _iterator71.n()).done;) {
-            var kt = _step71.value;
+          for (_iterator72.s(); !(_step72 = _iterator72.n()).done;) {
+            var kt = _step72.value;
             var key = (kt.term || '').trim();
             if (!key || seen.has(key.toLowerCase())) continue;
             seen.add(key.toLowerCase());
@@ -16602,15 +16779,15 @@ function DailyConnectionsCard() {
             });
           }
         } catch (err) {
-          _iterator71.e(err);
+          _iterator72.e(err);
         } finally {
-          _iterator71.f();
+          _iterator72.f();
         }
       }
     } catch (err) {
-      _iterator70.e(err);
+      _iterator71.e(err);
     } finally {
-      _iterator70.f();
+      _iterator71.f();
     }
     return out;
   }, [files, extractions]);
@@ -16624,8 +16801,8 @@ function DailyConnectionsCard() {
       setPayload(d.payload);
       setState('ready');
     }).catch(/*#__PURE__*/function () {
-      var _ref92 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee50(e) {
-        var poolSet, norm, normMap, _iterator72, _step72, t, n, reconcile, buildValid, gen, lastErr, attempt, d2, _t38, _t39, _t40;
+      var _ref93 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee50(e) {
+        var poolSet, norm, normMap, _iterator73, _step73, t, n, reconcile, buildValid, gen, lastErr, attempt, d2, _t38, _t39, _t40;
         return _regenerator().w(function (_context55) {
           while (1) switch (_context55.p = _context55.n) {
             case 0:
@@ -16670,43 +16847,43 @@ function DailyConnectionsCard() {
                 return (s || '').toLowerCase().replace(/[\s\-_/]+/g, ' ').replace(/[^a-z0-9 ]/g, '').trim();
               };
               normMap = new Map();
-              _iterator72 = _createForOfIteratorHelper(termPool);
+              _iterator73 = _createForOfIteratorHelper(termPool);
               try {
-                for (_iterator72.s(); !(_step72 = _iterator72.n()).done;) {
-                  t = _step72.value;
+                for (_iterator73.s(); !(_step73 = _iterator73.n()).done;) {
+                  t = _step73.value;
                   n = norm(t.term);
                   if (n && !normMap.has(n)) normMap.set(n, t.term);
                 }
               } catch (err) {
-                _iterator72.e(err);
+                _iterator73.e(err);
               } finally {
-                _iterator72.f();
+                _iterator73.f();
               }
               reconcile = function reconcile(term) {
                 if (poolSet.has(term)) return term;
                 var n = norm(term);
                 if (!n) return null;
                 if (normMap.has(n)) return normMap.get(n);
-                var _iterator73 = _createForOfIteratorHelper(normMap),
-                  _step73;
+                var _iterator74 = _createForOfIteratorHelper(normMap),
+                  _step74;
                 try {
-                  for (_iterator73.s(); !(_step73 = _iterator73.n()).done;) {
-                    var _step73$value = _slicedToArray(_step73.value, 2),
-                      pn = _step73$value[0],
-                      canon = _step73$value[1];
+                  for (_iterator74.s(); !(_step74 = _iterator74.n()).done;) {
+                    var _step74$value = _slicedToArray(_step74.value, 2),
+                      pn = _step74$value[0],
+                      canon = _step74$value[1];
                     if (pn.includes(n) || n.includes(pn)) return canon;
                   }
                 } catch (err) {
-                  _iterator73.e(err);
+                  _iterator74.e(err);
                 } finally {
-                  _iterator73.f();
+                  _iterator74.f();
                 }
                 return null;
               };
               buildValid = /*#__PURE__*/function () {
-                var _ref93 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee49() {
+                var _ref94 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee49() {
                   var _gen$groups;
-                  var gen, usedTerms, _iterator74, _step74, g, _t37;
+                  var gen, usedTerms, _iterator75, _step75, g, _t37;
                   return _regenerator().w(function (_context54) {
                     while (1) switch (_context54.p = _context54.n) {
                       case 0:
@@ -16727,15 +16904,15 @@ function DailyConnectionsCard() {
                         throw new Error('Generation did not return 4 groups.');
                       case 3:
                         usedTerms = new Set();
-                        _iterator74 = _createForOfIteratorHelper(gen.groups);
+                        _iterator75 = _createForOfIteratorHelper(gen.groups);
                         _context54.p = 4;
-                        _iterator74.s();
+                        _iterator75.s();
                       case 5:
-                        if ((_step74 = _iterator74.n()).done) {
+                        if ((_step75 = _iterator75.n()).done) {
                           _context54.n = 8;
                           break;
                         }
-                        g = _step74.value;
+                        g = _step75.value;
                         if (!(!Array.isArray(g.terms) || g.terms.length !== 4)) {
                           _context54.n = 6;
                           break;
@@ -16758,10 +16935,10 @@ function DailyConnectionsCard() {
                       case 9:
                         _context54.p = 9;
                         _t37 = _context54.v;
-                        _iterator74.e(_t37);
+                        _iterator75.e(_t37);
                       case 10:
                         _context54.p = 10;
-                        _iterator74.f();
+                        _iterator75.f();
                         return _context54.f(10);
                       case 11:
                         return _context54.a(2, gen);
@@ -16769,7 +16946,7 @@ function DailyConnectionsCard() {
                   }, _callee49, null, [[4, 9, 10, 11]]);
                 }));
                 return function buildValid() {
-                  return _ref93.apply(this, arguments);
+                  return _ref94.apply(this, arguments);
                 };
               }();
               gen = null, lastErr = null;
@@ -16847,7 +17024,7 @@ function DailyConnectionsCard() {
         }, _callee50, null, [[15, 18], [7, 9], [5, 14]]);
       }));
       return function (_x56) {
-        return _ref92.apply(this, arguments);
+        return _ref93.apply(this, arguments);
       };
     }());
     return function () {
@@ -16931,28 +17108,28 @@ function DailyConnectionsCard() {
 
 // Connections archive — every past day, openable from the Bank tab (bottom).
 function ConnectionsArchive() {
-  var _useApp16 = useApp(),
-    api = _useApp16.api;
-  var _useState269 = useState(null),
-    _useState270 = _slicedToArray(_useState269, 2),
-    days = _useState270[0],
-    setDays = _useState270[1];
-  var _useState271 = useState(''),
-    _useState272 = _slicedToArray(_useState271, 2),
-    err = _useState272[0],
-    setErr = _useState272[1];
+  var _useApp17 = useApp(),
+    api = _useApp17.api;
   var _useState273 = useState(null),
     _useState274 = _slicedToArray(_useState273, 2),
-    open = _useState274[0],
-    setOpen = _useState274[1]; // { date, payload }
-  var _useState275 = useState(null),
+    days = _useState274[0],
+    setDays = _useState274[1];
+  var _useState275 = useState(''),
     _useState276 = _slicedToArray(_useState275, 2),
-    loadingDate = _useState276[0],
-    setLoadingDate = _useState276[1];
-  var _useState277 = useState(false),
+    err = _useState276[0],
+    setErr = _useState276[1];
+  var _useState277 = useState(null),
     _useState278 = _slicedToArray(_useState277, 2),
-    expanded = _useState278[0],
-    setExpanded = _useState278[1];
+    open = _useState278[0],
+    setOpen = _useState278[1]; // { date, payload }
+  var _useState279 = useState(null),
+    _useState280 = _slicedToArray(_useState279, 2),
+    loadingDate = _useState280[0],
+    setLoadingDate = _useState280[1];
+  var _useState281 = useState(false),
+    _useState282 = _slicedToArray(_useState281, 2),
+    expanded = _useState282[0],
+    setExpanded = _useState282[1];
   var today = todayStr();
   var results = getConnectionsResults();
   useEffect(function () {
@@ -16967,7 +17144,7 @@ function ConnectionsArchive() {
     };
   }, [api]);
   var openDay = /*#__PURE__*/function () {
-    var _ref94 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee51(date) {
+    var _ref95 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee51(date) {
       var cachedPayload, d, _t41;
       return _regenerator().w(function (_context56) {
         while (1) switch (_context56.p = _context56.n) {
@@ -17010,7 +17187,7 @@ function ConnectionsArchive() {
       }, _callee51, null, [[2, 4, 5, 6]]);
     }));
     return function openDay(_x57) {
-      return _ref94.apply(this, arguments);
+      return _ref95.apply(this, arguments);
     };
   }();
   var visibleDays = days && (expanded ? days : days.slice(0, 3));
@@ -17080,9 +17257,9 @@ function ConnectionsArchive() {
 // CARS calendar — GitHub-style grid of daily CARS activity + accuracy.
 function CarsCalendar() {
   var results = getCarsResults();
-  var done = Object.entries(results).filter(function (_ref95) {
-    var _ref96 = _slicedToArray(_ref95, 2),
-      r = _ref96[1];
+  var done = Object.entries(results).filter(function (_ref96) {
+    var _ref97 = _slicedToArray(_ref96, 2),
+      r = _ref97[1];
     return r && r.total;
   });
   var WEEKS = 13;
@@ -17104,9 +17281,9 @@ function CarsCalendar() {
     if (r && r.total) streak++;else if (_i24 === 0) continue;else break;
   }
   var doneCount = done.length;
-  var avgAcc = doneCount ? Math.round(done.reduce(function (s, _ref97) {
-    var _ref98 = _slicedToArray(_ref97, 2),
-      r = _ref98[1];
+  var avgAcc = doneCount ? Math.round(done.reduce(function (s, _ref98) {
+    var _ref99 = _slicedToArray(_ref98, 2),
+      r = _ref99[1];
     return s + r.score / r.total;
   }, 0) / doneCount * 100) : 0;
   return /*#__PURE__*/React.createElement("div", {
@@ -17150,10 +17327,10 @@ function CarsCalendar() {
 }
 
 // ---------- home view ----------
-function HomeView(_ref99) {
-  var onGoToStudy = _ref99.onGoToStudy;
-  var _useApp17 = useApp(),
-    session = _useApp17.session;
+function HomeView(_ref100) {
+  var onGoToStudy = _ref100.onGoToStudy;
+  var _useApp18 = useApp(),
+    session = _useApp18.session;
   var username = (session === null || session === void 0 ? void 0 : session.username) || 'student';
 
   // Quote rotates once per page load. useMemo on [] freezes it for the session.
@@ -17331,39 +17508,39 @@ function chapterNum(chapter) {
 // Largest-remainder allocation of `total` slots across weighted keys.
 function allocateCounts(weights, total) {
   var entries = Object.entries(weights);
-  var sum = entries.reduce(function (a, _ref100) {
-    var _ref101 = _slicedToArray(_ref100, 2),
-      w = _ref101[1];
+  var sum = entries.reduce(function (a, _ref101) {
+    var _ref102 = _slicedToArray(_ref101, 2),
+      w = _ref102[1];
     return a + w;
   }, 0) || 1;
-  var raw = entries.map(function (_ref102) {
-    var _ref103 = _slicedToArray(_ref102, 2),
-      k = _ref103[0],
-      w = _ref103[1];
+  var raw = entries.map(function (_ref103) {
+    var _ref104 = _slicedToArray(_ref103, 2),
+      k = _ref104[0],
+      w = _ref104[1];
     return [k, w / sum * total];
   });
   var out = {};
   var used = 0;
-  var _iterator75 = _createForOfIteratorHelper(raw),
-    _step75;
+  var _iterator76 = _createForOfIteratorHelper(raw),
+    _step76;
   try {
-    for (_iterator75.s(); !(_step75 = _iterator75.n()).done;) {
-      var _step75$value = _slicedToArray(_step75.value, 2),
-        k = _step75$value[0],
-        r = _step75$value[1];
+    for (_iterator76.s(); !(_step76 = _iterator76.n()).done;) {
+      var _step76$value = _slicedToArray(_step76.value, 2),
+        k = _step76$value[0],
+        r = _step76$value[1];
       out[k] = Math.floor(r);
       used += out[k];
     }
   } catch (err) {
-    _iterator75.e(err);
+    _iterator76.e(err);
   } finally {
-    _iterator75.f();
+    _iterator76.f();
   }
   var rem = total - used;
-  var fracs = raw.map(function (_ref104) {
-    var _ref105 = _slicedToArray(_ref104, 2),
-      k = _ref105[0],
-      r = _ref105[1];
+  var fracs = raw.map(function (_ref105) {
+    var _ref106 = _slicedToArray(_ref105, 2),
+      k = _ref106[0],
+      r = _ref106[1];
     return [k, r - Math.floor(r)];
   }).sort(function (a, b) {
     return b[1] - a[1];
@@ -17378,17 +17555,17 @@ function weightedSample(items, weightFn, k) {
   var out = [];
   while (out.length < k && pool.length) {
     var total = 0;
-    var _iterator76 = _createForOfIteratorHelper(pool),
-      _step76;
+    var _iterator77 = _createForOfIteratorHelper(pool),
+      _step77;
     try {
-      for (_iterator76.s(); !(_step76 = _iterator76.n()).done;) {
-        var it = _step76.value;
+      for (_iterator77.s(); !(_step77 = _iterator77.n()).done;) {
+        var it = _step77.value;
         total += Math.max(0.0001, weightFn(it));
       }
     } catch (err) {
-      _iterator76.e(err);
+      _iterator77.e(err);
     } finally {
-      _iterator76.f();
+      _iterator77.f();
     }
     var r = Math.random() * total;
     var idx = pool.length - 1;
@@ -17411,18 +17588,18 @@ function assembleSection(section, available) {
   var target = arguments.length > 2 && arguments[2] !== undefined ? arguments[2] : MINI_EXAM_PER_SECTION;
   var weights = MINI_EXAM_BLUEPRINT[section] || {};
   var bySubject = {};
-  var _iterator77 = _createForOfIteratorHelper(available),
-    _step77;
+  var _iterator78 = _createForOfIteratorHelper(available),
+    _step78;
   try {
-    for (_iterator77.s(); !(_step77 = _iterator77.n()).done;) {
-      var _it = _step77.value;
+    for (_iterator78.s(); !(_step78 = _iterator78.n()).done;) {
+      var _it = _step78.value;
       var subj = canonicalizeSubject(_it.subject) || 'Other';
       (bySubject[subj] || (bySubject[subj] = [])).push(_it);
     }
   } catch (err) {
-    _iterator77.e(err);
+    _iterator78.e(err);
   } finally {
-    _iterator77.f();
+    _iterator78.f();
   }
   var desired = Object.keys(weights).length ? allocateCounts(weights, target) : {};
   var chosen = [];
@@ -17438,39 +17615,39 @@ function assembleSection(section, available) {
     var picked = weightedSample(items, function (it) {
       return ab[chapterNum(it.chapter)] || 1;
     }, Math.min(want, items.length));
-    var _iterator78 = _createForOfIteratorHelper(picked),
-      _step78;
+    var _iterator79 = _createForOfIteratorHelper(picked),
+      _step79;
     try {
-      for (_iterator78.s(); !(_step78 = _iterator78.n()).done;) {
-        var p = _step78.value;
+      for (_iterator79.s(); !(_step79 = _iterator79.n()).done;) {
+        var p = _step79.value;
         chosen.push(p);
         used.add(p.id);
       }
     } catch (err) {
-      _iterator78.e(err);
+      _iterator79.e(err);
     } finally {
-      _iterator78.f();
+      _iterator79.f();
     }
   };
   for (var _i25 = 0, _Object$entries2 = Object.entries(desired); _i25 < _Object$entries2.length; _i25++) {
     _loop6();
   }
   if (chosen.length < target) {
-    var _iterator79 = _createForOfIteratorHelper(shuffle(available.filter(function (it) {
+    var _iterator80 = _createForOfIteratorHelper(shuffle(available.filter(function (it) {
         return !used.has(it.id);
       }))),
-      _step79;
+      _step80;
     try {
-      for (_iterator79.s(); !(_step79 = _iterator79.n()).done;) {
-        var it = _step79.value;
+      for (_iterator80.s(); !(_step80 = _iterator80.n()).done;) {
+        var it = _step80.value;
         if (chosen.length >= target) break;
         chosen.push(it);
         used.add(it.id);
       }
     } catch (err) {
-      _iterator79.e(err);
+      _iterator80.e(err);
     } finally {
-      _iterator79.f();
+      _iterator80.f();
     }
   }
   return shuffle(chosen).slice(0, target);
@@ -17480,20 +17657,20 @@ function assembleSection(section, available) {
 // above "Start a quiz" in the study page. Pulls from the shared exam bank, so it
 // works without any locally-processed chapters; shows per-section readiness.
 function MiniExamCard() {
-  var _useApp18 = useApp(),
-    api = _useApp18.api;
-  var _useState279 = useState(null),
-    _useState280 = _slicedToArray(_useState279, 2),
-    stats = _useState280[0],
-    setStats = _useState280[1];
-  var _useState281 = useState(false),
-    _useState282 = _slicedToArray(_useState281, 2),
-    loading = _useState282[0],
-    setLoading = _useState282[1];
-  var _useState283 = useState(''),
+  var _useApp19 = useApp(),
+    api = _useApp19.api;
+  var _useState283 = useState(null),
     _useState284 = _slicedToArray(_useState283, 2),
-    err = _useState284[0],
-    setErr = _useState284[1];
+    stats = _useState284[0],
+    setStats = _useState284[1];
+  var _useState285 = useState(false),
+    _useState286 = _slicedToArray(_useState285, 2),
+    loading = _useState286[0],
+    setLoading = _useState286[1];
+  var _useState287 = useState(''),
+    _useState288 = _slicedToArray(_useState287, 2),
+    err = _useState288[0],
+    setErr = _useState288[1];
   useEffect(function () {
     var alive = true;
     api.examBankStats().then(function (s) {
@@ -17505,17 +17682,17 @@ function MiniExamCard() {
   }, []);
   var sectionCounts = useMemo(function () {
     var m = {};
-    var _iterator80 = _createForOfIteratorHelper((stats === null || stats === void 0 ? void 0 : stats.by_section) || []),
-      _step80;
+    var _iterator81 = _createForOfIteratorHelper((stats === null || stats === void 0 ? void 0 : stats.by_section) || []),
+      _step81;
     try {
-      for (_iterator80.s(); !(_step80 = _iterator80.n()).done;) {
-        var row = _step80.value;
+      for (_iterator81.s(); !(_step81 = _iterator81.n()).done;) {
+        var row = _step81.value;
         if (row.section) m[row.section] = row.n;
       }
     } catch (err) {
-      _iterator80.e(err);
+      _iterator81.e(err);
     } finally {
-      _iterator80.f();
+      _iterator81.f();
     }
     return m;
   }, [stats]);
@@ -17524,8 +17701,8 @@ function MiniExamCard() {
   }, 0);
   var target = MINI_EXAM_SECTIONS.length * MINI_EXAM_PER_SECTION;
   var start = /*#__PURE__*/function () {
-    var _ref106 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee52() {
-      var items, _iterator81, _step81, section, res, picked, _iterator82, _step82, q, _t42, _t43;
+    var _ref107 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee52() {
+      var items, _iterator82, _step82, section, res, picked, _iterator83, _step83, q, _t42, _t43;
       return _regenerator().w(function (_context57) {
         while (1) switch (_context57.p = _context57.n) {
           case 0:
@@ -17533,15 +17710,15 @@ function MiniExamCard() {
             setErr('');
             _context57.p = 1;
             items = [];
-            _iterator81 = _createForOfIteratorHelper(MINI_EXAM_SECTIONS);
+            _iterator82 = _createForOfIteratorHelper(MINI_EXAM_SECTIONS);
             _context57.p = 2;
-            _iterator81.s();
+            _iterator82.s();
           case 3:
-            if ((_step81 = _iterator81.n()).done) {
+            if ((_step82 = _iterator82.n()).done) {
               _context57.n = 6;
               break;
             }
-            section = _step81.value;
+            section = _step82.value;
             _context57.n = 4;
             return api.examBankQuestions({
               section,
@@ -17554,10 +17731,10 @@ function MiniExamCard() {
           case 4:
             res = _context57.v;
             picked = assembleSection(section, (res === null || res === void 0 ? void 0 : res.questions) || [], MINI_EXAM_PER_SECTION);
-            _iterator82 = _createForOfIteratorHelper(picked);
+            _iterator83 = _createForOfIteratorHelper(picked);
             try {
-              for (_iterator82.s(); !(_step82 = _iterator82.n()).done;) {
-                q = _step82.value;
+              for (_iterator83.s(); !(_step83 = _iterator83.n()).done;) {
+                q = _step83.value;
                 items.push({
                   id: q.id,
                   mode: 'mc',
@@ -17572,9 +17749,9 @@ function MiniExamCard() {
                 });
               }
             } catch (err) {
-              _iterator82.e(err);
+              _iterator83.e(err);
             } finally {
-              _iterator82.f();
+              _iterator83.f();
             }
           case 5:
             _context57.n = 3;
@@ -17585,10 +17762,10 @@ function MiniExamCard() {
           case 7:
             _context57.p = 7;
             _t42 = _context57.v;
-            _iterator81.e(_t42);
+            _iterator82.e(_t42);
           case 8:
             _context57.p = 8;
-            _iterator81.f();
+            _iterator82.f();
             return _context57.f(8);
           case 9:
             if (items.length) {
@@ -17620,7 +17797,7 @@ function MiniExamCard() {
       }, _callee52, null, [[2, 7, 8, 9], [1, 11, 12, 13]]);
     }));
     return function start() {
-      return _ref106.apply(this, arguments);
+      return _ref107.apply(this, arguments);
     };
   }();
   return /*#__PURE__*/React.createElement("div", {
@@ -17653,31 +17830,31 @@ function MiniExamCard() {
     className: "w-full bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] disabled:opacity-40 rounded-lg py-3 sm:py-2.5 font-medium"
   }, loading ? 'Assembling exam…' : readyTotal === 0 ? 'Bank empty — generate daily exams first' : "Start ".concat(readyTotal, "-question mini exam")));
 }
-function DailyExamCard(_ref107) {
-  var onGoToStudy = _ref107.onGoToStudy;
-  var _useApp19 = useApp(),
-    client = _useApp19.client,
-    api = _useApp19.api,
-    session = _useApp19.session,
-    apiKey = _useApp19.apiKey,
-    files = _useApp19.files,
-    questions = _useApp19.questions,
-    extractions = _useApp19.extractions,
-    attempts = _useApp19.attempts;
+function DailyExamCard(_ref108) {
+  var onGoToStudy = _ref108.onGoToStudy;
+  var _useApp20 = useApp(),
+    client = _useApp20.client,
+    api = _useApp20.api,
+    session = _useApp20.session,
+    apiKey = _useApp20.apiKey,
+    files = _useApp20.files,
+    questions = _useApp20.questions,
+    extractions = _useApp20.extractions,
+    attempts = _useApp20.attempts;
   var today = todayStr();
   var cached = getDailyExamPayload(today);
-  var _useState285 = useState(cached),
-    _useState286 = _slicedToArray(_useState285, 2),
-    payload = _useState286[0],
-    setPayload = _useState286[1];
-  var _useState287 = useState(cached ? 'ready' : 'idle'),
-    _useState288 = _slicedToArray(_useState287, 2),
-    state = _useState288[0],
-    setState = _useState288[1]; // idle | generating | ready | unavailable | error
-  var _useState289 = useState(''),
+  var _useState289 = useState(cached),
     _useState290 = _slicedToArray(_useState289, 2),
-    err = _useState290[0],
-    setErr = _useState290[1];
+    payload = _useState290[0],
+    setPayload = _useState290[1];
+  var _useState291 = useState(cached ? 'ready' : 'idle'),
+    _useState292 = _slicedToArray(_useState291, 2),
+    state = _useState292[0],
+    setState = _useState292[1]; // idle | generating | ready | unavailable | error
+  var _useState293 = useState(''),
+    _useState294 = _slicedToArray(_useState293, 2),
+    err = _useState294[0],
+    setErr = _useState294[1];
 
   // Chapters the student has mastered in the Lessons tab — i.e. passed the lesson's
   // final exam 100% (the lessonGates store). The daily exam can only draw from these;
@@ -17724,17 +17901,17 @@ function DailyExamCard(_ref107) {
       return x.id;
     }));
     var seen = new Set();
-    var _iterator83 = _createForOfIteratorHelper(attempts),
-      _step83;
+    var _iterator84 = _createForOfIteratorHelper(attempts),
+      _step84;
     try {
-      for (_iterator83.s(); !(_step83 = _iterator83.n()).done;) {
-        var a = _step83.value;
+      for (_iterator84.s(); !(_step84 = _iterator84.n()).done;) {
+        var a = _step84.value;
         if (ids.has(a.question_id) && a.ts && todayStr(new Date(a.ts)) === today) seen.add(a.question_id);
       }
     } catch (err) {
-      _iterator83.e(err);
+      _iterator84.e(err);
     } finally {
-      _iterator83.f();
+      _iterator84.f();
     }
     return seen.size;
   }, [items, attempts, today]);
@@ -17757,7 +17934,7 @@ function DailyExamCard(_ref107) {
     setState('idle');
   }, [payload, apiKey, mastered.length]);
   var generate = /*#__PURE__*/function () {
-    var _ref108 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee53() {
+    var _ref109 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee53() {
       var questionsOut, p, contribution, _t44;
       return _regenerator().w(function (_context58) {
         while (1) switch (_context58.p = _context58.n) {
@@ -17819,7 +17996,7 @@ function DailyExamCard(_ref107) {
       }, _callee53, null, [[2, 5]]);
     }));
     return function generate() {
-      return _ref108.apply(this, arguments);
+      return _ref109.apply(this, arguments);
     };
   }();
   var launch = function launch() {
@@ -17906,11 +18083,11 @@ function DailyExamCard(_ref107) {
 // later wrong answer automatically un-masters (resurfaces) the section.
 function lessonLatestCorrect(attempts) {
   var best = {};
-  var _iterator84 = _createForOfIteratorHelper(attempts),
-    _step84;
+  var _iterator85 = _createForOfIteratorHelper(attempts),
+    _step85;
   try {
-    for (_iterator84.s(); !(_step84 = _iterator84.n()).done;) {
-      var a = _step84.value;
+    for (_iterator85.s(); !(_step85 = _iterator85.n()).done;) {
+      var a = _step85.value;
       var cur = best[a.question_id];
       if (!cur || a.ts > cur.ts) best[a.question_id] = {
         ts: a.ts,
@@ -17918,9 +18095,9 @@ function lessonLatestCorrect(attempts) {
       };
     }
   } catch (err) {
-    _iterator84.e(err);
+    _iterator85.e(err);
   } finally {
-    _iterator84.f();
+    _iterator85.f();
   }
   var out = {};
   for (var k in best) out[k] = best[k].correct;
@@ -17932,20 +18109,20 @@ function lessonSectionStatus(sec, latestCorrect) {
   var ids = Array.isArray(sec.check_ids) ? sec.check_ids : [];
   var correct = 0,
     attempted = 0;
-  var _iterator85 = _createForOfIteratorHelper(ids),
-    _step85;
+  var _iterator86 = _createForOfIteratorHelper(ids),
+    _step86;
   try {
-    for (_iterator85.s(); !(_step85 = _iterator85.n()).done;) {
-      var id = _step85.value;
+    for (_iterator86.s(); !(_step86 = _iterator86.n()).done;) {
+      var id = _step86.value;
       if (id in latestCorrect) {
         attempted++;
         if (latestCorrect[id]) correct++;
       }
     }
   } catch (err) {
-    _iterator85.e(err);
+    _iterator86.e(err);
   } finally {
-    _iterator85.f();
+    _iterator86.f();
   }
   var thr = typeof sec.mastery_threshold === 'number' ? sec.mastery_threshold : 1.0;
   var mastered = ids.length > 0 && correct / ids.length >= thr;
@@ -18242,13 +18419,13 @@ function builtInLessonPoolFor(chapterId) {
 }
 
 // Click-to-reveal flashcard for a definition drill.
-function LessonDrillCard(_ref109) {
-  var term = _ref109.term,
-    definition = _ref109.definition;
-  var _useState291 = useState(false),
-    _useState292 = _slicedToArray(_useState291, 2),
-    show = _useState292[0],
-    setShow = _useState292[1];
+function LessonDrillCard(_ref110) {
+  var term = _ref110.term,
+    definition = _ref110.definition;
+  var _useState295 = useState(false),
+    _useState296 = _slicedToArray(_useState295, 2),
+    show = _useState296[0],
+    setShow = _useState296[1];
   return /*#__PURE__*/React.createElement("button", {
     onClick: function onClick() {
       return setShow(function (s) {
@@ -18268,17 +18445,17 @@ function LessonDrillCard(_ref109) {
 // One lesson section. Always starts collapsed; click the header to expand.
 // When `locked`, the section is gated behind an earlier checkpoint and cannot
 // be opened until that checkpoint is passed.
-function LessonSection(_ref110) {
-  var sec = _ref110.sec,
-    status = _ref110.status,
-    onQuiz = _ref110.onQuiz,
-    locked = _ref110.locked;
+function LessonSection(_ref111) {
+  var sec = _ref111.sec,
+    status = _ref111.status,
+    onQuiz = _ref111.onQuiz,
+    locked = _ref111.locked;
   var _useFigureViewer2 = useFigureViewer(),
     openFigure = _useFigureViewer2.open;
-  var _useState293 = useState(false),
-    _useState294 = _slicedToArray(_useState293, 2),
-    open = _useState294[0],
-    setOpen = _useState294[1];
+  var _useState297 = useState(false),
+    _useState298 = _slicedToArray(_useState297, 2),
+    open = _useState298[0],
+    setOpen = _useState298[1];
   var paras = (sec.teach || '').split(/\n\n+/).map(function (p) {
     return p.trim();
   }).filter(Boolean);
@@ -18388,62 +18565,62 @@ function LessonSection(_ref110) {
 // Inline cumulative MC quiz that gates lesson progress. Requires a perfect
 // score (100%) to pass; any miss means the whole quiz restarts with a fresh
 // shuffle. Used for both per-group checkpoints (15 Q) and the final exam (30 Q).
-function LessonGateQuiz(_ref111) {
-  var kind = _ref111.kind,
-    pool = _ref111.pool,
-    need = _ref111.need,
-    onPass = _ref111.onPass,
-    onCancel = _ref111.onCancel;
-  var _useApp20 = useApp(),
-    addAttempt = _useApp20.addAttempt,
-    updateLastAttempt = _useApp20.updateLastAttempt;
-  var _useState295 = useState(0),
-    _useState296 = _slicedToArray(_useState295, 2),
-    round = _useState296[0],
-    setRound = _useState296[1];
+function LessonGateQuiz(_ref112) {
+  var kind = _ref112.kind,
+    pool = _ref112.pool,
+    need = _ref112.need,
+    onPass = _ref112.onPass,
+    onCancel = _ref112.onCancel;
+  var _useApp21 = useApp(),
+    addAttempt = _useApp21.addAttempt,
+    updateLastAttempt = _useApp21.updateLastAttempt;
+  var _useState299 = useState(0),
+    _useState300 = _slicedToArray(_useState299, 2),
+    round = _useState300[0],
+    setRound = _useState300[1];
   var items = useMemo(function () {
     return shuffle(pool).slice(0, need);
   }, [pool, need, round]);
-  var _useState297 = useState(0),
-    _useState298 = _slicedToArray(_useState297, 2),
-    index = _useState298[0],
-    setIndex = _useState298[1];
-  var _useState299 = useState(false),
-    _useState300 = _slicedToArray(_useState299, 2),
-    answered = _useState300[0],
-    setAnswered = _useState300[1];
   var _useState301 = useState(0),
     _useState302 = _slicedToArray(_useState301, 2),
-    correctCount = _useState302[0],
-    setCorrectCount = _useState302[1];
-  var _useState303 = useState(0),
+    index = _useState302[0],
+    setIndex = _useState302[1];
+  var _useState303 = useState(false),
     _useState304 = _slicedToArray(_useState303, 2),
-    scoredCount = _useState304[0],
-    setScoredCount = _useState304[1];
-  var _useState305 = useState({}),
+    answered = _useState304[0],
+    setAnswered = _useState304[1];
+  var _useState305 = useState(0),
     _useState306 = _slicedToArray(_useState305, 2),
-    answers = _useState306[0],
-    setAnswers = _useState306[1];
-  var _useState307 = useState(false),
+    correctCount = _useState306[0],
+    setCorrectCount = _useState306[1];
+  var _useState307 = useState(0),
     _useState308 = _slicedToArray(_useState307, 2),
-    done = _useState308[0],
-    setDone = _useState308[1];
-  var _useState309 = useState(false),
+    scoredCount = _useState308[0],
+    setScoredCount = _useState308[1];
+  var _useState309 = useState({}),
     _useState310 = _slicedToArray(_useState309, 2),
-    showCalc = _useState310[0],
-    setShowCalc = _useState310[1];
+    answers = _useState310[0],
+    setAnswers = _useState310[1];
   var _useState311 = useState(false),
     _useState312 = _slicedToArray(_useState311, 2),
-    calcMin = _useState312[0],
-    setCalcMin = _useState312[1];
-  var _useState313 = useState(''),
+    done = _useState312[0],
+    setDone = _useState312[1];
+  var _useState313 = useState(false),
     _useState314 = _slicedToArray(_useState313, 2),
-    calcExpr = _useState314[0],
-    setCalcExpr = _useState314[1];
+    showCalc = _useState314[0],
+    setShowCalc = _useState314[1];
   var _useState315 = useState(false),
     _useState316 = _slicedToArray(_useState315, 2),
-    showTable = _useState316[0],
-    setShowTable = _useState316[1];
+    calcMin = _useState316[0],
+    setCalcMin = _useState316[1];
+  var _useState317 = useState(''),
+    _useState318 = _slicedToArray(_useState317, 2),
+    calcExpr = _useState318[0],
+    setCalcExpr = _useState318[1];
+  var _useState319 = useState(false),
+    _useState320 = _slicedToArray(_useState319, 2),
+    showTable = _useState320[0],
+    setShowTable = _useState320[1];
   var total = items.length;
   var scoreTotal = items.length;
   var item = items[index];
@@ -18494,10 +18671,10 @@ function LessonGateQuiz(_ref111) {
       className: "px-4 py-2 rounded border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--bg-hover)]"
     }, "Back to lesson")));
   }
-  var handleAnswer = function handleAnswer(_ref112) {
-    var correct = _ref112.correct,
-      user_answer = _ref112.user_answer,
-      isInterim = _ref112.isInterim;
+  var handleAnswer = function handleAnswer(_ref113) {
+    var correct = _ref113.correct,
+      user_answer = _ref113.user_answer,
+      isInterim = _ref113.isInterim;
     if (isInterim || answered) return;
     setAnswered(true);
     setAnswers(function (prev) {
@@ -18521,8 +18698,8 @@ function LessonGateQuiz(_ref111) {
       user_answer
     });
   };
-  var handleAnswerOverride = function handleAnswerOverride(_ref113) {
-    var correct = _ref113.correct;
+  var handleAnswerOverride = function handleAnswerOverride(_ref114) {
+    var correct = _ref114.correct;
     if (!answered) return;
     var nextCorrect = !!correct;
     updateLastAttempt(item.id, {
@@ -18637,30 +18814,30 @@ function LessonGateQuiz(_ref111) {
 // Override path to "master" a lesson without passing its checkpoints/final exam.
 // Two gates on purpose: a confirm step ("are you sure?") then re-entry of the
 // account PIN (verified server-side via /login) so it can't be a stray tap.
-function ForceMasterModal(_ref114) {
-  var lessonTitle = _ref114.lessonTitle,
-    username = _ref114.username,
-    onVerifyPin = _ref114.onVerifyPin,
-    onConfirmMaster = _ref114.onConfirmMaster,
-    onClose = _ref114.onClose;
-  var _useState317 = useState('confirm'),
-    _useState318 = _slicedToArray(_useState317, 2),
-    step = _useState318[0],
-    setStep = _useState318[1]; // 'confirm' | 'password'
-  var _useState319 = useState(''),
-    _useState320 = _slicedToArray(_useState319, 2),
-    pin = _useState320[0],
-    setPin = _useState320[1];
-  var _useState321 = useState(''),
+function ForceMasterModal(_ref115) {
+  var lessonTitle = _ref115.lessonTitle,
+    username = _ref115.username,
+    onVerifyPin = _ref115.onVerifyPin,
+    onConfirmMaster = _ref115.onConfirmMaster,
+    onClose = _ref115.onClose;
+  var _useState321 = useState('confirm'),
     _useState322 = _slicedToArray(_useState321, 2),
-    err = _useState322[0],
-    setErr = _useState322[1];
-  var _useState323 = useState(false),
+    step = _useState322[0],
+    setStep = _useState322[1]; // 'confirm' | 'password'
+  var _useState323 = useState(''),
     _useState324 = _slicedToArray(_useState323, 2),
-    busy = _useState324[0],
-    setBusy = _useState324[1];
+    pin = _useState324[0],
+    setPin = _useState324[1];
+  var _useState325 = useState(''),
+    _useState326 = _slicedToArray(_useState325, 2),
+    err = _useState326[0],
+    setErr = _useState326[1];
+  var _useState327 = useState(false),
+    _useState328 = _slicedToArray(_useState327, 2),
+    busy = _useState328[0],
+    setBusy = _useState328[1];
   var submitPin = /*#__PURE__*/function () {
-    var _ref115 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee54() {
+    var _ref116 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee54() {
       var _t45;
       return _regenerator().w(function (_context59) {
         while (1) switch (_context59.p = _context59.n) {
@@ -18699,7 +18876,7 @@ function ForceMasterModal(_ref114) {
       }, _callee54, null, [[3, 5]]);
     }));
     return function submitPin() {
-      return _ref115.apply(this, arguments);
+      return _ref116.apply(this, arguments);
     };
   }();
   return /*#__PURE__*/React.createElement("div", {
@@ -18782,19 +18959,19 @@ function lessonGateQuizEligible(item) {
   });
   return false;
 }
-function LessonReader(_ref116) {
-  var lesson = _ref116.lesson,
-    latestCorrect = _ref116.latestCorrect,
-    completed = _ref116.completed,
-    gate = _ref116.gate,
-    quizPool = _ref116.quizPool,
-    onBack = _ref116.onBack,
-    onQuizSection = _ref116.onQuizSection,
-    onMarkComplete = _ref116.onMarkComplete,
-    onPassCheckpoint = _ref116.onPassCheckpoint,
-    onMaster = _ref116.onMaster,
-    username = _ref116.username,
-    onVerifyPin = _ref116.onVerifyPin;
+function LessonReader(_ref117) {
+  var lesson = _ref117.lesson,
+    latestCorrect = _ref117.latestCorrect,
+    completed = _ref117.completed,
+    gate = _ref117.gate,
+    quizPool = _ref117.quizPool,
+    onBack = _ref117.onBack,
+    onQuizSection = _ref117.onQuizSection,
+    onMarkComplete = _ref117.onMarkComplete,
+    onPassCheckpoint = _ref117.onPassCheckpoint,
+    onMaster = _ref117.onMaster,
+    username = _ref117.username,
+    onVerifyPin = _ref117.onVerifyPin;
   var sections = _toConsumableArray(lesson.sections || []).sort(function (a, b) {
     return (a.order || 0) - (b.order || 0);
   });
@@ -18811,29 +18988,29 @@ function LessonReader(_ref116) {
   // Number of sections currently accessible. Mastered chapters are fully open.
   var unlocked = mastered ? total : Math.min(total, Math.max(G, (gate === null || gate === void 0 ? void 0 : gate.unlocked) || G));
   var allUnlocked = unlocked >= total;
-  var _useState325 = useState(null),
-    _useState326 = _slicedToArray(_useState325, 2),
-    quiz = _useState326[0],
-    setQuiz = _useState326[1]; // { kind, pool, need, unlockTo }
-  var _useState327 = useState(false),
-    _useState328 = _slicedToArray(_useState327, 2),
-    forceMaster = _useState328[0],
-    setForceMaster = _useState328[1]; // PIN-gated "master anyway" modal
+  var _useState329 = useState(null),
+    _useState330 = _slicedToArray(_useState329, 2),
+    quiz = _useState330[0],
+    setQuiz = _useState330[1]; // { kind, pool, need, unlockTo }
+  var _useState331 = useState(false),
+    _useState332 = _slicedToArray(_useState331, 2),
+    forceMaster = _useState332[0],
+    setForceMaster = _useState332[1]; // PIN-gated "master anyway" modal
 
   var poolThrough = function poolThrough(end) {
     var ids = new Set();
     for (var k = 0; k < end; k++) {
-      var _iterator86 = _createForOfIteratorHelper(sections[k].check_ids || []),
-        _step86;
+      var _iterator87 = _createForOfIteratorHelper(sections[k].check_ids || []),
+        _step87;
       try {
-        for (_iterator86.s(); !(_step86 = _iterator86.n()).done;) {
-          var id = _step86.value;
+        for (_iterator87.s(); !(_step87 = _iterator87.n()).done;) {
+          var id = _step87.value;
           ids.add(id);
         }
       } catch (err) {
-        _iterator86.e(err);
+        _iterator87.e(err);
       } finally {
-        _iterator86.f();
+        _iterator87.f();
       }
     }
     return quizPool.filter(function (x) {
@@ -18966,28 +19143,28 @@ function LessonReader(_ref116) {
     }
   }));
 }
-function LessonsView(_ref117) {
-  var onGoToStudy = _ref117.onGoToStudy;
-  var _useApp21 = useApp(),
-    api = _useApp21.api,
-    session = _useApp21.session,
-    files = _useApp21.files,
-    questions = _useApp21.questions,
-    extractions = _useApp21.extractions,
-    attempts = _useApp21.attempts,
-    stateRev = _useApp21.stateRev;
-  var _useState329 = useState(false),
-    _useState330 = _slicedToArray(_useState329, 2),
-    showAll = _useState330[0],
-    setShowAll = _useState330[1];
-  var _useState331 = useState('subject'),
-    _useState332 = _slicedToArray(_useState331, 2),
-    sortBy = _useState332[0],
-    setSortBy = _useState332[1]; // 'weakest' | 'subject'
-  var _useState333 = useState({}),
+function LessonsView(_ref118) {
+  var onGoToStudy = _ref118.onGoToStudy;
+  var _useApp22 = useApp(),
+    api = _useApp22.api,
+    session = _useApp22.session,
+    files = _useApp22.files,
+    questions = _useApp22.questions,
+    extractions = _useApp22.extractions,
+    attempts = _useApp22.attempts,
+    stateRev = _useApp22.stateRev;
+  var _useState333 = useState(false),
     _useState334 = _slicedToArray(_useState333, 2),
-    openSubjects = _useState334[0],
-    setOpenSubjects = _useState334[1]; // subject -> expanded (collapsed by default)
+    showAll = _useState334[0],
+    setShowAll = _useState334[1];
+  var _useState335 = useState('subject'),
+    _useState336 = _slicedToArray(_useState335, 2),
+    sortBy = _useState336[0],
+    setSortBy = _useState336[1]; // 'weakest' | 'subject'
+  var _useState337 = useState({}),
+    _useState338 = _slicedToArray(_useState337, 2),
+    openSubjects = _useState338[0],
+    setOpenSubjects = _useState338[1]; // subject -> expanded (collapsed by default)
   var toggleSubject = function toggleSubject(s) {
     return setOpenSubjects(function (m) {
       return _objectSpread(_objectSpread({}, m), {}, {
@@ -18995,69 +19172,69 @@ function LessonsView(_ref117) {
       });
     });
   };
-  var _useState335 = useState(function () {
+  var _useState339 = useState(function () {
       return storage.get(KEYS.lessonsCache, {}) || {};
     }),
-    _useState336 = _slicedToArray(_useState335, 2),
-    lessonsCache = _useState336[0],
-    setLessonsCache = _useState336[1];
-  var _useState337 = useState(function () {
+    _useState340 = _slicedToArray(_useState339, 2),
+    lessonsCache = _useState340[0],
+    setLessonsCache = _useState340[1];
+  var _useState341 = useState(function () {
       return storage.get(KEYS.lessonProgress, {}) || {};
     }),
-    _useState338 = _slicedToArray(_useState337, 2),
-    progress = _useState338[0],
-    setProgress = _useState338[1];
-  var _useState339 = useState(function () {
+    _useState342 = _slicedToArray(_useState341, 2),
+    progress = _useState342[0],
+    setProgress = _useState342[1];
+  var _useState343 = useState(function () {
       return storage.get(KEYS.lessonGates, {}) || {};
     }),
-    _useState340 = _slicedToArray(_useState339, 2),
-    gates = _useState340[0],
-    setGates = _useState340[1];
-  var _useState341 = useState({}),
-    _useState342 = _slicedToArray(_useState341, 2),
-    availMap = _useState342[0],
-    setAvailMap = _useState342[1]; // chapter_id -> lesson exists on server
-  var _useState343 = useState({}),
     _useState344 = _slicedToArray(_useState343, 2),
-    busy = _useState344[0],
-    setBusy = _useState344[1]; // chapter_id -> true while downloading
-  var _useState345 = useState(null),
+    gates = _useState344[0],
+    setGates = _useState344[1];
+  var _useState345 = useState({}),
     _useState346 = _slicedToArray(_useState345, 2),
-    openId = _useState346[0],
-    setOpenId = _useState346[1]; // chapter_id whose reader is open
-  var _useState347 = useState(''),
+    availMap = _useState346[0],
+    setAvailMap = _useState346[1]; // chapter_id -> lesson exists on server
+  var _useState347 = useState({}),
     _useState348 = _slicedToArray(_useState347, 2),
-    error = _useState348[0],
-    setError = _useState348[1];
+    busy = _useState348[0],
+    setBusy = _useState348[1]; // chapter_id -> true while downloading
+  var _useState349 = useState(null),
+    _useState350 = _slicedToArray(_useState349, 2),
+    openId = _useState350[0],
+    setOpenId = _useState350[1]; // chapter_id whose reader is open
+  var _useState351 = useState(''),
+    _useState352 = _slicedToArray(_useState351, 2),
+    error = _useState352[0],
+    setError = _useState352[1];
   var fileToChapter = useMemo(function () {
-    var m = {};
-    var _iterator87 = _createForOfIteratorHelper(files),
-      _step87;
-    try {
-      for (_iterator87.s(); !(_step87 = _iterator87.n()).done;) {
-        var f = _step87.value;
-        if (f.chapter_id) m[f.file_id] = f.chapter_id;
-      }
-    } catch (err) {
-      _iterator87.e(err);
-    } finally {
-      _iterator87.f();
-    }
-    return m;
-  }, [files]);
-  var chapterToFile = useMemo(function () {
     var m = {};
     var _iterator88 = _createForOfIteratorHelper(files),
       _step88;
     try {
       for (_iterator88.s(); !(_step88 = _iterator88.n()).done;) {
         var f = _step88.value;
-        if (f.chapter_id) m[f.chapter_id] = f.file_id;
+        if (f.chapter_id) m[f.file_id] = f.chapter_id;
       }
     } catch (err) {
       _iterator88.e(err);
     } finally {
       _iterator88.f();
+    }
+    return m;
+  }, [files]);
+  var chapterToFile = useMemo(function () {
+    var m = {};
+    var _iterator89 = _createForOfIteratorHelper(files),
+      _step89;
+    try {
+      for (_iterator89.s(); !(_step89 = _iterator89.n()).done;) {
+        var f = _step89.value;
+        if (f.chapter_id) m[f.chapter_id] = f.file_id;
+      }
+    } catch (err) {
+      _iterator89.e(err);
+    } finally {
+      _iterator89.f();
     }
     return m;
   }, [files]);
@@ -19067,7 +19244,7 @@ function LessonsView(_ref117) {
   useEffect(function () {
     var cancelled = false;
     _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee55() {
-      var data, m, _iterator89, _step89, _ch$stages2, ch, _t46;
+      var data, m, _iterator90, _step90, _ch$stages2, ch, _t46;
       return _regenerator().w(function (_context60) {
         while (1) switch (_context60.p = _context60.n) {
           case 0:
@@ -19083,16 +19260,16 @@ function LessonsView(_ref117) {
             return _context60.a(2);
           case 2:
             m = {};
-            _iterator89 = _createForOfIteratorHelper((data === null || data === void 0 ? void 0 : data.chapters) || []);
+            _iterator90 = _createForOfIteratorHelper((data === null || data === void 0 ? void 0 : data.chapters) || []);
             try {
-              for (_iterator89.s(); !(_step89 = _iterator89.n()).done;) {
-                ch = _step89.value;
+              for (_iterator90.s(); !(_step90 = _iterator90.n()).done;) {
+                ch = _step90.value;
                 m[ch.id] = !!((_ch$stages2 = ch.stages) !== null && _ch$stages2 !== void 0 && (_ch$stages2 = _ch$stages2.lesson) !== null && _ch$stages2 !== void 0 && _ch$stages2.done);
               }
             } catch (err) {
-              _iterator89.e(err);
+              _iterator90.e(err);
             } finally {
-              _iterator89.f();
+              _iterator90.f();
             }
             setAvailMap(m);
             _context60.n = 4;
@@ -19159,7 +19336,7 @@ function LessonsView(_ref117) {
   // Re-verify the signed-in account's PIN against the server. Rejects on a wrong
   // PIN (api.login throws on 401), which gates the "master without the exam" flow.
   var verifyPin = /*#__PURE__*/function () {
-    var _ref119 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee56(pin) {
+    var _ref120 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee56(pin) {
       return _regenerator().w(function (_context61) {
         while (1) switch (_context61.n) {
           case 0:
@@ -19180,7 +19357,7 @@ function LessonsView(_ref117) {
       }, _callee56);
     }));
     return function verifyPin(_x58) {
-      return _ref119.apply(this, arguments);
+      return _ref120.apply(this, arguments);
     };
   }();
 
@@ -19201,7 +19378,7 @@ function LessonsView(_ref117) {
     return [].concat(_toConsumableArray(buildPool(ctx, 'mc', scope)), _toConsumableArray(buildPool(ctx, 'short', scope)));
   };
   var downloadLesson = /*#__PURE__*/function () {
-    var _ref120 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee57(chapterId) {
+    var _ref121 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee57(chapterId) {
       var builtIn, full, lesson, _t47;
       return _regenerator().w(function (_context62) {
         while (1) switch (_context62.p = _context62.n) {
@@ -19266,7 +19443,7 @@ function LessonsView(_ref117) {
       }, _callee57, null, [[3, 6, 7, 8]]);
     }));
     return function downloadLesson(_x59) {
-      return _ref120.apply(this, arguments);
+      return _ref121.apply(this, arguments);
     };
   }();
   var removeLesson = function removeLesson(chapterId) {
@@ -19376,11 +19553,11 @@ function LessonsView(_ref117) {
     // Seed every processed chapter so ones you haven't answered questions for
     // yet still show up (with 0/0 stats) rather than only appearing after a
     // first attempt is recorded.
-    var _iterator90 = _createForOfIteratorHelper(files),
-      _step90;
+    var _iterator91 = _createForOfIteratorHelper(files),
+      _step91;
     try {
-      for (_iterator90.s(); !(_step90 = _iterator90.n()).done;) {
-        var f = _step90.value;
+      for (_iterator91.s(); !(_step91 = _iterator91.n()).done;) {
+        var f = _step91.value;
         if (!f.file_id) continue;
         var q = questions[f.file_id];
         if (!q || !q.mc) continue; // only fully processed chapters
@@ -19392,15 +19569,15 @@ function LessonsView(_ref117) {
         };
       }
     } catch (err) {
-      _iterator90.e(err);
+      _iterator91.e(err);
     } finally {
-      _iterator90.f();
+      _iterator91.f();
     }
-    var _iterator91 = _createForOfIteratorHelper(attempts),
-      _step91;
+    var _iterator92 = _createForOfIteratorHelper(attempts),
+      _step92;
     try {
-      for (_iterator91.s(); !(_step91 = _iterator91.n()).done;) {
-        var a = _step91.value;
+      for (_iterator92.s(); !(_step92 = _iterator92.n()).done;) {
+        var a = _step92.value;
         var key = a.file_id;
         if (!chapterFileIds.has(key)) continue;
         if (!byChapter[key]) byChapter[key] = {
@@ -19413,29 +19590,29 @@ function LessonsView(_ref117) {
         if (a.correct) byChapter[key].correct++;
       }
     } catch (err) {
-      _iterator91.e(err);
-    } finally {
-      _iterator91.f();
-    }
-    var wrongIds = new Set();
-    var seenIds = new Set();
-    var _iterator92 = _createForOfIteratorHelper(attempts),
-      _step92;
-    try {
-      for (_iterator92.s(); !(_step92 = _iterator92.n()).done;) {
-        var _a = _step92.value;
-        seenIds.add(_a.question_id);
-        if (!_a.correct) wrongIds.add(_a.question_id);
-      }
-    } catch (err) {
       _iterator92.e(err);
     } finally {
       _iterator92.f();
     }
-    var out = Object.entries(byChapter).map(function (_ref121) {
-      var _ref122 = _slicedToArray(_ref121, 2),
-        fid = _ref122[0],
-        s = _ref122[1];
+    var wrongIds = new Set();
+    var seenIds = new Set();
+    var _iterator93 = _createForOfIteratorHelper(attempts),
+      _step93;
+    try {
+      for (_iterator93.s(); !(_step93 = _iterator93.n()).done;) {
+        var _a = _step93.value;
+        seenIds.add(_a.question_id);
+        if (!_a.correct) wrongIds.add(_a.question_id);
+      }
+    } catch (err) {
+      _iterator93.e(err);
+    } finally {
+      _iterator93.f();
+    }
+    var out = Object.entries(byChapter).map(function (_ref122) {
+      var _ref123 = _slicedToArray(_ref122, 2),
+        fid = _ref123[0],
+        s = _ref123[1];
       var pool = buildPool({
         files,
         questions,
@@ -19512,18 +19689,18 @@ function LessonsView(_ref117) {
     if (!pool.length) return;
     var wrongIds = new Set();
     var seenIds = new Set();
-    var _iterator93 = _createForOfIteratorHelper(attempts),
-      _step93;
+    var _iterator94 = _createForOfIteratorHelper(attempts),
+      _step94;
     try {
-      for (_iterator93.s(); !(_step93 = _iterator93.n()).done;) {
-        var a = _step93.value;
+      for (_iterator94.s(); !(_step94 = _iterator94.n()).done;) {
+        var a = _step94.value;
         seenIds.add(a.question_id);
         if (!a.correct) wrongIds.add(a.question_id);
       }
     } catch (err) {
-      _iterator93.e(err);
+      _iterator94.e(err);
     } finally {
-      _iterator93.f();
+      _iterator94.f();
     }
     var misses = pool.filter(function (x) {
       return wrongIds.has(x.id);
@@ -19734,11 +19911,11 @@ function LessonsView(_ref117) {
   var subjectGroups = function () {
     var order = [];
     var map = {};
-    var _iterator94 = _createForOfIteratorHelper(lessonRows),
-      _step94;
+    var _iterator95 = _createForOfIteratorHelper(lessonRows),
+      _step95;
     try {
-      for (_iterator94.s(); !(_step94 = _iterator94.n()).done;) {
-        var r = _step94.value;
+      for (_iterator95.s(); !(_step95 = _iterator95.n()).done;) {
+        var r = _step95.value;
         var s = r.subject || 'Other';
         if (!map[s]) {
           map[s] = [];
@@ -19747,9 +19924,9 @@ function LessonsView(_ref117) {
         map[s].push(r);
       }
     } catch (err) {
-      _iterator94.e(err);
+      _iterator95.e(err);
     } finally {
-      _iterator94.f();
+      _iterator95.f();
     }
     return order.map(function (s) {
       return [s, map[s]];
@@ -19813,10 +19990,10 @@ function LessonsView(_ref117) {
     className: "px-2 py-1 rounded border ".concat(sortBy === 'subject' ? 'bg-[var(--accent)] text-white border-[var(--accent-border)]' : 'border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--bg-hover)]')
   }, "Subject"))), sortBy === 'subject' ? /*#__PURE__*/React.createElement("div", {
     className: "space-y-2"
-  }, subjectGroups.map(function (_ref123) {
-    var _ref124 = _slicedToArray(_ref123, 2),
-      subject = _ref124[0],
-      items = _ref124[1];
+  }, subjectGroups.map(function (_ref124) {
+    var _ref125 = _slicedToArray(_ref124, 2),
+      subject = _ref125[0],
+      items = _ref125[1];
     var open = !!openSubjects[subject];
     var need = items.reduce(function (n, r) {
       return n + r.need;
@@ -19873,22 +20050,22 @@ function relativeTime(ts) {
 }
 function SyncPanel() {
   var _pushStatus$error;
-  var _useApp22 = useApp(),
-    github = _useApp22.github,
-    setGithub = _useApp22.setGithub,
-    pushBank = _useApp22.pushBank,
-    pushStatus = _useApp22.pushStatus,
-    files = _useApp22.files,
-    extractions = _useApp22.extractions,
-    questions = _useApp22.questions;
-  var _useState349 = useState(false),
-    _useState350 = _slicedToArray(_useState349, 2),
-    showToken = _useState350[0],
-    setShowToken = _useState350[1];
-  var _useState351 = useState(false),
-    _useState352 = _slicedToArray(_useState351, 2),
-    expanded = _useState352[0],
-    setExpanded = _useState352[1];
+  var _useApp23 = useApp(),
+    github = _useApp23.github,
+    setGithub = _useApp23.setGithub,
+    pushBank = _useApp23.pushBank,
+    pushStatus = _useApp23.pushStatus,
+    files = _useApp23.files,
+    extractions = _useApp23.extractions,
+    questions = _useApp23.questions;
+  var _useState353 = useState(false),
+    _useState354 = _slicedToArray(_useState353, 2),
+    showToken = _useState354[0],
+    setShowToken = _useState354[1];
+  var _useState355 = useState(false),
+    _useState356 = _slicedToArray(_useState355, 2),
+    expanded = _useState356[0],
+    setExpanded = _useState356[1];
   var fullyProcessed = files.filter(function (f) {
     var _questions$f$file_id7, _questions$f$file_id8;
     return extractions[f.file_id] && ((_questions$f$file_id7 = questions[f.file_id]) === null || _questions$f$file_id7 === void 0 ? void 0 : _questions$f$file_id7.mc) && ((_questions$f$file_id8 = questions[f.file_id]) === null || _questions$f$file_id8 === void 0 ? void 0 : _questions$f$file_id8.short);
@@ -20015,10 +20192,10 @@ function SyncPanel() {
 }
 
 // ---------- stats ----------
-function StatBar(_ref125) {
-  var correct = _ref125.correct,
-    total = _ref125.total,
-    label = _ref125.label;
+function StatBar(_ref126) {
+  var correct = _ref126.correct,
+    total = _ref126.total,
+    label = _ref126.label;
   var pct = total ? Math.round(correct / total * 100) : 0;
   return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     className: "flex items-baseline justify-between text-sm mb-1"
@@ -20114,42 +20291,42 @@ function predictMcatScores(attempts) {
     return (b.ts || 0) - (a.ts || 0);
   });
   var bySubject = new Map();
-  var _iterator95 = _createForOfIteratorHelper(sorted),
-    _step95;
+  var _iterator96 = _createForOfIteratorHelper(sorted),
+    _step96;
   try {
-    for (_iterator95.s(); !(_step95 = _iterator95.n()).done;) {
-      var a = _step95.value;
+    for (_iterator96.s(); !(_step96 = _iterator96.n()).done;) {
+      var a = _step96.value;
       if (!a.subject) continue;
       var subj = normalizeSubject(a.subject);
       if (!bySubject.has(subj)) bySubject.set(subj, []);
       bySubject.get(subj).push(a);
     }
   } catch (err) {
-    _iterator95.e(err);
-  } finally {
-    _iterator95.f();
-  }
-  var posteriors = new Map();
-  var _iterator96 = _createForOfIteratorHelper(bySubject),
-    _step96;
-  try {
-    for (_iterator96.s(); !(_step96 = _iterator96.n()).done;) {
-      var _step96$value = _slicedToArray(_step96.value, 2),
-        _subj = _step96$value[0],
-        list = _step96$value[1];
-      var p = subjectPosterior(list);
-      if (p) posteriors.set(_subj, p);
-    }
-  } catch (err) {
     _iterator96.e(err);
   } finally {
     _iterator96.f();
   }
+  var posteriors = new Map();
+  var _iterator97 = _createForOfIteratorHelper(bySubject),
+    _step97;
+  try {
+    for (_iterator97.s(); !(_step97 = _iterator97.n()).done;) {
+      var _step97$value = _slicedToArray(_step97.value, 2),
+        _subj = _step97$value[0],
+        list = _step97$value[1];
+      var p = subjectPosterior(list);
+      if (p) posteriors.set(_subj, p);
+    }
+  } catch (err) {
+    _iterator97.e(err);
+  } finally {
+    _iterator97.f();
+  }
   var sections = MCAT_SECTIONS.map(function (sec) {
-    var present = Object.entries(sec.weights).map(function (_ref126) {
-      var _ref127 = _slicedToArray(_ref126, 2),
-        subj = _ref127[0],
-        weight = _ref127[1];
+    var present = Object.entries(sec.weights).map(function (_ref127) {
+      var _ref128 = _slicedToArray(_ref127, 2),
+        subj = _ref128[0],
+        weight = _ref128[1];
       var post = posteriors.get(subj);
       return post ? {
         subj,
@@ -20167,21 +20344,21 @@ function predictMcatScores(attempts) {
     }, 0);
     var mean = 0,
       variance = 0;
-    var _iterator97 = _createForOfIteratorHelper(present),
-      _step97;
+    var _iterator98 = _createForOfIteratorHelper(present),
+      _step98;
     try {
-      for (_iterator97.s(); !(_step97 = _iterator97.n()).done;) {
-        var _step97$value = _step97.value,
-          weight = _step97$value.weight,
-          post = _step97$value.post;
+      for (_iterator98.s(); !(_step98 = _iterator98.n()).done;) {
+        var _step98$value = _step98.value,
+          weight = _step98$value.weight,
+          post = _step98$value.post;
         var w = weight / wSum;
         mean += w * post.mean;
         variance += w * w * post.variance;
       }
     } catch (err) {
-      _iterator97.e(err);
+      _iterator98.e(err);
     } finally {
-      _iterator97.f();
+      _iterator98.f();
     }
     var score = SECTION_MIN + SECTION_RANGE * mean;
     var stdev = SECTION_RANGE * Math.sqrt(variance);
@@ -20190,10 +20367,10 @@ function predictMcatScores(attempts) {
       n: present.reduce(function (s, x) {
         return s + x.post.n;
       }, 0),
-      subjects: present.map(function (_ref128) {
-        var subj = _ref128.subj,
-          weight = _ref128.weight,
-          post = _ref128.post;
+      subjects: present.map(function (_ref129) {
+        var subj = _ref129.subj,
+          weight = _ref129.weight,
+          post = _ref129.post;
         return {
           subject: subj,
           weight: weight / wSum,
@@ -20217,20 +20394,20 @@ function predictMcatScores(attempts) {
       return s + Math.pow(x.stdev, 2);
     }, 0) / done.length;
     var imputedStdev = Math.max(Math.sqrt(meanVar) * 2, 2.5);
-    var _iterator98 = _createForOfIteratorHelper(sections),
-      _step98;
+    var _iterator99 = _createForOfIteratorHelper(sections),
+      _step99;
     try {
-      for (_iterator98.s(); !(_step98 = _iterator98.n()).done;) {
-        var s = _step98.value;
+      for (_iterator99.s(); !(_step99 = _iterator99.n()).done;) {
+        var s = _step99.value;
         if (s.completed) continue;
         s.imputed = true;
         s.score = meanScore;
         s.stdev = imputedStdev;
       }
     } catch (err) {
-      _iterator98.e(err);
+      _iterator99.e(err);
     } finally {
-      _iterator98.f();
+      _iterator99.f();
     }
   }
   var contributing = sections.filter(function (s) {
@@ -20279,18 +20456,18 @@ function predictPassageMcatScores(attempts) {
   var bySection = new Map(PASSAGE_MCAT_SECTIONS.map(function (s) {
     return [s.key, []];
   }));
-  var _iterator99 = _createForOfIteratorHelper(sorted),
-    _step99;
+  var _iterator100 = _createForOfIteratorHelper(sorted),
+    _step100;
   try {
-    for (_iterator99.s(); !(_step99 = _iterator99.n()).done;) {
-      var a = _step99.value;
+    for (_iterator100.s(); !(_step100 = _iterator100.n()).done;) {
+      var a = _step100.value;
       var section = passageSectionForAttempt(a);
       if (section) bySection.get(section).push(a);
     }
   } catch (err) {
-    _iterator99.e(err);
+    _iterator100.e(err);
   } finally {
-    _iterator99.f();
+    _iterator100.f();
   }
   var sections = PASSAGE_MCAT_SECTIONS.map(function (sec) {
     var post = subjectPosterior(bySection.get(sec.key) || []);
@@ -20317,20 +20494,20 @@ function predictPassageMcatScores(attempts) {
       return s + Math.pow(x.stdev, 2);
     }, 0) / done.length;
     var imputedStdev = Math.max(Math.sqrt(meanVar) * 2, 2.5);
-    var _iterator100 = _createForOfIteratorHelper(sections),
-      _step100;
+    var _iterator101 = _createForOfIteratorHelper(sections),
+      _step101;
     try {
-      for (_iterator100.s(); !(_step100 = _iterator100.n()).done;) {
-        var s = _step100.value;
+      for (_iterator101.s(); !(_step101 = _iterator101.n()).done;) {
+        var s = _step101.value;
         if (s.completed) continue;
         s.imputed = true;
         s.score = meanScore;
         s.stdev = imputedStdev;
       }
     } catch (err) {
-      _iterator100.e(err);
+      _iterator101.e(err);
     } finally {
-      _iterator100.f();
+      _iterator101.f();
     }
   }
   var contributing = sections.filter(function (s) {
@@ -20354,8 +20531,8 @@ function predictPassageMcatScores(attempts) {
     total
   };
 }
-function PassageMcatPredictionCard(_ref129) {
-  var attempts = _ref129.attempts;
+function PassageMcatPredictionCard(_ref130) {
+  var attempts = _ref130.attempts;
   var _useMemo2 = useMemo(function () {
       return predictPassageMcatScores(attempts || []);
     }, [attempts]),
@@ -20396,17 +20573,17 @@ function PassageMcatPredictionCard(_ref129) {
   })));
 }
 function McatPredictionCard() {
-  var _useApp23 = useApp(),
-    attempts = _useApp23.attempts;
+  var _useApp24 = useApp(),
+    attempts = _useApp24.attempts;
   var _useMemo3 = useMemo(function () {
       return predictMcatScores(attempts);
     }, [attempts]),
     sections = _useMemo3.sections,
     total = _useMemo3.total;
-  var _useState353 = useState(false),
-    _useState354 = _slicedToArray(_useState353, 2),
-    expanded = _useState354[0],
-    setExpanded = _useState354[1];
+  var _useState357 = useState(false),
+    _useState358 = _slicedToArray(_useState357, 2),
+    expanded = _useState358[0],
+    setExpanded = _useState358[1];
   var fmt = function fmt(n) {
     return n.toFixed(1).replace(/\.0$/, '');
   };
@@ -20511,11 +20688,11 @@ function McatPredictionCard() {
   }, expanded ? 'Hide breakdown' : 'Breakdown')));
 }
 function StatsView() {
-  var _useApp24 = useApp(),
-    attempts = _useApp24.attempts,
-    files = _useApp24.files,
-    questions = _useApp24.questions,
-    clearAttempts = _useApp24.clearAttempts;
+  var _useApp25 = useApp(),
+    attempts = _useApp25.attempts,
+    files = _useApp25.files,
+    questions = _useApp25.questions,
+    clearAttempts = _useApp25.clearAttempts;
   var stats = useMemo(function () {
     var overall = {
       correct: 0,
@@ -20526,12 +20703,12 @@ function StatsView() {
     var bySubject = {};
     var missByQid = {};
     var seenByQid = {};
-    var _iterator101 = _createForOfIteratorHelper(attempts),
-      _step101;
+    var _iterator102 = _createForOfIteratorHelper(attempts),
+      _step102;
     try {
-      for (_iterator101.s(); !(_step101 = _iterator101.n()).done;) {
+      for (_iterator102.s(); !(_step102 = _iterator102.n()).done;) {
         var _a$mode, _a$subject;
-        var a = _step101.value;
+        var a = _step102.value;
         overall.total++;
         if (a.correct) overall.correct++;
         var m = byMode[_a$mode = a.mode] || (byMode[_a$mode] = {
@@ -20561,36 +20738,21 @@ function StatsView() {
 
       // Build a question lookup so missed questions can show their text.
     } catch (err) {
-      _iterator101.e(err);
+      _iterator102.e(err);
     } finally {
-      _iterator101.f();
+      _iterator102.f();
     }
     var qLookup = {};
     for (var _i26 = 0, _Object$keys3 = Object.keys(questions); _i26 < _Object$keys3.length; _i26++) {
       var fid = _Object$keys3[_i26];
       var qb = questions[fid] || {};
-      var _iterator102 = _createForOfIteratorHelper(qb.mc || []),
-        _step102;
-      try {
-        for (_iterator102.s(); !(_step102 = _iterator102.n()).done;) {
-          var q = _step102.value;
-          qLookup[q.id] = _objectSpread(_objectSpread({}, q), {}, {
-            mode: 'mc',
-            file_id: fid
-          });
-        }
-      } catch (err) {
-        _iterator102.e(err);
-      } finally {
-        _iterator102.f();
-      }
-      var _iterator103 = _createForOfIteratorHelper(qb.short || []),
+      var _iterator103 = _createForOfIteratorHelper(qb.mc || []),
         _step103;
       try {
         for (_iterator103.s(); !(_step103 = _iterator103.n()).done;) {
-          var _q3 = _step103.value;
-          qLookup[_q3.id] = _objectSpread(_objectSpread({}, _q3), {}, {
-            mode: 'short',
+          var q = _step103.value;
+          qLookup[q.id] = _objectSpread(_objectSpread({}, q), {}, {
+            mode: 'mc',
             file_id: fid
           });
         }
@@ -20599,24 +20761,39 @@ function StatsView() {
       } finally {
         _iterator103.f();
       }
+      var _iterator104 = _createForOfIteratorHelper(qb.short || []),
+        _step104;
+      try {
+        for (_iterator104.s(); !(_step104 = _iterator104.n()).done;) {
+          var _q3 = _step104.value;
+          qLookup[_q3.id] = _objectSpread(_objectSpread({}, _q3), {}, {
+            mode: 'short',
+            file_id: fid
+          });
+        }
+      } catch (err) {
+        _iterator104.e(err);
+      } finally {
+        _iterator104.f();
+      }
     }
     var fileLookup = {};
-    var _iterator104 = _createForOfIteratorHelper(files),
-      _step104;
+    var _iterator105 = _createForOfIteratorHelper(files),
+      _step105;
     try {
-      for (_iterator104.s(); !(_step104 = _iterator104.n()).done;) {
-        var f = _step104.value;
+      for (_iterator105.s(); !(_step105 = _iterator105.n()).done;) {
+        var f = _step105.value;
         fileLookup[f.file_id] = f;
       }
     } catch (err) {
-      _iterator104.e(err);
+      _iterator105.e(err);
     } finally {
-      _iterator104.f();
+      _iterator105.f();
     }
-    var topMisses = Object.entries(missByQid).map(function (_ref130) {
-      var _ref131 = _slicedToArray(_ref130, 2),
-        qid = _ref131[0],
-        misses = _ref131[1];
+    var topMisses = Object.entries(missByQid).map(function (_ref131) {
+      var _ref132 = _slicedToArray(_ref131, 2),
+        qid = _ref132[0],
+        misses = _ref132[1];
       var q = qLookup[qid];
       var text = q ? q.mode === 'mc' ? q.question : q.prompt : qid;
       var chapter = q && fileLookup[q.file_id] ? fileLookup[q.file_id].chapter : '—';
@@ -20658,10 +20835,10 @@ function StatsView() {
     className: "font-semibold mb-3 text-[var(--text-strong)]"
   }, "By subject"), /*#__PURE__*/React.createElement("div", {
     className: "space-y-3"
-  }, Object.entries(stats.bySubject).map(function (_ref132) {
-    var _ref133 = _slicedToArray(_ref132, 2),
-      subject = _ref133[0],
-      s = _ref133[1];
+  }, Object.entries(stats.bySubject).map(function (_ref133) {
+    var _ref134 = _slicedToArray(_ref133, 2),
+      subject = _ref134[0],
+      s = _ref134[1];
     return /*#__PURE__*/React.createElement(StatBar, {
       key: subject,
       label: subject,
@@ -20674,16 +20851,16 @@ function StatsView() {
     className: "font-semibold mb-3 text-[var(--text-strong)]"
   }, "By chapter"), /*#__PURE__*/React.createElement("div", {
     className: "space-y-3"
-  }, Object.entries(stats.byChapter).sort(function (_ref134, _ref135) {
-    var _ref136 = _slicedToArray(_ref134, 2),
-      a = _ref136[1];
+  }, Object.entries(stats.byChapter).sort(function (_ref135, _ref136) {
     var _ref137 = _slicedToArray(_ref135, 2),
-      b = _ref137[1];
+      a = _ref137[1];
+    var _ref138 = _slicedToArray(_ref136, 2),
+      b = _ref138[1];
     return a.correct / a.total - b.correct / b.total;
-  }).map(function (_ref138) {
-    var _ref139 = _slicedToArray(_ref138, 2),
-      fid = _ref139[0],
-      s = _ref139[1];
+  }).map(function (_ref139) {
+    var _ref140 = _slicedToArray(_ref139, 2),
+      fid = _ref140[0],
+      s = _ref140[1];
     return /*#__PURE__*/React.createElement(StatBar, {
       key: fid,
       label: "".concat(s.subject, " \u2014 ").concat(s.chapter),
@@ -20723,59 +20900,59 @@ function StatsView() {
 }
 
 // ---------- settings ----------
-function SettingsPanel(_ref140) {
-  var onClose = _ref140.onClose;
-  var _useApp25 = useApp(),
-    palette = _useApp25.palette,
-    mode = _useApp25.mode,
-    setPalette = _useApp25.setPalette,
-    setMode = _useApp25.setMode,
-    apiKey = _useApp25.apiKey,
-    setApiKey = _useApp25.setApiKey,
-    client = _useApp25.client,
-    session = _useApp25.session,
-    pendingSync = _useApp25.pendingSync,
-    syncBusy = _useApp25.syncBusy,
-    syncError = _useApp25.syncError,
-    flushSync = _useApp25.flushSync,
-    volume = _useApp25.volume,
-    setVolume = _useApp25.setVolume,
-    autoDownloadChapters = _useApp25.autoDownloadChapters,
-    setAutoDownloadChapters = _useApp25.setAutoDownloadChapters,
-    autoDownloadAll = _useApp25.autoDownloadAll,
-    setAutoDownloadAll = _useApp25.setAutoDownloadAll,
-    contributorMode = _useApp25.contributorMode,
-    setContributorMode = _useApp25.setContributorMode,
-    tropicalBg = _useApp25.tropicalBg,
-    setTropicalBg = _useApp25.setTropicalBg,
-    bgBlur = _useApp25.bgBlur,
-    setBgBlur = _useApp25.setBgBlur,
-    experimentalUI = _useApp25.experimentalUI,
-    setExperimentalUI = _useApp25.setExperimentalUI,
-    glass = _useApp25.glass,
-    setGlass = _useApp25.setGlass,
-    files = _useApp25.files;
+function SettingsPanel(_ref141) {
+  var onClose = _ref141.onClose;
+  var _useApp26 = useApp(),
+    palette = _useApp26.palette,
+    mode = _useApp26.mode,
+    setPalette = _useApp26.setPalette,
+    setMode = _useApp26.setMode,
+    apiKey = _useApp26.apiKey,
+    setApiKey = _useApp26.setApiKey,
+    client = _useApp26.client,
+    session = _useApp26.session,
+    pendingSync = _useApp26.pendingSync,
+    syncBusy = _useApp26.syncBusy,
+    syncError = _useApp26.syncError,
+    flushSync = _useApp26.flushSync,
+    volume = _useApp26.volume,
+    setVolume = _useApp26.setVolume,
+    autoDownloadChapters = _useApp26.autoDownloadChapters,
+    setAutoDownloadChapters = _useApp26.setAutoDownloadChapters,
+    autoDownloadAll = _useApp26.autoDownloadAll,
+    setAutoDownloadAll = _useApp26.setAutoDownloadAll,
+    contributorMode = _useApp26.contributorMode,
+    setContributorMode = _useApp26.setContributorMode,
+    tropicalBg = _useApp26.tropicalBg,
+    setTropicalBg = _useApp26.setTropicalBg,
+    bgBlur = _useApp26.bgBlur,
+    setBgBlur = _useApp26.setBgBlur,
+    experimentalUI = _useApp26.experimentalUI,
+    setExperimentalUI = _useApp26.setExperimentalUI,
+    glass = _useApp26.glass,
+    setGlass = _useApp26.setGlass,
+    files = _useApp26.files;
   var hasDownloadedChapters = files.some(function (f) {
     return f.chapter_id;
   });
-  var _useState355 = useState(apiKey || ''),
-    _useState356 = _slicedToArray(_useState355, 2),
-    keyVal = _useState356[0],
-    setKeyVal = _useState356[1];
-  var _useState357 = useState(false),
-    _useState358 = _slicedToArray(_useState357, 2),
-    keyShow = _useState358[0],
-    setKeyShow = _useState358[1];
-  var _useState359 = useState(''),
+  var _useState359 = useState(apiKey || ''),
     _useState360 = _slicedToArray(_useState359, 2),
-    keyErr = _useState360[0],
-    setKeyErr = _useState360[1];
+    keyVal = _useState360[0],
+    setKeyVal = _useState360[1];
   var _useState361 = useState(false),
     _useState362 = _slicedToArray(_useState361, 2),
-    keyBusy = _useState362[0],
-    setKeyBusy = _useState362[1];
+    keyShow = _useState362[0],
+    setKeyShow = _useState362[1];
+  var _useState363 = useState(''),
+    _useState364 = _slicedToArray(_useState363, 2),
+    keyErr = _useState364[0],
+    setKeyErr = _useState364[1];
+  var _useState365 = useState(false),
+    _useState366 = _slicedToArray(_useState365, 2),
+    keyBusy = _useState366[0],
+    setKeyBusy = _useState366[1];
   var saveKey = /*#__PURE__*/function () {
-    var _ref141 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee58() {
+    var _ref142 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee58() {
       var trimmed, _t48;
       return _regenerator().w(function (_context63) {
         while (1) switch (_context63.p = _context63.n) {
@@ -20820,7 +20997,7 @@ function SettingsPanel(_ref140) {
       }, _callee58, null, [[3, 5, 6, 7]]);
     }));
     return function saveKey() {
-      return _ref141.apply(this, arguments);
+      return _ref142.apply(this, arguments);
     };
   }();
   var paletteOpts = [['cold', '❄️', 'Cold'], ['warm', '🍂', 'Warm'], ['duo', '🗿', 'Rio'], ['tropical', '🌴', 'Tropical'], ['madison', '🏛️', 'Madison'], ['gambit', '🃏', 'Gambit']];
@@ -20838,11 +21015,11 @@ function SettingsPanel(_ref140) {
     className: "text-xs uppercase tracking-wide text-[var(--text-muted)] mb-2"
   }, "Colour"), /*#__PURE__*/React.createElement("div", {
     className: "grid grid-cols-4 gap-2"
-  }, paletteOpts.map(function (_ref142) {
-    var _ref143 = _slicedToArray(_ref142, 3),
-      k = _ref143[0],
-      emoji = _ref143[1],
-      label = _ref143[2];
+  }, paletteOpts.map(function (_ref143) {
+    var _ref144 = _slicedToArray(_ref143, 3),
+      k = _ref144[0],
+      emoji = _ref144[1],
+      label = _ref144[2];
     return /*#__PURE__*/React.createElement("button", {
       key: k,
       onClick: function onClick() {
@@ -20858,11 +21035,11 @@ function SettingsPanel(_ref140) {
     className: "text-xs uppercase tracking-wide text-[var(--text-muted)] mt-4 mb-2"
   }, "Mode"), /*#__PURE__*/React.createElement("div", {
     className: "grid grid-cols-3 gap-2"
-  }, modeOpts.map(function (_ref144) {
-    var _ref145 = _slicedToArray(_ref144, 3),
-      k = _ref145[0],
-      emoji = _ref145[1],
-      label = _ref145[2];
+  }, modeOpts.map(function (_ref145) {
+    var _ref146 = _slicedToArray(_ref145, 3),
+      k = _ref146[0],
+      emoji = _ref146[1],
+      label = _ref146[2];
     return /*#__PURE__*/React.createElement("button", {
       key: k,
       onClick: function onClick() {
@@ -21098,12 +21275,12 @@ function SettingsPanel(_ref140) {
 // LZ-compression we ship typically lands the chapter blob at ~25% of the
 // original JSON; this is also where the user can verify the migration ran.
 function StorageUsageSection() {
-  var _useState363 = useState(function () {
+  var _useState367 = useState(function () {
       return computeStorageSnapshot();
     }),
-    _useState364 = _slicedToArray(_useState363, 2),
-    snap = _useState364[0],
-    setSnap = _useState364[1];
+    _useState368 = _slicedToArray(_useState367, 2),
+    snap = _useState368[0],
+    setSnap = _useState368[1];
   var fmtBytes = function fmtBytes(n) {
     if (n < 1024) return "".concat(n, " B");
     if (n < 1024 * 1024) return "".concat((n / 1024).toFixed(1), " KB");
@@ -21237,33 +21414,33 @@ function computeStorageSnapshot() {
 // subject + accuracy). One click on the day's Erase button wipes BOTH the
 // local attempts and the server-side rows in that local-midnight window.
 function EraseQuizStatsSection() {
-  var _useApp26 = useApp(),
-    attempts = _useApp26.attempts,
-    session = _useApp26.session,
-    eraseStatsFor = _useApp26.eraseStatsFor;
-  var _useState365 = useState(null),
-    _useState366 = _slicedToArray(_useState365, 2),
-    busy = _useState366[0],
-    setBusy = _useState366[1]; // day key currently being erased
-  var _useState367 = useState(null),
-    _useState368 = _slicedToArray(_useState367, 2),
-    msg = _useState368[0],
-    setMsg = _useState368[1];
+  var _useApp27 = useApp(),
+    attempts = _useApp27.attempts,
+    session = _useApp27.session,
+    eraseStatsFor = _useApp27.eraseStatsFor;
   var _useState369 = useState(null),
     _useState370 = _slicedToArray(_useState369, 2),
-    openDay = _useState370[0],
-    setOpenDay = _useState370[1];
+    busy = _useState370[0],
+    setBusy = _useState370[1]; // day key currently being erased
+  var _useState371 = useState(null),
+    _useState372 = _slicedToArray(_useState371, 2),
+    msg = _useState372[0],
+    setMsg = _useState372[1];
+  var _useState373 = useState(null),
+    _useState374 = _slicedToArray(_useState373, 2),
+    openDay = _useState374[0],
+    setOpenDay = _useState374[1];
 
   // Group by local calendar day. Each day's bucket also keeps a per-quiz
   // (chapter+subject) breakdown so the user can see what they actually did
   // before confirming a delete.
   var days = useMemo(function () {
     var dayMap = new Map();
-    var _iterator105 = _createForOfIteratorHelper(attempts),
-      _step105;
+    var _iterator106 = _createForOfIteratorHelper(attempts),
+      _step106;
     try {
-      for (_iterator105.s(); !(_step105 = _iterator105.n()).done;) {
-        var a = _step105.value;
+      for (_iterator106.s(); !(_step106 = _iterator106.n()).done;) {
+        var a = _step106.value;
         var ts = a.ts || 0;
         var d = new Date(ts);
         // Local-day key: YYYY-MM-DD in the user's tz.
@@ -21304,9 +21481,9 @@ function EraseQuizStatsSection() {
         if (a.correct) q.correct++;
       }
     } catch (err) {
-      _iterator105.e(err);
+      _iterator106.e(err);
     } finally {
-      _iterator105.f();
+      _iterator106.f();
     }
     return Array.from(dayMap.values()).map(function (b) {
       return _objectSpread(_objectSpread({}, b), {}, {
@@ -21334,7 +21511,7 @@ function EraseQuizStatsSection() {
     }) + " \xB7 ".concat(key);
   };
   var eraseDay = /*#__PURE__*/function () {
-    var _ref146 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee59(b) {
+    var _ref147 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee59(b) {
       var label, res, _res$serverDeleted;
       return _regenerator().w(function (_context64) {
         while (1) switch (_context64.n) {
@@ -21373,7 +21550,7 @@ function EraseQuizStatsSection() {
       }, _callee59);
     }));
     return function eraseDay(_x60) {
-      return _ref146.apply(this, arguments);
+      return _ref147.apply(this, arguments);
     };
   }();
   return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
@@ -21441,21 +21618,21 @@ function EraseQuizStatsSection() {
 
 // ---------- bulk publish to chapter bank ----------
 function PublishAllPanel() {
-  var _useApp27 = useApp(),
-    api = _useApp27.api,
-    session = _useApp27.session,
-    files = _useApp27.files,
-    extractions = _useApp27.extractions,
-    questions = _useApp27.questions,
-    setFiles = _useApp27.setFiles;
-  var _useState371 = useState(false),
-    _useState372 = _slicedToArray(_useState371, 2),
-    busy = _useState372[0],
-    setBusy = _useState372[1];
-  var _useState373 = useState(null),
-    _useState374 = _slicedToArray(_useState373, 2),
-    status = _useState374[0],
-    setStatus = _useState374[1];
+  var _useApp28 = useApp(),
+    api = _useApp28.api,
+    session = _useApp28.session,
+    files = _useApp28.files,
+    extractions = _useApp28.extractions,
+    questions = _useApp28.questions,
+    setFiles = _useApp28.setFiles;
+  var _useState375 = useState(false),
+    _useState376 = _slicedToArray(_useState375, 2),
+    busy = _useState376[0],
+    setBusy = _useState376[1];
+  var _useState377 = useState(null),
+    _useState378 = _slicedToArray(_useState377, 2),
+    status = _useState378[0],
+    setStatus = _useState378[1];
   var publishable = files.filter(function (f) {
     return extractions[f.file_id];
   });
@@ -21464,8 +21641,8 @@ function PublishAllPanel() {
     return f.chapter_id;
   });
   var publishAll = /*#__PURE__*/function () {
-    var _ref147 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee60() {
-      var okCount, errCount, lastErr, _iterator106, _step106, _loop7, _t50;
+    var _ref148 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee60() {
+      var okCount, errCount, lastErr, _iterator107, _step107, _loop7, _t50;
       return _regenerator().w(function (_context66) {
         while (1) switch (_context66.p = _context66.n) {
           case 0:
@@ -21485,14 +21662,14 @@ function PublishAllPanel() {
             lastErr = {
               msg: ''
             };
-            _iterator106 = _createForOfIteratorHelper(publishable);
+            _iterator107 = _createForOfIteratorHelper(publishable);
             _context66.p = 2;
             _loop7 = /*#__PURE__*/_regenerator().m(function _loop7() {
               var f, _qb$mc, _qb$twoPart, _qb$short, chapterId, created, ext, qb, pushes, _i28, _pushes2, _pushes2$_i, stage, payload, _t49;
               return _regenerator().w(function (_context65) {
                 while (1) switch (_context65.p = _context65.n) {
                   case 0:
-                    f = _step106.value;
+                    f = _step107.value;
                     _context65.p = 1;
                     chapterId = f.chapter_id;
                     if (chapterId) {
@@ -21552,9 +21729,9 @@ function PublishAllPanel() {
                 }
               }, _loop7, null, [[1, 7]]);
             });
-            _iterator106.s();
+            _iterator107.s();
           case 3:
-            if ((_step106 = _iterator106.n()).done) {
+            if ((_step107 = _iterator107.n()).done) {
               _context66.n = 5;
               break;
             }
@@ -21568,10 +21745,10 @@ function PublishAllPanel() {
           case 6:
             _context66.p = 6;
             _t50 = _context66.v;
-            _iterator106.e(_t50);
+            _iterator107.e(_t50);
           case 7:
             _context66.p = 7;
-            _iterator106.f();
+            _iterator107.f();
             return _context66.f(7);
           case 8:
             setBusy(false);
@@ -21592,7 +21769,7 @@ function PublishAllPanel() {
       }, _callee60, null, [[2, 6, 7, 8]]);
     }));
     return function publishAll() {
-      return _ref147.apply(this, arguments);
+      return _ref148.apply(this, arguments);
     };
   }();
   return /*#__PURE__*/React.createElement("div", {
@@ -21620,33 +21797,33 @@ function PublishAllPanel() {
 // Token-limit aware: if Gemini rate-limits or errors, remaining flags stay in
 // localStorage queue for next session.
 function FlagFixesPanel() {
-  var _useApp28 = useApp(),
-    api = _useApp28.api,
-    client = _useApp28.client,
-    apiKey = _useApp28.apiKey,
-    session = _useApp28.session,
-    files = _useApp28.files,
-    extractions = _useApp28.extractions,
-    questions = _useApp28.questions,
-    setQuestionsFor = _useApp28.setQuestionsFor;
-  var _useState375 = useState(function () {
+  var _useApp29 = useApp(),
+    api = _useApp29.api,
+    client = _useApp29.client,
+    apiKey = _useApp29.apiKey,
+    session = _useApp29.session,
+    files = _useApp29.files,
+    extractions = _useApp29.extractions,
+    questions = _useApp29.questions,
+    setQuestionsFor = _useApp29.setQuestionsFor;
+  var _useState379 = useState(function () {
       return storage.get(KEYS.flagQueue, []);
     }),
-    _useState376 = _slicedToArray(_useState375, 2),
-    queue = _useState376[0],
-    setQueue = _useState376[1];
-  var _useState377 = useState(false),
-    _useState378 = _slicedToArray(_useState377, 2),
-    busy = _useState378[0],
-    setBusy = _useState378[1];
-  var _useState379 = useState(null),
     _useState380 = _slicedToArray(_useState379, 2),
-    status = _useState380[0],
-    setStatus = _useState380[1];
-  var _useState381 = useState([]),
+    queue = _useState380[0],
+    setQueue = _useState380[1];
+  var _useState381 = useState(false),
     _useState382 = _slicedToArray(_useState381, 2),
-    processedLog = _useState382[0],
-    setProcessedLog = _useState382[1];
+    busy = _useState382[0],
+    setBusy = _useState382[1];
+  var _useState383 = useState(null),
+    _useState384 = _slicedToArray(_useState383, 2),
+    status = _useState384[0],
+    setStatus = _useState384[1];
+  var _useState385 = useState([]),
+    _useState386 = _slicedToArray(_useState385, 2),
+    processedLog = _useState386[0],
+    setProcessedLog = _useState386[1];
   var pending = queue.filter(function (f) {
     return f.status === 'pending';
   });
@@ -21700,8 +21877,8 @@ function FlagFixesPanel() {
     return (err === null || err === void 0 ? void 0 : err.status) === 429 || /quota|rate.?limit|exceeded/i.test((err === null || err === void 0 ? void 0 : err.message) || '');
   };
   var runPipeline = /*#__PURE__*/function () {
-    var _ref148 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee61() {
-      var current, processedCount, _iterator107, _step107, _loop8, _ret3, _t54;
+    var _ref149 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee61() {
+      var current, processedCount, _iterator108, _step108, _loop8, _ret3, _t54;
       return _regenerator().w(function (_context68) {
         while (1) switch (_context68.p = _context68.n) {
           case 0:
@@ -21729,14 +21906,14 @@ function FlagFixesPanel() {
             setProcessedLog([]);
             current = _toConsumableArray(queue);
             processedCount = 0;
-            _iterator107 = _createForOfIteratorHelper(pending);
+            _iterator108 = _createForOfIteratorHelper(pending);
             _context68.p = 3;
             _loop8 = /*#__PURE__*/_regenerator().m(function _loop8() {
               var flag, fix, fileId, qbank, cleanParts, nextTp, nextMc, updated, _fix$choices3, _updated, _t51, _t52, _t53;
               return _regenerator().w(function (_context67) {
                 while (1) switch (_context67.p = _context67.n) {
                   case 0:
-                    flag = _step107.value;
+                    flag = _step108.value;
                     _context67.p = 1;
                     setStatus({
                       kind: 'info',
@@ -21901,9 +22078,9 @@ function FlagFixesPanel() {
                 }
               }, _loop8, null, [[8, 10], [3, 5], [1, 12]]);
             });
-            _iterator107.s();
+            _iterator108.s();
           case 4:
-            if ((_step107 = _iterator107.n()).done) {
+            if ((_step108 = _iterator108.n()).done) {
               _context68.n = 7;
               break;
             }
@@ -21924,10 +22101,10 @@ function FlagFixesPanel() {
           case 8:
             _context68.p = 8;
             _t54 = _context68.v;
-            _iterator107.e(_t54);
+            _iterator108.e(_t54);
           case 9:
             _context68.p = 9;
-            _iterator107.f();
+            _iterator108.f();
             return _context68.f(9);
           case 10:
             saveQueue(current);
@@ -21942,7 +22119,7 @@ function FlagFixesPanel() {
       }, _callee61, null, [[3, 8, 9, 10]]);
     }));
     return function runPipeline() {
-      return _ref148.apply(this, arguments);
+      return _ref149.apply(this, arguments);
     };
   }();
   if (!queue.length) return null;
@@ -21987,19 +22164,19 @@ function FlagFixesPanel() {
     });
   })));
 }
-function FlagRow(_ref149) {
+function FlagRow(_ref150) {
   var _f$question_snapshot, _f$question_snapshot2, _f$question_snapshot3, _f$question_snapshot4;
-  var f = _ref149.flag,
-    onRemove = _ref149.onRemove,
-    onRequeue = _ref149.onRequeue;
-  var _useState383 = useState(false),
-    _useState384 = _slicedToArray(_useState383, 2),
-    amending = _useState384[0],
-    setAmending = _useState384[1];
-  var _useState385 = useState(''),
-    _useState386 = _slicedToArray(_useState385, 2),
-    amendText = _useState386[0],
-    setAmendText = _useState386[1];
+  var f = _ref150.flag,
+    onRemove = _ref150.onRemove,
+    onRequeue = _ref150.onRequeue;
+  var _useState387 = useState(false),
+    _useState388 = _slicedToArray(_useState387, 2),
+    amending = _useState388[0],
+    setAmending = _useState388[1];
+  var _useState389 = useState(''),
+    _useState390 = _slicedToArray(_useState389, 2),
+    amendText = _useState390[0],
+    setAmendText = _useState390[1];
   var letters = ['A', 'B', 'C', 'D'];
   var fixed = f.fixed_question;
   return /*#__PURE__*/React.createElement("li", {
@@ -22070,30 +22247,30 @@ function FlagRow(_ref149) {
 
 // ---------- shell ----------
 function CloudBankPanel() {
-  var _useApp29 = useApp(),
-    session = _useApp29.session,
-    api = _useApp29.api,
-    files = _useApp29.files,
-    extractions = _useApp29.extractions,
-    questions = _useApp29.questions,
-    setFiles = _useApp29.setFiles,
-    setExtraction = _useApp29.setExtraction,
-    setQuestionsFor = _useApp29.setQuestionsFor;
-  var _useState387 = useState({
+  var _useApp30 = useApp(),
+    session = _useApp30.session,
+    api = _useApp30.api,
+    files = _useApp30.files,
+    extractions = _useApp30.extractions,
+    questions = _useApp30.questions,
+    setFiles = _useApp30.setFiles,
+    setExtraction = _useApp30.setExtraction,
+    setQuestionsFor = _useApp30.setQuestionsFor;
+  var _useState391 = useState({
       state: 'idle',
       message: ''
     }),
-    _useState388 = _slicedToArray(_useState387, 2),
-    status = _useState388[0],
-    setStatus = _useState388[1];
-  var _useState389 = useState(null),
-    _useState390 = _slicedToArray(_useState389, 2),
-    remote = _useState390[0],
-    setRemote = _useState390[1]; // { size_bytes, updated_at } | null
-  var _useState391 = useState(false),
     _useState392 = _slicedToArray(_useState391, 2),
-    busy = _useState392[0],
-    setBusy = _useState392[1];
+    status = _useState392[0],
+    setStatus = _useState392[1];
+  var _useState393 = useState(null),
+    _useState394 = _slicedToArray(_useState393, 2),
+    remote = _useState394[0],
+    setRemote = _useState394[1]; // { size_bytes, updated_at } | null
+  var _useState395 = useState(false),
+    _useState396 = _slicedToArray(_useState395, 2),
+    busy = _useState396[0],
+    setBusy = _useState396[1];
 
   // On mount / login: probe whether the user has a published bank already.
   useEffect(function () {
@@ -22121,7 +22298,7 @@ function CloudBankPanel() {
     return extractions[f.file_id] && ((_questions$f$file_id9 = questions[f.file_id]) === null || _questions$f$file_id9 === void 0 ? void 0 : _questions$f$file_id9.mc);
   });
   var publish = /*#__PURE__*/function () {
-    var _ref150 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee62() {
+    var _ref151 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee62() {
       var bank, res, _t55;
       return _regenerator().w(function (_context69) {
         while (1) switch (_context69.p = _context69.n) {
@@ -22172,11 +22349,11 @@ function CloudBankPanel() {
       }, _callee62, null, [[1, 3, 4, 5]]);
     }));
     return function publish() {
-      return _ref150.apply(this, arguments);
+      return _ref151.apply(this, arguments);
     };
   }();
   var pull = /*#__PURE__*/function () {
-    var _ref151 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee63() {
+    var _ref152 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee63() {
       var bank, _i29, _Object$keys4, fid, _i30, _Object$keys5, _fid, n, _t56;
       return _regenerator().w(function (_context70) {
         while (1) switch (_context70.p = _context70.n) {
@@ -22234,7 +22411,7 @@ function CloudBankPanel() {
       }, _callee63, null, [[2, 4, 5, 6]]);
     }));
     return function pull() {
-      return _ref151.apply(this, arguments);
+      return _ref152.apply(this, arguments);
     };
   }();
   var remoteAge = remote ? function () {
@@ -22276,10 +22453,10 @@ function CloudBankPanel() {
     className: "text-xs text-[var(--text-faint)]"
   }, "No locally processed chapters \u2014 process some in the Library, or pull from cloud if you have one."));
 }
-function exportBank(_ref152) {
-  var files = _ref152.files,
-    extractions = _ref152.extractions,
-    questions = _ref152.questions;
+function exportBank(_ref153) {
+  var files = _ref153.files,
+    extractions = _ref153.extractions,
+    questions = _ref153.questions;
   var data = {
     version: 1,
     exported_at: new Date().toISOString(),
@@ -22302,32 +22479,32 @@ function exportBank(_ref152) {
 }
 
 // ---------- account ----------
-function AccountPanel(_ref153) {
-  var onClose = _ref153.onClose;
-  var _useApp30 = useApp(),
-    session = _useApp30.session,
-    setSession = _useApp30.setSession,
-    api = _useApp30.api;
-  var _useState393 = useState('login'),
-    _useState394 = _slicedToArray(_useState393, 2),
-    mode = _useState394[0],
-    setMode = _useState394[1]; // 'login' | 'signup'
-  var _useState395 = useState(''),
-    _useState396 = _slicedToArray(_useState395, 2),
-    username = _useState396[0],
-    setUsername = _useState396[1];
-  var _useState397 = useState(''),
+function AccountPanel(_ref154) {
+  var onClose = _ref154.onClose;
+  var _useApp31 = useApp(),
+    session = _useApp31.session,
+    setSession = _useApp31.setSession,
+    api = _useApp31.api;
+  var _useState397 = useState('login'),
     _useState398 = _slicedToArray(_useState397, 2),
-    pin = _useState398[0],
-    setPin = _useState398[1];
+    mode = _useState398[0],
+    setMode = _useState398[1]; // 'login' | 'signup'
   var _useState399 = useState(''),
     _useState400 = _slicedToArray(_useState399, 2),
-    err = _useState400[0],
-    setErr = _useState400[1];
-  var _useState401 = useState(false),
+    username = _useState400[0],
+    setUsername = _useState400[1];
+  var _useState401 = useState(''),
     _useState402 = _slicedToArray(_useState401, 2),
-    busy = _useState402[0],
-    setBusy = _useState402[1];
+    pin = _useState402[0],
+    setPin = _useState402[1];
+  var _useState403 = useState(''),
+    _useState404 = _slicedToArray(_useState403, 2),
+    err = _useState404[0],
+    setErr = _useState404[1];
+  var _useState405 = useState(false),
+    _useState406 = _slicedToArray(_useState405, 2),
+    busy = _useState406[0],
+    setBusy = _useState406[1];
   if (session) {
     return /*#__PURE__*/React.createElement("div", {
       className: "bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-5"
@@ -22363,7 +22540,7 @@ function AccountPanel(_ref153) {
     }, "Log out")));
   }
   var submit = /*#__PURE__*/function () {
-    var _ref155 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee65() {
+    var _ref156 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee65() {
       var res, _t58, _t59;
       return _regenerator().w(function (_context72) {
         while (1) switch (_context72.p = _context72.n) {
@@ -22430,17 +22607,17 @@ function AccountPanel(_ref153) {
       }, _callee65, null, [[3, 8, 9, 10]]);
     }));
     return function submit() {
-      return _ref155.apply(this, arguments);
+      return _ref156.apply(this, arguments);
     };
   }();
   return /*#__PURE__*/React.createElement("div", {
     className: "bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-5 max-w-sm mx-auto"
   }, /*#__PURE__*/React.createElement("div", {
     className: "flex gap-1 mb-4"
-  }, [['login', 'Log in'], ['signup', 'Sign up']].map(function (_ref156) {
-    var _ref157 = _slicedToArray(_ref156, 2),
-      k = _ref157[0],
-      label = _ref157[1];
+  }, [['login', 'Log in'], ['signup', 'Sign up']].map(function (_ref157) {
+    var _ref158 = _slicedToArray(_ref157, 2),
+      k = _ref158[0],
+      label = _ref158[1];
     return /*#__PURE__*/React.createElement("button", {
       key: k,
       onClick: function onClick() {
@@ -22492,18 +22669,18 @@ function AccountPanel(_ref153) {
 function pct(c, t) {
   return t ? Math.round(c / t * 100) : 0;
 }
-function Leaderboard(_ref158) {
-  var onPickUser = _ref158.onPickUser;
-  var _useApp31 = useApp(),
-    api = _useApp31.api;
-  var _useState403 = useState(null),
-    _useState404 = _slicedToArray(_useState403, 2),
-    data = _useState404[0],
-    setData = _useState404[1];
-  var _useState405 = useState(''),
-    _useState406 = _slicedToArray(_useState405, 2),
-    err = _useState406[0],
-    setErr = _useState406[1];
+function Leaderboard(_ref159) {
+  var onPickUser = _ref159.onPickUser;
+  var _useApp32 = useApp(),
+    api = _useApp32.api;
+  var _useState407 = useState(null),
+    _useState408 = _slicedToArray(_useState407, 2),
+    data = _useState408[0],
+    setData = _useState408[1];
+  var _useState409 = useState(''),
+    _useState410 = _slicedToArray(_useState409, 2),
+    err = _useState410[0],
+    setErr = _useState410[1];
   useEffect(function () {
     var cancelled = false;
     api.leaderboard().then(function (d) {
@@ -22550,9 +22727,9 @@ function Leaderboard(_ref158) {
     }, pct(u.correct, u.total), "%")));
   })));
 }
-function ServerStatsPayload(_ref159) {
+function ServerStatsPayload(_ref160) {
   var _data$bySubject, _data$byChapter, _data$byMode;
-  var data = _ref159.data;
+  var data = _ref160.data;
   if (!data) return null;
   var overall = data.overall || {
     total: 0,
@@ -22575,17 +22752,17 @@ function ServerStatsPayload(_ref159) {
   var days = [];
   for (var i = 6; i >= 0; i--) days.push(today - i);
   var dailyByBucket = {};
-  var _iterator108 = _createForOfIteratorHelper(data.daily || []),
-    _step108;
+  var _iterator109 = _createForOfIteratorHelper(data.daily || []),
+    _step109;
   try {
-    for (_iterator108.s(); !(_step108 = _iterator108.n()).done;) {
-      var d = _step108.value;
+    for (_iterator109.s(); !(_step109 = _iterator109.n()).done;) {
+      var d = _step109.value;
       dailyByBucket[d.day_bucket] = d;
     }
   } catch (err) {
-    _iterator108.e(err);
+    _iterator109.e(err);
   } finally {
-    _iterator108.f();
+    _iterator109.f();
   }
   var dailySeries = days.map(function (b) {
     var r = dailyByBucket[b];
@@ -22707,36 +22884,36 @@ function ServerStatsPayload(_ref159) {
 }
 
 // ---------- audit modal: Gemini correctness check (no deletion) ----------
-function AuditModal(_ref160) {
-  var chapter = _ref160.chapter,
-    onClose = _ref160.onClose;
-  var _useApp32 = useApp(),
-    api = _useApp32.api,
-    client = _useApp32.client,
-    apiKey = _useApp32.apiKey,
-    files = _useApp32.files,
-    setQuestionsFor = _useApp32.setQuestionsFor,
-    questions = _useApp32.questions;
-  var _useState407 = useState('loading'),
-    _useState408 = _slicedToArray(_useState407, 2),
-    phase = _useState408[0],
-    setPhase = _useState408[1]; // loading | ready | verifying | done
-  var _useState409 = useState([]),
-    _useState410 = _slicedToArray(_useState409, 2),
-    mc = _useState410[0],
-    setMc = _useState410[1];
-  var _useState411 = useState([]),
+function AuditModal(_ref161) {
+  var chapter = _ref161.chapter,
+    onClose = _ref161.onClose;
+  var _useApp33 = useApp(),
+    api = _useApp33.api,
+    client = _useApp33.client,
+    apiKey = _useApp33.apiKey,
+    files = _useApp33.files,
+    setQuestionsFor = _useApp33.setQuestionsFor,
+    questions = _useApp33.questions;
+  var _useState411 = useState('loading'),
     _useState412 = _slicedToArray(_useState411, 2),
-    flags = _useState412[0],
-    setFlags = _useState412[1]; // [{index, suggested_index, reason, q}]
-  var _useState413 = useState(null),
+    phase = _useState412[0],
+    setPhase = _useState412[1]; // loading | ready | verifying | done
+  var _useState413 = useState([]),
     _useState414 = _slicedToArray(_useState413, 2),
-    status = _useState414[0],
-    setStatus = _useState414[1];
-  var _useState415 = useState(new Set()),
+    mc = _useState414[0],
+    setMc = _useState414[1];
+  var _useState415 = useState([]),
     _useState416 = _slicedToArray(_useState415, 2),
-    applied = _useState416[0],
-    setApplied = _useState416[1];
+    flags = _useState416[0],
+    setFlags = _useState416[1]; // [{index, suggested_index, reason, q}]
+  var _useState417 = useState(null),
+    _useState418 = _slicedToArray(_useState417, 2),
+    status = _useState418[0],
+    setStatus = _useState418[1];
+  var _useState419 = useState(new Set()),
+    _useState420 = _slicedToArray(_useState419, 2),
+    applied = _useState420[0],
+    setApplied = _useState420[1];
   useEffect(function () {
     var cancelled = false;
     api.getChapter(chapter.id).then(function (full) {
@@ -22758,7 +22935,7 @@ function AuditModal(_ref160) {
     return f.chapter_id === chapter.id;
   });
   var runVerify = /*#__PURE__*/function () {
-    var _ref161 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee66() {
+    var _ref162 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee66() {
       var mcOnly, _results, flagged, _t60, _t61;
       return _regenerator().w(function (_context73) {
         while (1) switch (_context73.p = _context73.n) {
@@ -22833,11 +23010,11 @@ function AuditModal(_ref160) {
       }, _callee66, null, [[4, 6], [2, 8]]);
     }));
     return function runVerify() {
-      return _ref161.apply(this, arguments);
+      return _ref162.apply(this, arguments);
     };
   }();
   var acceptFix = /*#__PURE__*/function () {
-    var _ref162 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee67(flag) {
+    var _ref163 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee67(flag) {
       var updated, qbank, localUpdated, _t62;
       return _regenerator().w(function (_context74) {
         while (1) switch (_context74.p = _context74.n) {
@@ -22888,7 +23065,7 @@ function AuditModal(_ref160) {
       }, _callee67, null, [[1, 3]]);
     }));
     return function acceptFix(_x61) {
-      return _ref162.apply(this, arguments);
+      return _ref163.apply(this, arguments);
     };
   }();
   return /*#__PURE__*/React.createElement("div", {
@@ -22969,9 +23146,9 @@ function AuditModal(_ref160) {
 }
 
 // ---------- collaborative bank (chapters) ----------
-function StageDot(_ref163) {
-  var stage = _ref163.stage,
-    label = _ref163.label;
+function StageDot(_ref164) {
+  var stage = _ref164.stage,
+    label = _ref164.label;
   var done = stage === null || stage === void 0 ? void 0 : stage.done;
   var partial = (stage === null || stage === void 0 ? void 0 : stage.terms_missing) > 0;
   var cls = done && !partial ? 'bg-[var(--success-bg-strong)] text-[var(--success-text)] border-[var(--success-border)]' : done && partial ? 'bg-[var(--warning-bg)] text-[var(--warning-text)] border-[var(--warning-text-strong)]' : 'bg-[var(--bg-elev)] text-[var(--text-faint)] border-[var(--border)]';
@@ -22984,16 +23161,16 @@ function StageDot(_ref163) {
     className: "text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded border ".concat(cls)
   }, label, (stage === null || stage === void 0 ? void 0 : stage.count) != null ? " ".concat(stage.count) : '');
 }
-function ChapterRow(_ref164) {
+function ChapterRow(_ref165) {
   var _s$extraction, _chapter$stages, _chapter$stages2, _chapter$stages3, _chapter$stages4, _chapter$stages5;
-  var chapter = _ref164.chapter,
-    onDownload = _ref164.onDownload,
-    onContribute = _ref164.onContribute,
-    onAudit = _ref164.onAudit,
-    busy = _ref164.busy,
-    downloaded = _ref164.downloaded,
-    canContribute = _ref164.canContribute,
-    contributorMode = _ref164.contributorMode;
+  var chapter = _ref165.chapter,
+    onDownload = _ref165.onDownload,
+    onContribute = _ref165.onContribute,
+    onAudit = _ref165.onAudit,
+    busy = _ref165.busy,
+    downloaded = _ref165.downloaded,
+    canContribute = _ref165.canContribute,
+    contributorMode = _ref165.contributorMode;
   var ago = function () {
     var ms = Date.now() - chapter.updated_at;
     var m = Math.round(ms / 60000);
@@ -23084,63 +23261,63 @@ function ChapterRow(_ref164) {
   }, "\u2713 audited")));
 }
 function BankTab() {
-  var _useApp33 = useApp(),
-    api = _useApp33.api,
-    session = _useApp33.session,
-    apiKey = _useApp33.apiKey,
-    client = _useApp33.client,
-    setFiles = _useApp33.setFiles,
-    setExtraction = _useApp33.setExtraction,
-    setQuestionsFor = _useApp33.setQuestionsFor,
-    files = _useApp33.files,
-    contributorMode = _useApp33.contributorMode;
-  var _useState417 = useState(null),
-    _useState418 = _slicedToArray(_useState417, 2),
-    data = _useState418[0],
-    setData = _useState418[1];
-  var _useState419 = useState(''),
-    _useState420 = _slicedToArray(_useState419, 2),
-    err = _useState420[0],
-    setErr = _useState420[1];
+  var _useApp34 = useApp(),
+    api = _useApp34.api,
+    session = _useApp34.session,
+    apiKey = _useApp34.apiKey,
+    client = _useApp34.client,
+    setFiles = _useApp34.setFiles,
+    setExtraction = _useApp34.setExtraction,
+    setQuestionsFor = _useApp34.setQuestionsFor,
+    files = _useApp34.files,
+    contributorMode = _useApp34.contributorMode;
   var _useState421 = useState(null),
     _useState422 = _slicedToArray(_useState421, 2),
-    auditChapter = _useState422[0],
-    setAuditChapter = _useState422[1];
-  var _useState423 = useState(0),
+    data = _useState422[0],
+    setData = _useState422[1];
+  var _useState423 = useState(''),
     _useState424 = _slicedToArray(_useState423, 2),
-    tick = _useState424[0],
-    setTick = _useState424[1];
+    err = _useState424[0],
+    setErr = _useState424[1];
   var _useState425 = useState(null),
     _useState426 = _slicedToArray(_useState425, 2),
-    busyId = _useState426[0],
-    setBusyId = _useState426[1]; // chapter id currently working
-  var _useState427 = useState(null),
+    auditChapter = _useState426[0],
+    setAuditChapter = _useState426[1];
+  var _useState427 = useState(0),
     _useState428 = _slicedToArray(_useState427, 2),
-    busyKind = _useState428[0],
-    setBusyKind = _useState428[1]; // 'downloading' | 'contributing'
+    tick = _useState428[0],
+    setTick = _useState428[1];
   var _useState429 = useState(null),
     _useState430 = _slicedToArray(_useState429, 2),
-    status = _useState430[0],
-    setStatus = _useState430[1];
-  var _useState431 = useState(''),
+    busyId = _useState430[0],
+    setBusyId = _useState430[1]; // chapter id currently working
+  var _useState431 = useState(null),
     _useState432 = _slicedToArray(_useState431, 2),
-    filter = _useState432[0],
-    setFilter = _useState432[1];
+    busyKind = _useState432[0],
+    setBusyKind = _useState432[1]; // 'downloading' | 'contributing'
+  var _useState433 = useState(null),
+    _useState434 = _slicedToArray(_useState433, 2),
+    status = _useState434[0],
+    setStatus = _useState434[1];
+  var _useState435 = useState(''),
+    _useState436 = _slicedToArray(_useState435, 2),
+    filter = _useState436[0],
+    setFilter = _useState436[1];
   // Captured once at mount — the timestamp of the user's previous Bank visit.
-  var _useState433 = useState(function () {
+  var _useState437 = useState(function () {
       return storage.get(KEYS.bankSeen, 0);
     }),
-    _useState434 = _slicedToArray(_useState433, 1),
-    seenAt = _useState434[0];
-  var _useState435 = useState(false),
-    _useState436 = _slicedToArray(_useState435, 2),
-    summaryDismissed = _useState436[0],
-    setSummaryDismissed = _useState436[1];
+    _useState438 = _slicedToArray(_useState437, 1),
+    seenAt = _useState438[0];
+  var _useState439 = useState(false),
+    _useState440 = _slicedToArray(_useState439, 2),
+    summaryDismissed = _useState440[0],
+    setSummaryDismissed = _useState440[1];
   // Subjects collapse by default; user opens what they need.
-  var _useState437 = useState({}),
-    _useState438 = _slicedToArray(_useState437, 2),
-    openSubjects = _useState438[0],
-    setOpenSubjects = _useState438[1];
+  var _useState441 = useState({}),
+    _useState442 = _slicedToArray(_useState441, 2),
+    openSubjects = _useState442[0],
+    setOpenSubjects = _useState442[1];
   var toggleSubject = function toggleSubject(s) {
     return setOpenSubjects(function (p) {
       return _objectSpread(_objectSpread({}, p), {}, {
@@ -23173,7 +23350,7 @@ function BankTab() {
     }
   }, [data, seenAt]);
   var downloadOne = /*#__PURE__*/function () {
-    var _ref165 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee68(chapter) {
+    var _ref166 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee68(chapter) {
       var full, localFileId, fileRecord;
       return _regenerator().w(function (_context75) {
         while (1) switch (_context75.n) {
@@ -23212,11 +23389,11 @@ function BankTab() {
       }, _callee68);
     }));
     return function downloadOne(_x62) {
-      return _ref165.apply(this, arguments);
+      return _ref166.apply(this, arguments);
     };
   }();
   var downloadChapter = /*#__PURE__*/function () {
-    var _ref166 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee69(chapter) {
+    var _ref167 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee69(chapter) {
       var full, _t63;
       return _regenerator().w(function (_context76) {
         while (1) switch (_context76.p = _context76.n) {
@@ -23259,7 +23436,7 @@ function BankTab() {
       }, _callee69, null, [[2, 4, 5, 6]]);
     }));
     return function downloadChapter(_x63) {
-      return _ref166.apply(this, arguments);
+      return _ref167.apply(this, arguments);
     };
   }();
 
@@ -23267,8 +23444,8 @@ function BankTab() {
   // to fill in missing stages. PDF is not required for mc/two_part/short, so anyone
   // signed in with a key can advance a chapter.
   var contributeChapter = /*#__PURE__*/function () {
-    var _ref167 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee70(chapter, stages) {
-      var full, _iterator109, _step109, _loop9, localFile, refreshed, localFileId, fileRecord, _t64, _t65, _t66;
+    var _ref168 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee70(chapter, stages) {
+      var full, _iterator110, _step110, _loop9, localFile, refreshed, localFileId, fileRecord, _t64, _t65, _t66;
       return _regenerator().w(function (_context78) {
         while (1) switch (_context78.p = _context78.n) {
           case 0:
@@ -23305,14 +23482,14 @@ function BankTab() {
             }
             throw new Error('Chapter has no extraction yet — only the uploader can do that step.');
           case 5:
-            _iterator109 = _createForOfIteratorHelper(stages);
+            _iterator110 = _createForOfIteratorHelper(stages);
             _context78.p = 6;
             _loop9 = /*#__PURE__*/_regenerator().m(function _loop9() {
               var stage, newMc, hasBaseline, baseline, termCovered, missingTerms, termExtraction, termQs, twoPart, short;
               return _regenerator().w(function (_context77) {
                 while (1) switch (_context77.n) {
                   case 0:
-                    stage = _step109.value;
+                    stage = _step110.value;
                     if (!(stage === 'mc')) {
                       _context77.n = 6;
                       break;
@@ -23416,9 +23593,9 @@ function BankTab() {
                 }
               }, _loop9);
             });
-            _iterator109.s();
+            _iterator110.s();
           case 7:
-            if ((_step109 = _iterator109.n()).done) {
+            if ((_step110 = _iterator110.n()).done) {
               _context78.n = 9;
               break;
             }
@@ -23432,10 +23609,10 @@ function BankTab() {
           case 10:
             _context78.p = 10;
             _t64 = _context78.v;
-            _iterator109.e(_t64);
+            _iterator110.e(_t64);
           case 11:
             _context78.p = 11;
-            _iterator109.f();
+            _iterator110.f();
             return _context78.f(11);
           case 12:
             // If the user already has this chapter in their local library, refresh it
@@ -23513,7 +23690,7 @@ function BankTab() {
       }, _callee70, null, [[13, 15], [6, 10, 11, 12], [3, 17, 18, 19]]);
     }));
     return function contributeChapter(_x64, _x65) {
-      return _ref167.apply(this, arguments);
+      return _ref168.apply(this, arguments);
     };
   }();
   if (err) {
@@ -23549,19 +23726,19 @@ function BankTab() {
 
   // Group by subject, then sort each group by chapter number.
   var bySubject = {};
-  var _iterator110 = _createForOfIteratorHelper(data.chapters),
-    _step110;
+  var _iterator111 = _createForOfIteratorHelper(data.chapters),
+    _step111;
   try {
-    for (_iterator110.s(); !(_step110 = _iterator110.n()).done;) {
-      var ch = _step110.value;
+    for (_iterator111.s(); !(_step111 = _iterator111.n()).done;) {
+      var ch = _step111.value;
       var subj = ch.subject || 'Other';
       if (!bySubject[subj]) bySubject[subj] = [];
       bySubject[subj].push(ch);
     }
   } catch (err) {
-    _iterator110.e(err);
+    _iterator111.e(err);
   } finally {
-    _iterator110.f();
+    _iterator111.f();
   }
   var localChapterIds = new Set(files.map(function (f) {
     return f.chapter_id;
@@ -23577,11 +23754,11 @@ function BankTab() {
     if (bi !== -1) return 1;
     return a.localeCompare(b);
   });
-  var _iterator111 = _createForOfIteratorHelper(subjects),
-    _step111;
+  var _iterator112 = _createForOfIteratorHelper(subjects),
+    _step112;
   try {
-    for (_iterator111.s(); !(_step111 = _iterator111.n()).done;) {
-      var s = _step111.value;
+    for (_iterator112.s(); !(_step112 = _iterator112.n()).done;) {
+      var s = _step112.value;
       bySubject[s].sort(function (a, b) {
         var an = parseChapterNum(a),
           bn = parseChapterNum(b);
@@ -23590,9 +23767,9 @@ function BankTab() {
       });
     }
   } catch (err) {
-    _iterator111.e(err);
+    _iterator112.e(err);
   } finally {
-    _iterator111.f();
+    _iterator112.f();
   }
   var filterLc = filter.toLowerCase();
   var filtered = function filtered(chs) {
@@ -23630,7 +23807,9 @@ function BankTab() {
     className: "w-full bg-[var(--bg-elev)] border border-[var(--border)] rounded px-3 py-2 text-sm"
   }), status && /*#__PURE__*/React.createElement("div", {
     className: "text-sm rounded-lg px-3 py-2 ".concat(status.kind === 'ok' ? 'bg-[var(--success-bg)] text-[var(--success-text)]' : status.kind === 'err' ? 'bg-[var(--danger-bg)] text-[var(--danger-text)]' : 'bg-[var(--accent-soft)] text-[var(--accent-text)]')
-  }, status.kind === 'ok' ? '✓ ' : status.kind === 'info' ? '… ' : '', status.msg)), /*#__PURE__*/React.createElement(CarsArchive, null), changedChapters.length > 0 && !summaryDismissed && /*#__PURE__*/React.createElement("div", {
+  }, status.kind === 'ok' ? '✓ ' : status.kind === 'info' ? '… ' : '', status.msg)), /*#__PURE__*/React.createElement(CarsArchive, null), /*#__PURE__*/React.createElement(PracticePassageBankList, {
+    title: "Generated passage bank"
+  }), changedChapters.length > 0 && !summaryDismissed && /*#__PURE__*/React.createElement("div", {
     className: "bg-[var(--accent-soft)] border border-[var(--accent-border)] rounded-2xl p-4 sm:p-5"
   }, /*#__PURE__*/React.createElement("div", {
     className: "flex items-start justify-between gap-3"
@@ -23716,33 +23895,33 @@ function BankTab() {
   }), /*#__PURE__*/React.createElement(ConnectionsArchive, null));
 }
 function BanksBrowser() {
-  var _useApp34 = useApp(),
-    api = _useApp34.api,
-    session = _useApp34.session,
-    setFiles = _useApp34.setFiles,
-    setExtraction = _useApp34.setExtraction,
-    setQuestionsFor = _useApp34.setQuestionsFor,
-    files = _useApp34.files;
-  var _useState439 = useState(null),
-    _useState440 = _slicedToArray(_useState439, 2),
-    data = _useState440[0],
-    setData = _useState440[1];
-  var _useState441 = useState(''),
-    _useState442 = _slicedToArray(_useState441, 2),
-    err = _useState442[0],
-    setErr = _useState442[1];
-  var _useState443 = useState(0),
+  var _useApp35 = useApp(),
+    api = _useApp35.api,
+    session = _useApp35.session,
+    setFiles = _useApp35.setFiles,
+    setExtraction = _useApp35.setExtraction,
+    setQuestionsFor = _useApp35.setQuestionsFor,
+    files = _useApp35.files;
+  var _useState443 = useState(null),
     _useState444 = _slicedToArray(_useState443, 2),
-    tick = _useState444[0],
-    setTick = _useState444[1];
-  var _useState445 = useState(null),
+    data = _useState444[0],
+    setData = _useState444[1];
+  var _useState445 = useState(''),
     _useState446 = _slicedToArray(_useState445, 2),
-    busy = _useState446[0],
-    setBusy = _useState446[1]; // username currently downloading
-  var _useState447 = useState(null),
+    err = _useState446[0],
+    setErr = _useState446[1];
+  var _useState447 = useState(0),
     _useState448 = _slicedToArray(_useState447, 2),
-    status = _useState448[0],
-    setStatus = _useState448[1]; // { username, msg, kind }
+    tick = _useState448[0],
+    setTick = _useState448[1];
+  var _useState449 = useState(null),
+    _useState450 = _slicedToArray(_useState449, 2),
+    busy = _useState450[0],
+    setBusy = _useState450[1]; // username currently downloading
+  var _useState451 = useState(null),
+    _useState452 = _slicedToArray(_useState451, 2),
+    status = _useState452[0],
+    setStatus = _useState452[1]; // { username, msg, kind }
 
   useEffect(function () {
     var cancelled = false;
@@ -23758,7 +23937,7 @@ function BanksBrowser() {
     };
   }, [api, tick]);
   var download = /*#__PURE__*/function () {
-    var _ref168 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee71(username) {
+    var _ref169 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee71(username) {
       var localCount, msg, bank, _i31, _Object$keys6, fid, _i32, _Object$keys7, _fid2, n, _t67;
       return _regenerator().w(function (_context79) {
         while (1) switch (_context79.p = _context79.n) {
@@ -23821,7 +24000,7 @@ function BanksBrowser() {
       }, _callee71, null, [[3, 5, 6, 7]]);
     }));
     return function download(_x66) {
-      return _ref168.apply(this, arguments);
+      return _ref169.apply(this, arguments);
     };
   }();
   if (err) {
@@ -23884,19 +24063,19 @@ function BanksBrowser() {
     }, busy === b.username ? 'Downloading…' : session ? 'Download' : 'Sign in'));
   }))));
 }
-function UserProfile(_ref169) {
-  var username = _ref169.username,
-    onBack = _ref169.onBack;
-  var _useApp35 = useApp(),
-    api = _useApp35.api;
-  var _useState449 = useState(null),
-    _useState450 = _slicedToArray(_useState449, 2),
-    data = _useState450[0],
-    setData = _useState450[1];
-  var _useState451 = useState(''),
-    _useState452 = _slicedToArray(_useState451, 2),
-    err = _useState452[0],
-    setErr = _useState452[1];
+function UserProfile(_ref170) {
+  var username = _ref170.username,
+    onBack = _ref170.onBack;
+  var _useApp36 = useApp(),
+    api = _useApp36.api;
+  var _useState453 = useState(null),
+    _useState454 = _slicedToArray(_useState453, 2),
+    data = _useState454[0],
+    setData = _useState454[1];
+  var _useState455 = useState(''),
+    _useState456 = _slicedToArray(_useState455, 2),
+    err = _useState456[0],
+    setErr = _useState456[1];
   useEffect(function () {
     var cancelled = false;
     setData(null);
@@ -23928,12 +24107,12 @@ function UserProfile(_ref169) {
   }));
 }
 function SyncBar() {
-  var _useApp36 = useApp(),
-    pendingSync = _useApp36.pendingSync,
-    syncBusy = _useApp36.syncBusy,
-    syncError = _useApp36.syncError,
-    flushSync = _useApp36.flushSync,
-    session = _useApp36.session;
+  var _useApp37 = useApp(),
+    pendingSync = _useApp37.pendingSync,
+    syncBusy = _useApp37.syncBusy,
+    syncError = _useApp37.syncError,
+    flushSync = _useApp37.flushSync,
+    session = _useApp37.session;
   if (!session) return null;
   var count = pendingSync.length;
   return /*#__PURE__*/React.createElement("div", {
@@ -23956,23 +24135,23 @@ function SyncBar() {
   }, syncBusy ? '...' : 'Sync now'));
 }
 function ServerStatsView() {
-  var _useApp37 = useApp(),
-    api = _useApp37.api,
-    session = _useApp37.session,
-    pendingSync = _useApp37.pendingSync,
-    syncBusy = _useApp37.syncBusy;
-  var _useState453 = useState(null),
-    _useState454 = _slicedToArray(_useState453, 2),
-    data = _useState454[0],
-    setData = _useState454[1];
-  var _useState455 = useState(''),
-    _useState456 = _slicedToArray(_useState455, 2),
-    err = _useState456[0],
-    setErr = _useState456[1];
-  var _useState457 = useState(0),
+  var _useApp38 = useApp(),
+    api = _useApp38.api,
+    session = _useApp38.session,
+    pendingSync = _useApp38.pendingSync,
+    syncBusy = _useApp38.syncBusy;
+  var _useState457 = useState(null),
     _useState458 = _slicedToArray(_useState457, 2),
-    tick = _useState458[0],
-    setTick = _useState458[1];
+    data = _useState458[0],
+    setData = _useState458[1];
+  var _useState459 = useState(''),
+    _useState460 = _slicedToArray(_useState459, 2),
+    err = _useState460[0],
+    setErr = _useState460[1];
+  var _useState461 = useState(0),
+    _useState462 = _slicedToArray(_useState461, 2),
+    tick = _useState462[0],
+    setTick = _useState462[1];
   useEffect(function () {
     if (!session) return;
     var cancelled = false;
@@ -24015,16 +24194,16 @@ function ServerStatsView() {
 // — the re-download wrote new data to in-memory React state but the
 // localStorage write failed, so reloading reverted to the old snapshot.
 function StorageWarning() {
-  var _useApp38 = useApp(),
-    clearAttempts = _useApp38.clearAttempts;
-  var _useState459 = useState(null),
-    _useState460 = _slicedToArray(_useState459, 2),
-    fail = _useState460[0],
-    setFail = _useState460[1]; // { key, quota, message } | null
-  var _useState461 = useState(0),
-    _useState462 = _slicedToArray(_useState461, 2),
-    usage = _useState462[0],
-    setUsage = _useState462[1];
+  var _useApp39 = useApp(),
+    clearAttempts = _useApp39.clearAttempts;
+  var _useState463 = useState(null),
+    _useState464 = _slicedToArray(_useState463, 2),
+    fail = _useState464[0],
+    setFail = _useState464[1]; // { key, quota, message } | null
+  var _useState465 = useState(0),
+    _useState466 = _slicedToArray(_useState465, 2),
+    usage = _useState466[0],
+    setUsage = _useState466[1];
   useEffect(function () {
     var handler = function handler(e) {
       setFail(e.detail || {
@@ -24086,42 +24265,42 @@ function StorageWarning() {
   }, "\xD7"));
 }
 function Shell() {
-  var _useApp39 = useApp(),
-    apiKey = _useApp39.apiKey,
-    setApiKey = _useApp39.setApiKey,
-    attempts = _useApp39.attempts,
-    readOnly = _useApp39.readOnly,
-    files = _useApp39.files,
-    extractions = _useApp39.extractions,
-    questions = _useApp39.questions,
-    session = _useApp39.session,
-    setSession = _useApp39.setSession,
-    pendingSync = _useApp39.pendingSync,
-    syncBusy = _useApp39.syncBusy,
-    api = _useApp39.api,
-    palette = _useApp39.palette,
-    mode = _useApp39.mode,
-    contributorMode = _useApp39.contributorMode;
-  var _useState463 = useState('home'),
-    _useState464 = _slicedToArray(_useState463, 2),
-    tab = _useState464[0],
-    setTab = _useState464[1];
-  var _useState465 = useState(false),
-    _useState466 = _slicedToArray(_useState465, 2),
-    showAccount = _useState466[0],
-    setShowAccount = _useState466[1];
-  var _useState467 = useState(false),
+  var _useApp40 = useApp(),
+    apiKey = _useApp40.apiKey,
+    setApiKey = _useApp40.setApiKey,
+    attempts = _useApp40.attempts,
+    readOnly = _useApp40.readOnly,
+    files = _useApp40.files,
+    extractions = _useApp40.extractions,
+    questions = _useApp40.questions,
+    session = _useApp40.session,
+    setSession = _useApp40.setSession,
+    pendingSync = _useApp40.pendingSync,
+    syncBusy = _useApp40.syncBusy,
+    api = _useApp40.api,
+    palette = _useApp40.palette,
+    mode = _useApp40.mode,
+    contributorMode = _useApp40.contributorMode;
+  var _useState467 = useState('home'),
     _useState468 = _slicedToArray(_useState467, 2),
-    showSettings = _useState468[0],
-    setShowSettings = _useState468[1];
-  var _useState469 = useState(null),
+    tab = _useState468[0],
+    setTab = _useState468[1];
+  var _useState469 = useState(false),
     _useState470 = _slicedToArray(_useState469, 2),
-    profileUser = _useState470[0],
-    setProfileUser = _useState470[1];
+    showAccount = _useState470[0],
+    setShowAccount = _useState470[1];
   var _useState471 = useState(false),
     _useState472 = _slicedToArray(_useState471, 2),
-    bankHasUpdates = _useState472[0],
-    setBankHasUpdates = _useState472[1];
+    showSettings = _useState472[0],
+    setShowSettings = _useState472[1];
+  var _useState473 = useState(null),
+    _useState474 = _slicedToArray(_useState473, 2),
+    profileUser = _useState474[0],
+    setProfileUser = _useState474[1];
+  var _useState475 = useState(false),
+    _useState476 = _slicedToArray(_useState475, 2),
+    bankHasUpdates = _useState476[0],
+    setBankHasUpdates = _useState476[1];
 
   // Bank update indicator: compare the newest chapter's updated_at against the
   // last time the user reviewed the Bank tab.
@@ -24153,10 +24332,10 @@ function Shell() {
 
   // Home dot: today's CARS is ready but the user hasn't done it yet.
   // Also downloads (caches) today's set on app entry so it opens instantly / offline.
-  var _useState473 = useState(false),
-    _useState474 = _slicedToArray(_useState473, 2),
-    carsReady = _useState474[0],
-    setCarsReady = _useState474[1];
+  var _useState477 = useState(false),
+    _useState478 = _slicedToArray(_useState477, 2),
+    carsReady = _useState478[0],
+    setCarsReady = _useState478[1];
   var recheckCars = useCallback(function () {
     var d = todayStr();
     var keys = Array.from({
@@ -24238,9 +24417,9 @@ function Shell() {
   useEffect(function () {
     tabRef.current = tab;
   }, [tab]);
-  var tabKeys = tabs.map(function (_ref170) {
-    var _ref171 = _slicedToArray(_ref170, 1),
-      k = _ref171[0];
+  var tabKeys = tabs.map(function (_ref171) {
+    var _ref172 = _slicedToArray(_ref171, 1),
+      k = _ref172[0];
     return k;
   });
 
@@ -24274,10 +24453,10 @@ function Shell() {
     return extractions[f.file_id] && ((_questions$f$file_id0 = questions[f.file_id]) === null || _questions$f$file_id0 === void 0 ? void 0 : _questions$f$file_id0.mc) && ((_questions$f$file_id1 = questions[f.file_id]) === null || _questions$f$file_id1 === void 0 ? void 0 : _questions$f$file_id1.short);
   }).length;
   var headerRef = useRef(null);
-  var _useState475 = useState(56),
-    _useState476 = _slicedToArray(_useState475, 2),
-    headerH = _useState476[0],
-    setHeaderH = _useState476[1];
+  var _useState479 = useState(56),
+    _useState480 = _slicedToArray(_useState479, 2),
+    headerH = _useState480[0],
+    setHeaderH = _useState480[1];
   useLayoutEffect(function () {
     var measure = function measure() {
       if (!headerRef.current) return;
@@ -24324,10 +24503,10 @@ function Shell() {
     className: "hidden sm:inline text-xs text-[var(--text-faint)] font-mono"
   }, MODEL)), /*#__PURE__*/React.createElement("nav", {
     className: "flex items-center justify-center gap-1 overflow-x-auto order-3 sm:order-2 w-full sm:w-auto"
-  }, tabs.map(function (_ref172) {
-    var _ref173 = _slicedToArray(_ref172, 2),
-      k = _ref173[0],
-      label = _ref173[1];
+  }, tabs.map(function (_ref173) {
+    var _ref174 = _slicedToArray(_ref173, 2),
+      k = _ref174[0],
+      label = _ref174[1];
     return /*#__PURE__*/React.createElement("button", {
       key: k,
       onClick: function onClick() {
@@ -24447,10 +24626,10 @@ function Shell() {
   }))));
 }
 function Root() {
-  var _useApp40 = useApp(),
-    apiKey = _useApp40.apiKey,
-    readOnly = _useApp40.readOnly,
-    session = _useApp40.session;
+  var _useApp41 = useApp(),
+    apiKey = _useApp41.apiKey,
+    readOnly = _useApp41.readOnly,
+    session = _useApp41.session;
   return apiKey || readOnly || session ? /*#__PURE__*/React.createElement(Shell, null) : /*#__PURE__*/React.createElement(ApiKeyGate, null);
 }
 

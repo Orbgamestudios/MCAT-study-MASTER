@@ -36,6 +36,7 @@ const KEYS = {
   glass:      'mcat:glass',         // boolean — liquid-glass skin; only applies when experimentalUI is on
   bankSeen: 'mcat:bankSeen', // timestamp — last time the user reviewed the Bank tab
   cars: 'mcat:cars', // { [date]: { score, total, completed_at } } — daily CARS results
+  practicePassages: 'mcat:practicePassages', // locally generated Passage-tab sets
   connectionsResults: 'mcat:connectionsResults', // { [date]: { solved, mistakes, completed_at } }
   lessonsCache: 'mcat:lessonsCache', // { [chapter_id]: lessonObject } — downloaded lesson bodies
   lessonProgress: 'mcat:lessonProgress', // { [chapter_id]: { completed_at } } — kept after body removed
@@ -9348,6 +9349,129 @@ const PRACTICE_PASSAGE_SECTIONS = [
   { key: 'cars', label: 'CARS', name: 'Critical Analysis and Reasoning', subject: 'CARS' },
 ];
 
+function getPracticePassageBank() {
+  const arr = storage.get(KEYS.practicePassages, []) || [];
+  return Array.isArray(arr) ? arr : [];
+}
+function setPracticePassageBank(entries) {
+  storage.set(KEYS.practicePassages, entries);
+  window.dispatchEvent(new Event('mcat:practicePassagesChanged'));
+}
+function savePracticePassage(entry) {
+  const existing = getPracticePassageBank().filter((p) => p.id !== entry.id);
+  setPracticePassageBank([entry, ...existing].slice(0, 80));
+}
+function practicePassageFileId(entry) {
+  return `passage_${entry.sectionKey}_${entry.id}`;
+}
+function practicePassageResult(entry, attempts) {
+  const questions = entry.payload?.questions || [];
+  const questionIds = new Set(questions.map((q) => q.id).filter(Boolean));
+  const picks = {};
+  let correct = 0;
+  let completedAt = 0;
+  for (const a of attempts || []) {
+    if (a.file_id !== practicePassageFileId(entry)) continue;
+    if (questionIds.size && !questionIds.has(a.question_id)) continue;
+    if (picks[a.question_id] != null) continue;
+    const idx = ['A', 'B', 'C', 'D'].indexOf(a.user_answer);
+    if (idx < 0) continue;
+    picks[a.question_id] = idx;
+    if (a.correct) correct++;
+    completedAt = Math.max(completedAt, a.ts || a.created_at || 0);
+  }
+  const answered = Object.keys(picks).length;
+  return {
+    done: questions.length > 0 && answered >= questions.length,
+    answered,
+    score: correct,
+    total: questions.length,
+    completed_at: completedAt,
+    picks,
+  };
+}
+
+function PracticePassageBankList({ sectionKey = '', title = 'Generated passage bank' }) {
+  const { attempts } = useApp();
+  const [entries, setEntries] = useState(() => getPracticePassageBank());
+  const [open, setOpen] = useState(null);
+
+  useEffect(() => {
+    const sync = () => setEntries(getPracticePassageBank());
+    window.addEventListener('mcat:practicePassagesChanged', sync);
+    window.addEventListener('storage', sync);
+    return () => {
+      window.removeEventListener('mcat:practicePassagesChanged', sync);
+      window.removeEventListener('storage', sync);
+    };
+  }, []);
+
+  const visible = entries
+    .filter((entry) => !sectionKey || entry.sectionKey === sectionKey)
+    .sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
+  const openResult = open ? practicePassageResult(open, attempts) : null;
+
+  return (
+    <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-5">
+      <div className="flex items-baseline justify-between gap-3 mb-1">
+        <h3 className="font-semibold text-[var(--text-strong)]">{title}</h3>
+        <span className="text-xs text-[var(--text-faint)]">{visible.length} saved</span>
+      </div>
+      <p className="text-sm text-[var(--text-muted)] mb-3">Generated passages are saved locally here so you can reopen or finish them later.</p>
+      {visible.length === 0 ? (
+        <div className="text-sm text-[var(--text-muted)] bg-[var(--bg-elev-soft)] border border-dashed border-[var(--border-soft)] rounded-lg p-3">
+          No generated passages saved for this section yet.
+        </div>
+      ) : (
+        <ul className="divide-y divide-[var(--border-soft)]">
+          {visible.map((entry) => {
+            const section = PRACTICE_PASSAGE_SECTIONS.find((s) => s.key === entry.sectionKey);
+            const done = practicePassageResult(entry, attempts);
+            return (
+              <li key={entry.id} className="py-2.5 flex items-center gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm text-[var(--text)]">
+                    <span className="font-medium">{entry.payload?.title || entry.title || 'Generated passage'}</span>
+                    <span className="text-[var(--text-muted)]"> · {section?.label || entry.sectionLabel}</span>
+                  </div>
+                  <div className="text-xs text-[var(--text-faint)]">
+                    {entry.payload?.discipline || entry.discipline || section?.name}
+                    {done.done
+                      ? <span className="text-[var(--success-text)]"> · done {done.score}/{done.total}</span>
+                      : done.answered > 0
+                        ? <span className="text-[var(--warning-text-strong)]"> · in progress {done.answered}/{done.total}</span>
+                        : <span> · not started</span>}
+                  </div>
+                </div>
+                <button
+                  onClick={() => setOpen(entry)}
+                  className="shrink-0 text-xs px-3 py-1.5 rounded bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)]"
+                >
+                  {done.done ? 'Review' : done.answered > 0 ? 'Continue' : 'Start'}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {open && openResult && (
+        <CarsRunner
+          date={open.id}
+          payload={open.payload}
+          onClose={() => setOpen(null)}
+          alreadyDone={openResult.done}
+          label={`Practice ${open.sectionLabel || ''}`.trim()}
+          subject={open.subject || PRACTICE_PASSAGE_SECTIONS.find((s) => s.key === open.sectionKey)?.subject || ''}
+          fileIdPrefix={`passage_${open.sectionKey}`}
+          chapterPrefix={`Practice ${open.sectionLabel || open.sectionKey?.toUpperCase() || ''}`.trim()}
+          persistResult={false}
+          savedResultOverride={openResult}
+        />
+      )}
+    </div>
+  );
+}
+
 function PracticePassagesView() {
   const { client, apiKey, attempts } = useApp();
   const [sectionKey, setSectionKey] = useState(() => storage.get('mcat:practicePassageSection', 'bb'));
@@ -9371,8 +9495,20 @@ function PracticePassagesView() {
     setOpen(false);
     try {
       const out = await client.generatePracticePassage({ section: selected.label, focus: focus.trim() });
+      const id = String(Date.now());
+      savePracticePassage({
+        id,
+        sectionKey: selected.key,
+        sectionLabel: selected.label,
+        subject: selected.subject,
+        focus: focus.trim(),
+        title: out.title || 'Generated passage',
+        discipline: out.discipline || selected.name,
+        created_at: Date.now(),
+        payload: out,
+      });
       setPayload(out);
-      setRunId(`${selected.key}_${Date.now()}`);
+      setRunId(id);
       setState('ready');
     } catch (e) {
       setErr(e.message || 'Could not generate passage.');
@@ -9469,6 +9605,7 @@ function PracticePassagesView() {
           persistResult={false}
         />
       )}
+      <PracticePassageBankList sectionKey={selected.key} title={`${selected.label} generated passage bank`} />
       <FreePassagePractice />
     </div>
   );
@@ -9890,18 +10027,23 @@ function downloadCarsPdf({ date, payload, questions, picks, score, elapsedMs }) 
   else { win.onload = () => setTimeout(go, 200); setTimeout(go, 800); }
 }
 
-function CarsRunner({ date, payload, onClose, alreadyDone, label = 'Daily CARS', subject = 'CARS', fileIdPrefix = 'cars', chapterPrefix = 'Daily CARS', persistResult = true }) {
+function CarsRunner({ date, payload, onClose, alreadyDone, label = 'Daily CARS', subject = 'CARS', fileIdPrefix = 'cars', chapterPrefix = 'Daily CARS', persistResult = true, savedResultOverride = null }) {
   const { addAttempt, flushSync } = useApp();
   const questions = payload.questions || [];
-  const savedResult = persistResult && alreadyDone ? getCarsResult(date) : null;
-  const [picks, setPicks] = useState(() => (savedResult && savedResult.picks) || {});
+  const savedResult = savedResultOverride || (persistResult && alreadyDone ? getCarsResult(date) : null);
+  const initialPicks = (savedResult && savedResult.picks) || {};
+  const [picks, setPicks] = useState(() => initialPicks);
   // attempt → graded → review. Never reveals answers before 'review'.
   const [phase, setPhase] = useState(alreadyDone ? 'review' : 'attempt');
   const finalizedRef = useRef(false);
   const scrollRef = useRef(null);
   const passageBlockRef = useRef(null);
   const questionPanelRef = useRef(null);
-  const [currentIdx, setCurrentIdx] = useState(0);
+  const [currentIdx, setCurrentIdx] = useState(() => {
+    if (alreadyDone) return 0;
+    const idx = questions.findIndex((q) => initialPicks[q.id] == null);
+    return idx >= 0 ? idx : 0;
+  });
   const [passageSeen, setPassageSeen] = useState(alreadyDone);
   const [panelH, setPanelH] = useState(190);
   // Elapsed-time timer. Ticks only during the 'attempt' phase, freezes
@@ -9958,6 +10100,7 @@ function CarsRunner({ date, payload, onClose, alreadyDone, label = 'Daily CARS',
       const firstScore = score;
       const firstPicks = { ...picks };
       questions.forEach((q) => {
+        if (initialPicks[q.id] != null) return;
         addAttempt({
           question_id: q.id, mode: 'mc', file_id: `${fileIdPrefix}_${date}`,
           chapter: `${chapterPrefix} — ${date}`, subject,
@@ -15417,6 +15560,7 @@ function BankTab() {
       </div>
 
       <CarsArchive />
+      <PracticePassageBankList title="Generated passage bank" />
       {changedChapters.length > 0 && !summaryDismissed && (
         <div className="bg-[var(--accent-soft)] border border-[var(--accent-border)] rounded-2xl p-4 sm:p-5">
           <div className="flex items-start justify-between gap-3">
