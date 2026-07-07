@@ -9447,6 +9447,7 @@ function PracticePassagesView() {
           persistResult={false}
         />
       )}
+      <FreePassagePractice />
     </div>
   );
 }
@@ -9502,7 +9503,6 @@ function StudyView() {
   if (phase === 'launcher') return (
     <div className="space-y-5">
       <MiniExamCard />
-      <FreePassagePractice />
       <QuizLauncher onStart={start} onStartFlashcards={startFlashcards} />
       <WeakSpotQuiz />
     </div>

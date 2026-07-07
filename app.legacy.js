@@ -14547,7 +14547,7 @@ function PracticePassagesView() {
     fileIdPrefix: "passage_".concat(selected.key),
     chapterPrefix: "Practice ".concat(selected.label),
     persistResult: false
-  }));
+  }), /*#__PURE__*/React.createElement(FreePassagePractice, null));
 }
 function StudyView() {
   // 'launcher' | 'active' | 'summary' | 'flashcards'
@@ -14643,7 +14643,7 @@ function StudyView() {
   }, []);
   if (phase === 'launcher') return /*#__PURE__*/React.createElement("div", {
     className: "space-y-5"
-  }, /*#__PURE__*/React.createElement(MiniExamCard, null), /*#__PURE__*/React.createElement(FreePassagePractice, null), /*#__PURE__*/React.createElement(QuizLauncher, {
+  }, /*#__PURE__*/React.createElement(MiniExamCard, null), /*#__PURE__*/React.createElement(QuizLauncher, {
     onStart: start,
     onStartFlashcards: startFlashcards
   }), /*#__PURE__*/React.createElement(WeakSpotQuiz, null));
