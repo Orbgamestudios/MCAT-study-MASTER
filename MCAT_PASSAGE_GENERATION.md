@@ -122,9 +122,9 @@ Common reasoning moves:
 - Write 350-550 words.
 - Use 3-6 paragraphs.
 - Include a concrete study, model, patient/lab scenario, or data description.
-- Include one plain-text table, figure description, equation, pathway, or numerical result when useful.
+- Include one structured `table` object, figure description, equation, pathway, or numerical result when useful.
 - Keep the passage dense but readable. It should not be a textbook lesson.
-- Do not include headings inside the passage unless a table label is needed.
+- Do not embed markdown tables, pipe-delimited tables, tab-delimited tables, or aligned columns inside `passage`. If a table is useful, put it in the separate `table` object.
 - All necessary passage facts must be present.
 - Use realistic but not overly specialized names for genes, proteins, compounds, and study variables.
 
@@ -192,7 +192,7 @@ At least one question per set should have a very tempting distractor that sounds
 
 Science passages should often include one of these:
 
-- A compact table with 2-4 rows and 2-4 columns.
+- A compact structured `table` object with 2-4 rows and 2-4 columns.
 - A graph described in words, including axes and trend.
 - A short equation and variable definitions.
 - A pathway with an intervention.
@@ -215,6 +215,12 @@ Return strict JSON matching this shape:
   "discipline": "Biochemistry",
   "title": "string",
   "passage": "string",
+  "table": {
+    "title": "string",
+    "columns": ["string", "string"],
+    "rows": [["string", "string"], ["string", "string"]],
+    "note": "string"
+  },
   "questions": [
     {
       "question": "string",
@@ -231,6 +237,8 @@ Return strict JSON matching this shape:
 }
 ```
 
+Use `table: null` when no table is needed. Never put table data in `passage`.
+
 For CARS, `category` should be one of:
 
 - Foundations of Comprehension
@@ -246,6 +254,7 @@ If unsure about `content_category`, use an empty string rather than hallucinatin
 Before returning, verify:
 
 - The passage is original.
+- Any table is in the structured `table` field, not embedded in `passage`.
 - The section matches the selected section.
 - There are exactly six questions.
 - Every question has exactly four choices.

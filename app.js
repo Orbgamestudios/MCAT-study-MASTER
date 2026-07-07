@@ -4018,6 +4018,15 @@ function makeClient(getKey) {
       discipline: { type: 'STRING' },
       title: { type: 'STRING' },
       passage: { type: 'STRING' },
+      table: {
+        type: 'OBJECT',
+        properties: {
+          title: { type: 'STRING' },
+          columns: { type: 'ARRAY', items: { type: 'STRING' } },
+          rows: { type: 'ARRAY', items: { type: 'ARRAY', items: { type: 'STRING' } } },
+          note: { type: 'STRING' },
+        },
+      },
       questions: {
         type: 'ARRAY',
         items: {
@@ -9700,6 +9709,46 @@ function CarsQuestion({ q, index, picked, onPick, reveal }) {
   );
 }
 
+function PassageTable({ table }) {
+  if (!table || !Array.isArray(table.columns) || !Array.isArray(table.rows) || !table.columns.length || !table.rows.length) return null;
+  return (
+    <div className="my-4 overflow-x-auto rounded-lg border border-[var(--border-soft)]">
+      {table.title && (
+        <div className="px-3 py-2 text-xs uppercase tracking-wide text-[var(--text-muted)] bg-[var(--bg-elev-soft)] border-b border-[var(--border-soft)]">
+          {table.title}
+        </div>
+      )}
+      <table className="w-full min-w-[420px] text-sm border-collapse">
+        <thead className="bg-[var(--bg-hover-soft)]">
+          <tr>
+            {table.columns.map((c, i) => (
+              <th key={i} className="text-left font-semibold text-[var(--text-strong)] px-3 py-2 border-b border-[var(--border-soft)]">
+                {c}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {table.rows.map((row, ri) => (
+            <tr key={ri} className="odd:bg-[var(--bg-card-soft)]">
+              {table.columns.map((_, ci) => (
+                <td key={ci} className="px-3 py-2 text-[var(--text)] border-t border-[var(--border-soft)] align-top">
+                  {row?.[ci] || ''}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {table.note && (
+        <div className="px-3 py-2 text-xs text-[var(--text-faint)] bg-[var(--bg-elev-soft)] border-t border-[var(--border-soft)]">
+          {table.note}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Build a standalone, print-ready HTML document of a finished CARS set and hand it to
 // the browser's print dialog (where "Save as PDF" is a destination). Zero deps — keeps
 // the no-build, CDN-only setup intact and yields a text-selectable PDF. Bundles the
@@ -9718,6 +9767,16 @@ function downloadCarsPdf({ date, payload, questions, picks, score, elapsedMs }) 
     .split(/\n\s*\n/)
     .map((p) => `<p>${esc(p.trim())}</p>`)
     .join('');
+  const table = payload.table;
+  const tableHtml = table && Array.isArray(table.columns) && Array.isArray(table.rows) && table.columns.length && table.rows.length
+    ? `<section class="data-table">
+      ${table.title ? `<h3>${esc(table.title)}</h3>` : ''}
+      <table><thead><tr>${table.columns.map((c) => `<th>${esc(c)}</th>`).join('')}</tr></thead><tbody>
+        ${table.rows.map((row) => `<tr>${table.columns.map((_, i) => `<td>${esc(row?.[i] || '')}</td>`).join('')}</tr>`).join('')}
+      </tbody></table>
+      ${table.note ? `<p class="note">${esc(table.note)}</p>` : ''}
+    </section>`
+    : '';
 
   const questionsHtml = questions.map((q, i) => {
     const picked = picks[q.id];
@@ -9763,6 +9822,12 @@ function downloadCarsPdf({ date, payload, questions, picks, score, elapsedMs }) 
   .score { font-size: 12pt; font-weight: bold; margin: 8px 0 18px; }
   h2 { font-size: 13pt; border-bottom: 1px solid #ccc; padding-bottom: 3px; margin: 22px 0 10px; }
   .passage p { margin: 0 0 10px; }
+  .data-table { margin: 14px 0 18px; break-inside: avoid; }
+  .data-table h3 { font-size: 10pt; text-transform: uppercase; letter-spacing: .04em; color: #555; margin: 0 0 4px; }
+  .data-table table { width: 100%; border-collapse: collapse; font-size: 10.5pt; }
+  .data-table th, .data-table td { border: 1px solid #ccc; padding: 5px 7px; text-align: left; vertical-align: top; }
+  .data-table th { background: #eee; font-weight: bold; }
+  .data-table .note { color: #555; font-size: 9.5pt; margin: 4px 0 0; }
   section.q { margin: 0 0 18px; padding: 12px 14px; border: 1px solid #ddd; border-radius: 6px; break-inside: avoid; }
   .qmeta { font-size: 9pt; text-transform: uppercase; letter-spacing: .04em; color: #777; margin-bottom: 4px; }
   .qtext { font-weight: bold; margin: 0 0 8px; }
@@ -9785,6 +9850,7 @@ function downloadCarsPdf({ date, payload, questions, picks, score, elapsedMs }) 
   <div class="score">Score: ${score}/${total}${timeStr}</div>
   <h2>Passage</h2>
   <div class="passage">${passageHtml}</div>
+  ${tableHtml}
   <h2>Questions &amp; Answers</h2>
   ${questionsHtml}
   <div class="foot">MCAT Study — exported ${esc(new Date().toLocaleString())}</div>
@@ -9987,6 +10053,7 @@ function CarsRunner({ date, payload, onClose, alreadyDone, label = 'Daily CARS',
               {String(payload.passage || '').split(/\n\s*\n/).map((para, i) => (
                 <p key={i} className="text-sm sm:text-base leading-relaxed text-[var(--text)] mb-3 last:mb-0">{para.trim()}</p>
               ))}
+              <PassageTable table={payload.table} />
             </div>
 
             {phase === 'review' && (
