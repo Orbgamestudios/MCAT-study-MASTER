@@ -3127,9 +3127,11 @@ function _kickBufferLoad(name) {
   fetch(`assets/${name}.mp3`)
     .then((r) => r.arrayBuffer())
     .then((buf) => ctx.decodeAudioData(buf))
-    .then((decoded) => { _sfxBufferCache[name] = decoded; })
-    .catch(() => {})
-    .finally(() => { _sfxBufferCache[name + ':loading'] = false; });
+    .then((decoded) => {
+      _sfxBufferCache[name] = decoded;
+      _sfxBufferCache[name + ':loading'] = false;
+    })
+    .catch(() => { _sfxBufferCache[name + ':loading'] = false; });
 }
 function _playSfxFallback(name) {
   try {
@@ -3997,6 +3999,71 @@ function makeClient(getKey) {
     }, []);
   }
 
+  const PRACTICE_PASSAGE_SCHEMA = {
+    type: 'OBJECT',
+    properties: {
+      section: { type: 'STRING' },
+      discipline: { type: 'STRING' },
+      title: { type: 'STRING' },
+      passage: { type: 'STRING' },
+      questions: {
+        type: 'ARRAY',
+        items: {
+          type: 'OBJECT',
+          properties: {
+            question: { type: 'STRING' },
+            choices: { type: 'ARRAY', items: { type: 'STRING' } },
+            correct_index: { type: 'INTEGER' },
+            category: { type: 'STRING' },
+            subtype: { type: 'STRING' },
+            content_category: { type: 'STRING' },
+            sirs_skill: { type: 'INTEGER' },
+            explanation: { type: 'STRING' },
+            choice_explanations: { type: 'ARRAY', items: { type: 'STRING' } },
+          },
+          required: ['question', 'choices', 'correct_index', 'category', 'subtype', 'explanation', 'choice_explanations'],
+        },
+      },
+    },
+    required: ['section', 'discipline', 'title', 'passage', 'questions'],
+  };
+
+  async function loadPassageGuide() {
+    const res = await fetch('MCAT_PASSAGE_GENERATION.md?v=1', { cache: 'no-store' });
+    if (!res.ok) throw new GeminiError(res.status, 'Could not load passage generation guide.');
+    return res.text();
+  }
+
+  async function generatePracticePassage({ section, focus }) {
+    const guide = await loadPassageGuide();
+    const resp = await generate({
+      maxOutputTokens: 32768,
+      disableThinking: true,
+      systemInstruction:
+        'You generate original MCAT practice passage sets for a private study app. ' +
+        'Follow the markdown guide exactly. Return strict JSON only.\n\n' +
+        guide,
+      contents: [{
+        role: 'user',
+        parts: [{ text:
+          `Generate one complete MCAT practice passage set for section: ${section}.\n` +
+          `Optional focus from the student: ${focus || 'Choose a high-yield topic for this section.'}\n\n` +
+          'Write one passage and exactly six questions. Make it AAMC-style, passage-driven, and slightly harder than a normal single passage block.',
+        }],
+      }],
+      responseSchema: PRACTICE_PASSAGE_SCHEMA,
+    });
+    const data = extractJson(resp);
+    const { questions } = validateMCQuestions(data.questions);
+    if (questions.length !== 6) throw new GeminiError(0, `Generated ${questions.length}/6 valid questions. Retry for a clean set.`);
+    data.questions = questions.map((q, i) => ({
+      id: `passage_${Date.now()}_${i}`,
+      mode: 'mc',
+      ...q,
+    }));
+    return data;
+  }
+
   // ---- short answer generation ----
   const SHORT_SCHEMA = {
     type: 'OBJECT',
@@ -4622,7 +4689,7 @@ function makeClient(getKey) {
     uploadFile, deleteFile, generate, ping,
     extractFromPdf, generateMCQuestions, generateShortAnswers, generateTermQuestions, generateTwoPartQuestions,
     fixFlaggedQuestion, auditQuestions, generateDailyCars, generateCarsQuestions, generateDailyExam,
-    generateDailyConnections, generateConnectionExplanation, generateTermDefinition,
+    generatePracticePassage, generateDailyConnections, generateConnectionExplanation, generateTermDefinition,
     gradeShortAnswer,
   };
 }
@@ -9240,6 +9307,137 @@ function FreePassagePractice() {
   );
 }
 
+const PRACTICE_PASSAGE_SECTIONS = [
+  { key: 'cp', label: 'C/P', name: 'Chemical and Physical', subject: 'Chem/Phys' },
+  { key: 'bb', label: 'B/B', name: 'Biological and Biochemical', subject: 'Bio/Biochem' },
+  { key: 'ps', label: 'P/S', name: 'Psychological and Social', subject: 'Psych/Soc' },
+  { key: 'cars', label: 'CARS', name: 'Critical Analysis and Reasoning', subject: 'CARS' },
+];
+
+function PracticePassagesView() {
+  const { client, apiKey } = useApp();
+  const [sectionKey, setSectionKey] = useState(() => storage.get('mcat:practicePassageSection', 'bb'));
+  const [focus, setFocus] = useState('');
+  const [state, setState] = useState('idle');
+  const [err, setErr] = useState('');
+  const [payload, setPayload] = useState(null);
+  const [runId, setRunId] = useState('');
+  const [open, setOpen] = useState(false);
+  const selected = PRACTICE_PASSAGE_SECTIONS.find((s) => s.key === sectionKey) || PRACTICE_PASSAGE_SECTIONS[1];
+
+  const pick = (key) => {
+    setSectionKey(key);
+    storage.set('mcat:practicePassageSection', key);
+  };
+
+  const generate = async () => {
+    if (!apiKey || state === 'generating') return;
+    setState('generating');
+    setErr('');
+    setOpen(false);
+    try {
+      const out = await client.generatePracticePassage({ section: selected.label, focus: focus.trim() });
+      setPayload(out);
+      setRunId(`${selected.key}_${Date.now()}`);
+      setState('ready');
+    } catch (e) {
+      setErr(e.message || 'Could not generate passage.');
+      setState('error');
+    }
+  };
+
+  return (
+    <div className="space-y-4 sm:space-y-5">
+      <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-5 space-y-4">
+        <div>
+          <h2 className="font-semibold text-[var(--text-strong)]">Practice passages</h2>
+          <p className="text-sm text-[var(--text-muted)] mt-1">
+            Generate one fresh MCAT-style passage block with six questions.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          {PRACTICE_PASSAGE_SECTIONS.map((section) => (
+            <button
+              key={section.key}
+              onClick={() => pick(section.key)}
+              className={`text-left border rounded-lg px-3 py-2 ${selected.key === section.key
+                ? 'bg-[var(--accent)] text-white border-[var(--accent-border)]'
+                : 'border-[var(--border)] hover:bg-[var(--bg-hover)] text-[var(--text)]'}`}
+            >
+              <div className="text-sm font-semibold">{section.label}</div>
+              <div className={`text-[11px] ${selected.key === section.key ? 'text-white/80' : 'text-[var(--text-faint)]'}`}>
+                {section.name}
+              </div>
+            </button>
+          ))}
+        </div>
+
+        <label className="block">
+          <span className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Optional focus</span>
+          <textarea
+            value={focus}
+            onChange={(e) => setFocus(e.target.value)}
+            rows={3}
+            className="mt-2 w-full rounded-lg border border-[var(--border)] bg-[var(--bg-elev-soft)] px-3 py-2 text-sm text-[var(--text)] outline-none focus:border-[var(--accent-border)]"
+            placeholder="Example: enzyme kinetics with inhibitors, renal physiology, social stratification, art criticism..."
+          />
+        </label>
+
+        {!apiKey && (
+          <div className="text-sm text-[var(--warning-text-strong)] bg-[var(--warning-bg)] border border-[var(--warning-text-strong)] rounded-lg p-3">
+            Add a Gemini API key in Settings to generate practice passages.
+          </div>
+        )}
+
+        <button
+          onClick={generate}
+          disabled={!apiKey || state === 'generating'}
+          className="w-full bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] disabled:opacity-40 rounded-lg py-2.5 text-sm font-medium"
+        >
+          {state === 'generating' ? 'Generating passage...' : `Generate ${selected.label} passage`}
+        </button>
+
+        {state === 'error' && (
+          <div className="text-sm text-[var(--danger-text)] bg-[var(--danger-bg)] border border-[var(--danger-border)] rounded-lg p-3 break-words">
+            {err}
+          </div>
+        )}
+      </div>
+
+      {payload && (
+        <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-5 flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-xs uppercase tracking-wide text-[var(--text-muted)]">{payload.section || selected.label} · {payload.discipline || selected.name}</div>
+            <h3 className="font-semibold text-[var(--text-strong)] truncate">{payload.title || 'Generated passage'}</h3>
+            <p className="text-sm text-[var(--text-muted)] mt-1">{(payload.questions || []).length} questions</p>
+          </div>
+          <button
+            onClick={() => setOpen(true)}
+            className="shrink-0 text-sm px-4 py-2 bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] rounded-lg font-medium"
+          >
+            Start
+          </button>
+        </div>
+      )}
+
+      {open && payload && (
+        <CarsRunner
+          date={runId || `${selected.key}_${Date.now()}`}
+          payload={payload}
+          onClose={() => setOpen(false)}
+          alreadyDone={false}
+          label={`Practice ${selected.label}`}
+          subject={selected.subject}
+          fileIdPrefix={`passage_${selected.key}`}
+          chapterPrefix={`Practice ${selected.label}`}
+          persistResult={false}
+        />
+      )}
+    </div>
+  );
+}
+
 function StudyView() {
   // 'launcher' | 'active' | 'summary' | 'flashcards'
   const [phase, setPhase] = useState('launcher');
@@ -9600,10 +9798,10 @@ function downloadCarsPdf({ date, payload, questions, picks, score, elapsedMs }) 
   else { win.onload = () => setTimeout(go, 200); setTimeout(go, 800); }
 }
 
-function CarsRunner({ date, payload, onClose, alreadyDone }) {
+function CarsRunner({ date, payload, onClose, alreadyDone, label = 'Daily CARS', subject = 'CARS', fileIdPrefix = 'cars', chapterPrefix = 'Daily CARS', persistResult = true }) {
   const { addAttempt, flushSync } = useApp();
   const questions = payload.questions || [];
-  const savedResult = alreadyDone ? (getCarsResults()[date] || null) : null;
+  const savedResult = persistResult && alreadyDone ? (getCarsResults()[date] || null) : null;
   const [picks, setPicks] = useState(() => (savedResult && savedResult.picks) || {});
   // attempt → graded → review. Never reveals answers before 'review'.
   const [phase, setPhase] = useState(alreadyDone ? 'review' : 'attempt');
@@ -9658,14 +9856,16 @@ function CarsRunner({ date, payload, onClose, alreadyDone }) {
       const firstPicks = { ...picks };
       questions.forEach((q) => {
         addAttempt({
-          question_id: q.id, mode: 'mc', file_id: `cars_${date}`,
-          chapter: `Daily CARS — ${date}`, subject: 'CARS',
+          question_id: q.id, mode: 'mc', file_id: `${fileIdPrefix}_${date}`,
+          chapter: `${chapterPrefix} — ${date}`, subject,
           correct: firstPicks[q.id] === q.correct_index,
           user_answer: ['A', 'B', 'C', 'D'][firstPicks[q.id]] || '',
         });
       });
-      setCarsResult(date, { score: firstScore, total: questions.length, completed_at: Date.now(), picks: firstPicks });
-      window.dispatchEvent(new Event('mcat:carsDone'));
+      if (persistResult) {
+        setCarsResult(date, { score: firstScore, total: questions.length, completed_at: Date.now(), picks: firstPicks });
+        window.dispatchEvent(new Event('mcat:carsDone'));
+      }
       // Force-sync the freshly logged win/loss attempts. Deferred so the batched
       // addAttempt state updates have flushed to localStorage before flushSync reads it.
       setTimeout(() => { try { flushSync(); } catch {} }, 120);
@@ -9709,7 +9909,7 @@ function CarsRunner({ date, payload, onClose, alreadyDone }) {
       <div className="sticky top-0 z-10 bg-[var(--bg)] border-b border-[var(--border-soft)] px-3 sm:px-6 py-2">
         <div className="max-w-3xl mx-auto flex items-center justify-between gap-3">
           <div className="min-w-0">
-            <div className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Daily CARS · {date}</div>
+            <div className="text-xs uppercase tracking-wide text-[var(--text-muted)]">{label} · {date}</div>
             <h2 className="font-semibold text-[var(--text-strong)] truncate">{payload.title || payload.discipline || 'CARS passage'}</h2>
           </div>
           <div className="flex items-center gap-2 shrink-0">
@@ -15306,7 +15506,7 @@ function Shell() {
   }, []);
 
   const hasLibrary = apiKey || readOnly || session;
-  const tabs = [['lessons', 'Lessons'], ['study', 'Study'], ['home', 'Home'], ['stats', 'Stats'], ['banks', 'Bank']];
+  const tabs = [['lessons', 'Lessons'], ['study', 'Study'], ['passages', 'Passage'], ['home', 'Home'], ['stats', 'Stats'], ['banks', 'Bank']];
   useEffect(() => { if (readOnly) setTab('home'); else if (!hasLibrary) setTab('home'); }, [readOnly, hasLibrary]);
   useEffect(() => { setProfileUser(null); }, [tab]);
 
@@ -15444,6 +15644,11 @@ function Shell() {
           {tabIs('home') && (
             <div {...tabWrap('home', '')}>
               <HomeView onGoToStudy={() => switchTab('study')} />
+            </div>
+          )}
+          {tabIs('passages') && (
+            <div {...tabWrap('passages', '')}>
+              <PracticePassagesView />
             </div>
           )}
           {tabIs('lessons') && (

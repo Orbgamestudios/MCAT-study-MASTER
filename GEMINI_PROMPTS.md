@@ -300,6 +300,13 @@ deliberately-hard questions. See `CARS_GENERATION.md` for the full spec and prom
 `generateDailyCars` client function and the `cars` server table back it; the set shows on
 the Home tab for the day and is archived in the Bank tab afterwards.
 
+## Practice passages
+
+The Passage tab can generate an on-demand passage set for C/P, B/B, P/S, or CARS. The
+client loads `MCAT_PASSAGE_GENERATION.md` and sends that full guide to Gemini via
+`generatePracticePassage`, then opens the same passage runner used by Daily CARS. These
+sets are local, original practice; they are not uploaded to the shared CARS backend.
+
 ## Out-of-band processing (Claude Code, etc.)
 
 If you ever want to bypass Gemini entirely and use Claude Code's tokens to process a
