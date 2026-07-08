@@ -122,7 +122,7 @@ Common reasoning moves:
 - Write 350-550 words.
 - Use 3-6 paragraphs.
 - Include a concrete study, model, patient/lab scenario, or data description.
-- Include one structured `table` object, figure description, equation, pathway, or numerical result when useful.
+- Include one compact structured `table` object with 2-4 columns and 2-4 rows. At least one question must require interpreting it.
 - Keep the passage dense but readable. It should not be a textbook lesson.
 - Do not embed markdown tables, pipe-delimited tables, tab-delimited tables, or aligned columns inside `passage`. If a table is useful, put it in the separate `table` object.
 - All necessary passage facts must be present.
@@ -190,7 +190,7 @@ At least one question per set should have a very tempting distractor that sounds
 
 ## Data and methods expectations
 
-Science passages should often include one of these:
+Science passages must include a compact structured `table` object with 2-4 rows and 2-4 columns. They may also include one of these:
 
 - A compact structured `table` object with 2-4 rows and 2-4 columns.
 - A graph described in words, including axes and trend.
@@ -237,7 +237,7 @@ Return strict JSON matching this shape:
 }
 ```
 
-Use `table: null` when no table is needed. Never put table data in `passage`.
+Use `table: null` only for CARS. For C/P, B/B, and P/S, return a usable `table` object with `columns` and `rows`. Never put table data in `passage`.
 
 For CARS, `category` should be one of:
 

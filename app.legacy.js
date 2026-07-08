@@ -3748,6 +3748,121 @@ function randomizeMCChoiceOrder(q) {
     }) : q.choice_explanations
   });
 }
+function parseMarkdownTable(text) {
+  if (typeof text !== 'string' || !text.includes('|')) return null;
+  var lines = text.split('\n').map(function (line) {
+    return line.trim();
+  }).filter(function (line) {
+    return line.includes('|');
+  });
+  for (var i = 0; i < lines.length - 1; i++) {
+    var header = lines[i].replace(/^\|/, '').replace(/\|$/, '').split('|').map(function (c) {
+      return sanitizeText(c);
+    });
+    var divider = lines[i + 1].replace(/^\|/, '').replace(/\|$/, '').split('|').map(function (c) {
+      return c.trim();
+    });
+    if (header.length < 2 || divider.length !== header.length || !divider.every(function (c) {
+      return /^:?-{2,}:?$/.test(c);
+    })) continue;
+    var rows = [];
+    for (var j = i + 2; j < lines.length; j++) {
+      var cells = lines[j].replace(/^\|/, '').replace(/\|$/, '').split('|').map(function (c) {
+        return sanitizeText(c);
+      });
+      if (cells.length !== header.length) break;
+      rows.push(cells);
+    }
+    if (rows.length) return {
+      columns: header,
+      rows
+    };
+  }
+  return null;
+}
+function normalizePracticePassageTable(table) {
+  var passage = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : '';
+  var parsed = typeof table === 'string' ? parseMarkdownTable(table) : null;
+  var source = parsed || (table && typeof table === 'object' ? table : null) || parseMarkdownTable(passage);
+  if (!source) return null;
+  var columns = (source.columns || source.headers || source.headings || source.header || []).map(function (c) {
+    return sanitizeText(String(c || ''));
+  }).filter(Boolean);
+  var rows = source.rows || source.data || source.values || [];
+  if (!Array.isArray(rows) || columns.length < 2) return null;
+  rows = rows.map(function (row) {
+    if (Array.isArray(row)) return columns.map(function (_, i) {
+      var _row$i;
+      return sanitizeText(String((_row$i = row[i]) !== null && _row$i !== void 0 ? _row$i : ''));
+    });
+    if (row && typeof row === 'object') {
+      return columns.map(function (c) {
+        var _ref, _ref2, _row$c;
+        return sanitizeText(String((_ref = (_ref2 = (_row$c = row[c]) !== null && _row$c !== void 0 ? _row$c : row[c.toLowerCase()]) !== null && _ref2 !== void 0 ? _ref2 : row[c.replace(/\s+/g, '_')]) !== null && _ref !== void 0 ? _ref : ''));
+      });
+    }
+    return null;
+  }).filter(function (row) {
+    return Array.isArray(row) && row.some(Boolean);
+  });
+  if (!rows.length) return null;
+  return {
+    title: sanitizeText(source.title || source.caption || ''),
+    columns,
+    rows,
+    note: sanitizeText(source.note || source.notes || '')
+  };
+}
+function hasPracticePassageTable(table) {
+  return !!(table && Array.isArray(table.columns) && table.columns.length >= 2 && Array.isArray(table.rows) && table.rows.length > 0);
+}
+function passageTokenSet(text) {
+  return new Set(String(text || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(function (w) {
+    return w.length > 4;
+  }));
+}
+function practicePassageLooksRepeated(data) {
+  var avoid = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : [];
+  var title = sanitizeText((data === null || data === void 0 ? void 0 : data.title) || '').toLowerCase();
+  var passage = String((data === null || data === void 0 ? void 0 : data.passage) || '');
+  var tokens = passageTokenSet(passage);
+  if (!tokens.size) return false;
+  var _iterator29 = _createForOfIteratorHelper(avoid || []),
+    _step29;
+  try {
+    var _loop = function _loop() {
+        var old = _step29.value;
+        var oldTitle = sanitizeText((old === null || old === void 0 ? void 0 : old.title) || '').toLowerCase();
+        if (title && oldTitle && title === oldTitle) return {
+          v: true
+        };
+        var oldPassage = String((old === null || old === void 0 ? void 0 : old.passage) || '');
+        if (oldPassage && passage.slice(0, 240) === oldPassage.slice(0, 240)) return {
+          v: true
+        };
+        var oldTokens = passageTokenSet(oldPassage);
+        if (!oldTokens.size) return 0; // continue
+        var shared = 0;
+        tokens.forEach(function (t) {
+          if (oldTokens.has(t)) shared++;
+        });
+        if (shared / Math.min(tokens.size, oldTokens.size) > 0.82) return {
+          v: true
+        };
+      },
+      _ret;
+    for (_iterator29.s(); !(_step29 = _iterator29.n()).done;) {
+      _ret = _loop();
+      if (_ret === 0) continue;
+      if (_ret) return _ret.v;
+    }
+  } catch (err) {
+    _iterator29.e(err);
+  } finally {
+    _iterator29.f();
+  }
+  return false;
+}
 
 // Local cache of downloaded CARS payloads so a day opens instantly / offline.
 function getCarsCache() {
@@ -3871,10 +3986,10 @@ function ghHeaders(_x4) {
 }
 function _ghHeaders() {
   _ghHeaders = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee72(token) {
-    return _regenerator().w(function (_context80) {
-      while (1) switch (_context80.n) {
+    return _regenerator().w(function (_context81) {
+      while (1) switch (_context81.n) {
         case 0:
-          return _context80.a(2, {
+          return _context81.a(2, {
             'Authorization': "Bearer ".concat(token),
             'Accept': 'application/vnd.github+json',
             'X-GitHub-Api-Version': '2022-11-28'
@@ -3888,48 +4003,48 @@ function ghGetSha(_x5) {
   return _ghGetSha.apply(this, arguments);
 }
 function _ghGetSha() {
-  _ghGetSha = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee73(_ref) {
+  _ghGetSha = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee73(_ref3) {
     var token, repo, branch, path, url, res, j, _t68, _t69, _t70, _t71, _t72, _t73;
-    return _regenerator().w(function (_context81) {
-      while (1) switch (_context81.n) {
+    return _regenerator().w(function (_context82) {
+      while (1) switch (_context82.n) {
         case 0:
-          token = _ref.token, repo = _ref.repo, branch = _ref.branch, path = _ref.path;
+          token = _ref3.token, repo = _ref3.repo, branch = _ref3.branch, path = _ref3.path;
           url = "https://api.github.com/repos/".concat(repo, "/contents/").concat(encodeURIComponent(path), "?ref=").concat(encodeURIComponent(branch));
           _t68 = fetch;
           _t69 = url;
-          _context81.n = 1;
+          _context82.n = 1;
           return ghHeaders(token);
         case 1:
-          _t70 = _context81.v;
-          _context81.n = 2;
+          _t70 = _context82.v;
+          _context82.n = 2;
           return _t68(_t69, {
             headers: _t70
           });
         case 2:
-          res = _context81.v;
+          res = _context82.v;
           if (!(res.status === 404)) {
-            _context81.n = 3;
+            _context82.n = 3;
             break;
           }
-          return _context81.a(2, null);
+          return _context82.a(2, null);
         case 3:
           if (res.ok) {
-            _context81.n = 5;
+            _context82.n = 5;
             break;
           }
           _t71 = Error;
           _t72 = "GitHub GET ".concat(res.status, ": ");
-          _context81.n = 4;
+          _context82.n = 4;
           return res.text();
         case 4:
-          _t73 = _t72.concat.call(_t72, _context81.v.slice(0, 200));
+          _t73 = _t72.concat.call(_t72, _context82.v.slice(0, 200));
           throw new _t71(_t73);
         case 5:
-          _context81.n = 6;
+          _context82.n = 6;
           return res.json();
         case 6:
-          j = _context81.v;
-          return _context81.a(2, j.sha);
+          j = _context82.v;
+          return _context82.a(2, j.sha);
       }
     }, _callee73);
   }));
@@ -3939,12 +4054,12 @@ function ghPutFile(_x6, _x7, _x8, _x9) {
   return _ghPutFile.apply(this, arguments);
 }
 function _ghPutFile() {
-  _ghPutFile = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee74(_ref2, content, sha, message) {
+  _ghPutFile = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee74(_ref4, content, sha, message) {
     var token, repo, branch, path, url, body, res, _t74, _t75, _t76, _t77, _t78, _t79, _t80, _t81, _t82, _t83;
-    return _regenerator().w(function (_context82) {
-      while (1) switch (_context82.n) {
+    return _regenerator().w(function (_context83) {
+      while (1) switch (_context83.n) {
         case 0:
-          token = _ref2.token, repo = _ref2.repo, branch = _ref2.branch, path = _ref2.path;
+          token = _ref4.token, repo = _ref4.repo, branch = _ref4.branch, path = _ref4.path;
           url = "https://api.github.com/repos/".concat(repo, "/contents/").concat(encodeURIComponent(path));
           body = {
             message,
@@ -3957,34 +4072,34 @@ function _ghPutFile() {
           _t76 = _objectSpread;
           _t77 = _objectSpread;
           _t78 = {};
-          _context82.n = 1;
+          _context83.n = 1;
           return ghHeaders(token);
         case 1:
-          _t79 = _t76(_t77(_t78, _context82.v), {}, {
+          _t79 = _t76(_t77(_t78, _context83.v), {}, {
             'Content-Type': 'application/json'
           });
           _t80 = JSON.stringify(body);
-          _context82.n = 2;
+          _context83.n = 2;
           return _t74(_t75, {
             method: 'PUT',
             headers: _t79,
             body: _t80
           });
         case 2:
-          res = _context82.v;
+          res = _context83.v;
           if (res.ok) {
-            _context82.n = 4;
+            _context83.n = 4;
             break;
           }
           _t81 = Error;
           _t82 = "GitHub PUT ".concat(res.status, ": ");
-          _context82.n = 3;
+          _context83.n = 3;
           return res.text();
         case 3:
-          _t83 = _t82.concat.call(_t82, _context82.v.slice(0, 200));
+          _t83 = _t82.concat.call(_t82, _context83.v.slice(0, 200));
           throw new _t81(_t83);
         case 4:
-          return _context82.a(2, res.json());
+          return _context83.a(2, res.json());
       }
     }, _callee74);
   }));
@@ -3995,14 +4110,14 @@ function pushBankToGithub(_x0, _x1) {
 } // ---------- sound effects ----------
 // User-adjustable master volume (0..1), persisted in localStorage. Multiplies every sfx.
 function _pushBankToGithub() {
-  _pushBankToGithub = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee75(github, _ref3) {
+  _pushBankToGithub = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee75(github, _ref5) {
     var files, extractions, questions, data, content, sha, msg;
-    return _regenerator().w(function (_context83) {
-      while (1) switch (_context83.n) {
+    return _regenerator().w(function (_context84) {
+      while (1) switch (_context84.n) {
         case 0:
-          files = _ref3.files, extractions = _ref3.extractions, questions = _ref3.questions;
+          files = _ref5.files, extractions = _ref5.extractions, questions = _ref5.questions;
           if (!(!github.token || !github.repo || !github.path)) {
-            _context83.n = 1;
+            _context84.n = 1;
             break;
           }
           throw new Error('GitHub sync not configured.');
@@ -4016,12 +4131,12 @@ function _pushBankToGithub() {
             questions
           };
           content = JSON.stringify(data, null, 2);
-          _context83.n = 2;
+          _context84.n = 2;
           return ghGetSha(github);
         case 2:
-          sha = _context83.v;
+          sha = _context84.v;
           msg = "Update bank: ".concat(files.length, " files (").concat(new Date().toISOString().slice(0, 10), ")");
-          return _context83.a(2, ghPutFile(github, content, sha, msg));
+          return _context84.a(2, ghPutFile(github, content, sha, msg));
       }
     }, _callee75);
   }));
@@ -4144,13 +4259,13 @@ function playSfx(name) {
   });
 })();
 function _beep(freq, durMs) {
-  var _ref4 = arguments.length > 2 && arguments[2] !== undefined ? arguments[2] : {},
-    _ref4$vol = _ref4.vol,
-    vol = _ref4$vol === void 0 ? 0.08 : _ref4$vol,
-    _ref4$type = _ref4.type,
-    type = _ref4$type === void 0 ? 'sine' : _ref4$type,
-    _ref4$startAt = _ref4.startAt,
-    startAt = _ref4$startAt === void 0 ? 0 : _ref4$startAt;
+  var _ref6 = arguments.length > 2 && arguments[2] !== undefined ? arguments[2] : {},
+    _ref6$vol = _ref6.vol,
+    vol = _ref6$vol === void 0 ? 0.08 : _ref6$vol,
+    _ref6$type = _ref6.type,
+    type = _ref6$type === void 0 ? 'sine' : _ref6$type,
+    _ref6$startAt = _ref6.startAt,
+    startAt = _ref6$startAt === void 0 ? 0 : _ref6$startAt;
   _withCtx(function (ctx) {
     var peak = Math.max(0.0001, vol * _vol());
     var t0 = ctx.currentTime + startAt;
@@ -5031,12 +5146,12 @@ function makeClient(getKey) {
     return _generate.apply(this, arguments);
   }
   function _generate() {
-    _generate = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee4(_ref5) {
-      var contents, systemInstruction, responseSchema, _ref5$maxOutputTokens, maxOutputTokens, _ref5$disableThinking, disableThinking, generationConfig, body, res;
+    _generate = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee4(_ref7) {
+      var contents, systemInstruction, responseSchema, _ref7$maxOutputTokens, maxOutputTokens, _ref7$disableThinking, disableThinking, generationConfig, body, res;
       return _regenerator().w(function (_context4) {
         while (1) switch (_context4.n) {
           case 0:
-            contents = _ref5.contents, systemInstruction = _ref5.systemInstruction, responseSchema = _ref5.responseSchema, _ref5$maxOutputTokens = _ref5.maxOutputTokens, maxOutputTokens = _ref5$maxOutputTokens === void 0 ? 32768 : _ref5$maxOutputTokens, _ref5$disableThinking = _ref5.disableThinking, disableThinking = _ref5$disableThinking === void 0 ? false : _ref5$disableThinking;
+            contents = _ref7.contents, systemInstruction = _ref7.systemInstruction, responseSchema = _ref7.responseSchema, _ref7$maxOutputTokens = _ref7.maxOutputTokens, maxOutputTokens = _ref7$maxOutputTokens === void 0 ? 32768 : _ref7$maxOutputTokens, _ref7$disableThinking = _ref7.disableThinking, disableThinking = _ref7$disableThinking === void 0 ? false : _ref7$disableThinking;
             generationConfig = {
               maxOutputTokens
             };
@@ -5515,49 +5630,107 @@ function makeClient(getKey) {
     return _generatePracticePassage.apply(this, arguments);
   } // ---- short answer generation ----
   function _generatePracticePassage() {
-    _generatePracticePassage = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee0(_ref6) {
-      var section, focus, guide, resp, data, _validateMCQuestions3, questions, answerSlots;
-      return _regenerator().w(function (_context0) {
-        while (1) switch (_context0.n) {
+    _generatePracticePassage = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee0(_ref8) {
+      var section, focus, _ref8$avoid, avoid, guide, science, recent, lastError, _loop2, _ret2, attempt;
+      return _regenerator().w(function (_context1) {
+        while (1) switch (_context1.n) {
           case 0:
-            section = _ref6.section, focus = _ref6.focus;
-            _context0.n = 1;
+            section = _ref8.section, focus = _ref8.focus, _ref8$avoid = _ref8.avoid, avoid = _ref8$avoid === void 0 ? [] : _ref8$avoid;
+            _context1.n = 1;
             return loadPassageGuide();
           case 1:
-            guide = _context0.v;
-            _context0.n = 2;
-            return generate({
-              maxOutputTokens: 32768,
-              disableThinking: true,
-              systemInstruction: 'You generate original MCAT practice passage sets for a private study app. ' + 'Follow the markdown guide exactly. Return strict JSON only.\n\n' + guide,
-              contents: [{
-                role: 'user',
-                parts: [{
-                  text: "Generate one complete MCAT practice passage set for section: ".concat(section, ".\n") + "Optional focus from the student: ".concat(focus || 'Choose a high-yield topic for this section.', "\n\n") + 'Write one passage and exactly six questions. Make it AAMC-style, passage-driven, and slightly harder than a normal single passage block.'
-                }]
-              }],
-              responseSchema: PRACTICE_PASSAGE_SCHEMA
+            guide = _context1.v;
+            science = !/cars|critical/i.test(section || '');
+            recent = (avoid || []).slice(0, 8).map(function (p, i) {
+              return "".concat(i + 1, ". ").concat(p.title || 'Untitled').concat(p.discipline ? " (".concat(p.discipline, ")") : '', ": ").concat(String(p.passage || '').slice(0, 360).replace(/\s+/g, ' '));
+            }).join('\n');
+            lastError = null;
+            _loop2 = /*#__PURE__*/_regenerator().m(function _loop2() {
+              var resp, data, _validateMCQuestions3, questions, answerSlots;
+              return _regenerator().w(function (_context0) {
+                while (1) switch (_context0.n) {
+                  case 0:
+                    _context0.n = 1;
+                    return generate({
+                      maxOutputTokens: 32768,
+                      disableThinking: true,
+                      systemInstruction: 'You generate original MCAT practice passage sets for a private study app. ' + 'Follow the markdown guide exactly. Return strict JSON only.\n\n' + guide,
+                      contents: [{
+                        role: 'user',
+                        parts: [{
+                          text: "Generate one complete MCAT practice passage set for section: ".concat(section, ".\n") + "Optional focus from the student: ".concat(focus || 'Choose a high-yield topic for this section.', "\n\n") + (science ? 'This is a science passage, so you MUST include a structured `table` object with columns and rows. At least one question must require interpreting that table.\n' : '') + (recent ? "Do not repeat or closely paraphrase any of these recent generated passages for this section:\n".concat(recent, "\n\n") : '') + (attempt ? 'The previous attempt was rejected because it was too similar to a recent passage or was missing a usable table. Generate a clearly different passage now.\n\n' : '') + 'Write one passage and exactly six questions. Make it AAMC-style, passage-driven, and slightly harder than a normal single passage block.'
+                        }]
+                      }],
+                      responseSchema: PRACTICE_PASSAGE_SCHEMA
+                    });
+                  case 1:
+                    resp = _context0.v;
+                    data = extractJson(resp);
+                    data.table = normalizePracticePassageTable(data.table, data.passage);
+                    if (!(science && !hasPracticePassageTable(data.table))) {
+                      _context0.n = 2;
+                      break;
+                    }
+                    lastError = new GeminiError(0, 'Generated passage did not include a usable table. Retry for a clean set.');
+                    return _context0.a(2, 0);
+                  case 2:
+                    if (!practicePassageLooksRepeated(data, avoid)) {
+                      _context0.n = 3;
+                      break;
+                    }
+                    lastError = new GeminiError(0, 'Generated passage was too similar to one already in your bank. Retry for a fresh set.');
+                    return _context0.a(2, 0);
+                  case 3:
+                    _validateMCQuestions3 = validateMCQuestions(data.questions), questions = _validateMCQuestions3.questions;
+                    if (!(questions.length !== 6)) {
+                      _context0.n = 4;
+                      break;
+                    }
+                    throw new GeminiError(0, "Generated ".concat(questions.length, "/6 valid questions. Retry for a clean set."));
+                  case 4:
+                    answerSlots = [0, 1, 2, 3, 0, 1].sort(function () {
+                      return Math.random() - 0.5;
+                    });
+                    data.questions = questions.map(function (q, i) {
+                      return _objectSpread({
+                        id: "passage_".concat(Date.now(), "_").concat(i),
+                        mode: 'mc'
+                      }, randomizeMCChoiceOrder(q, answerSlots[i]));
+                    });
+                    return _context0.a(2, {
+                      v: data
+                    });
+                }
+              }, _loop2);
             });
+            attempt = 0;
           case 2:
-            resp = _context0.v;
-            data = extractJson(resp);
-            _validateMCQuestions3 = validateMCQuestions(data.questions), questions = _validateMCQuestions3.questions;
-            if (!(questions.length !== 6)) {
-              _context0.n = 3;
+            if (!(attempt < 2)) {
+              _context1.n = 6;
               break;
             }
-            throw new GeminiError(0, "Generated ".concat(questions.length, "/6 valid questions. Retry for a clean set."));
+            return _context1.d(_regeneratorValues(_loop2()), 3);
           case 3:
-            answerSlots = [0, 1, 2, 3, 0, 1].sort(function () {
-              return Math.random() - 0.5;
-            });
-            data.questions = questions.map(function (q, i) {
-              return _objectSpread({
-                id: "passage_".concat(Date.now(), "_").concat(i),
-                mode: 'mc'
-              }, randomizeMCChoiceOrder(q, answerSlots[i]));
-            });
-            return _context0.a(2, data);
+            _ret2 = _context1.v;
+            if (!(_ret2 === 0)) {
+              _context1.n = 4;
+              break;
+            }
+            return _context1.a(3, 5);
+          case 4:
+            if (!_ret2) {
+              _context1.n = 5;
+              break;
+            }
+            return _context1.a(2, _ret2.v);
+          case 5:
+            attempt++;
+            _context1.n = 2;
+            break;
+          case 6:
+            throw lastError || new GeminiError(0, 'Could not generate a fresh passage. Retry for a clean set.');
+          case 7:
+            return _context1.a(2);
         }
       }, _callee0);
     }));
@@ -5602,12 +5775,12 @@ function makeClient(getKey) {
       var n,
         resp,
         data,
-        _args1 = arguments;
-      return _regenerator().w(function (_context1) {
-        while (1) switch (_context1.n) {
+        _args10 = arguments;
+      return _regenerator().w(function (_context10) {
+        while (1) switch (_context10.n) {
           case 0:
-            n = _args1.length > 4 && _args1[4] !== undefined ? _args1[4] : DEFAULT_SHORT_COUNT;
-            _context1.n = 1;
+            n = _args10.length > 4 && _args10[4] !== undefined ? _args10[4] : DEFAULT_SHORT_COUNT;
+            _context10.n = 1;
             return generate({
               maxOutputTokens: 16384,
               disableThinking: true,
@@ -5631,9 +5804,9 @@ function makeClient(getKey) {
               responseSchema: SHORT_SCHEMA
             });
           case 1:
-            resp = _context1.v;
+            resp = _context10.v;
             data = extractJson(resp);
-            return _context1.a(2, (data.questions || []).map(function (q, i) {
+            return _context10.a(2, (data.questions || []).map(function (q, i) {
               return _objectSpread({
                 id: "sa_".concat(Date.now(), "_").concat(i),
                 mode: 'short'
@@ -5651,26 +5824,26 @@ function makeClient(getKey) {
   // students commonly confuse. Each part is scored independently.
   function _generateTermQuestions() {
     _generateTermQuestions = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee10(extraction, chapterLabel) {
-      var terms, BATCH, all, _loop, i;
-      return _regenerator().w(function (_context11) {
-        while (1) switch (_context11.n) {
+      var terms, BATCH, all, _loop3, i;
+      return _regenerator().w(function (_context12) {
+        while (1) switch (_context12.n) {
           case 0:
             terms = (extraction === null || extraction === void 0 ? void 0 : extraction.key_terms) || [];
             if (terms.length) {
-              _context11.n = 1;
+              _context12.n = 1;
               break;
             }
-            return _context11.a(2, []);
+            return _context12.a(2, []);
           case 1:
             BATCH = 12;
             all = [];
-            _loop = /*#__PURE__*/_regenerator().m(function _loop(i) {
+            _loop3 = /*#__PURE__*/_regenerator().m(function _loop3(i) {
               var batch, resp, data, qs;
-              return _regenerator().w(function (_context10) {
-                while (1) switch (_context10.n) {
+              return _regenerator().w(function (_context11) {
+                while (1) switch (_context11.n) {
                   case 0:
                     batch = terms.slice(i, i + BATCH);
-                    _context10.n = 1;
+                    _context11.n = 1;
                     return generate({
                       maxOutputTokens: 16384,
                       disableThinking: true,
@@ -5690,7 +5863,7 @@ function makeClient(getKey) {
                       responseSchema: MC_SCHEMA
                     });
                   case 1:
-                    resp = _context10.v;
+                    resp = _context11.v;
                     data = extractJson(resp);
                     qs = (data.questions || []).slice(0, batch.length);
                     qs.forEach(function (q, idx) {
@@ -5702,23 +5875,23 @@ function makeClient(getKey) {
                       }, q));
                     });
                   case 2:
-                    return _context10.a(2);
+                    return _context11.a(2);
                 }
-              }, _loop);
+              }, _loop3);
             });
             i = 0;
           case 2:
             if (!(i < terms.length)) {
-              _context11.n = 4;
+              _context12.n = 4;
               break;
             }
-            return _context11.d(_regeneratorValues(_loop(i)), 3);
+            return _context12.d(_regeneratorValues(_loop3(i)), 3);
           case 3:
             i += BATCH;
-            _context11.n = 2;
+            _context12.n = 2;
             break;
           case 4:
-            return _context11.a(2, all);
+            return _context12.a(2, all);
         }
       }, _callee10);
     }));
@@ -5776,18 +5949,18 @@ function makeClient(getKey) {
       var n,
         resp,
         data,
-        _args12 = arguments;
-      return _regenerator().w(function (_context12) {
-        while (1) switch (_context12.n) {
+        _args13 = arguments;
+      return _regenerator().w(function (_context13) {
+        while (1) switch (_context13.n) {
           case 0:
-            n = _args12.length > 2 && _args12[2] !== undefined ? _args12[2] : 6;
+            n = _args13.length > 2 && _args13[2] !== undefined ? _args13[2] : 6;
             if (extraction !== null && extraction !== void 0 && (_extraction$key_terms = extraction.key_terms) !== null && _extraction$key_terms !== void 0 && _extraction$key_terms.length) {
-              _context12.n = 1;
+              _context13.n = 1;
               break;
             }
-            return _context12.a(2, []);
+            return _context13.a(2, []);
           case 1:
-            _context12.n = 2;
+            _context13.n = 2;
             return generate({
               maxOutputTokens: 16384,
               disableThinking: true,
@@ -5803,9 +5976,9 @@ function makeClient(getKey) {
               responseSchema: TWO_PART_SCHEMA
             });
           case 2:
-            resp = _context12.v;
+            resp = _context13.v;
             data = extractJson(resp);
-            return _context12.a(2, (data.questions || []).map(function (q, i) {
+            return _context13.a(2, (data.questions || []).map(function (q, i) {
               return _objectSpread({
                 id: "tp_".concat(Date.now(), "_").concat(i),
                 mode: 'two_part'
@@ -5895,12 +6068,12 @@ function makeClient(getKey) {
     return _gradeShortAnswer.apply(this, arguments);
   }
   function _gradeShortAnswer() {
-    _gradeShortAnswer = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee12(_ref7) {
+    _gradeShortAnswer = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee12(_ref9) {
       var prompt, ideal_answer, key_points, user_answer, chapter, expected, expectedBlock, sys, userText, responseSchema, resp;
-      return _regenerator().w(function (_context13) {
-        while (1) switch (_context13.n) {
+      return _regenerator().w(function (_context14) {
+        while (1) switch (_context14.n) {
           case 0:
-            prompt = _ref7.prompt, ideal_answer = _ref7.ideal_answer, key_points = _ref7.key_points, user_answer = _ref7.user_answer, chapter = _ref7.chapter;
+            prompt = _ref9.prompt, ideal_answer = _ref9.ideal_answer, key_points = _ref9.key_points, user_answer = _ref9.user_answer, chapter = _ref9.chapter;
             expected = (key_points || []).filter(Boolean);
             expectedBlock = expected.length ? "Key points the answer should cover:\n".concat(expected.map(function (p, i) {
               return "".concat(i + 1, ". ").concat(p);
@@ -5937,7 +6110,7 @@ function makeClient(getKey) {
               },
               required: ['passes', 'score', 'feedback']
             };
-            _context13.n = 1;
+            _context14.n = 1;
             return generate({
               contents: [{
                 role: 'user',
@@ -5951,8 +6124,8 @@ function makeClient(getKey) {
               disableThinking: true
             });
           case 1:
-            resp = _context13.v;
-            return _context13.a(2, extractJson(resp));
+            resp = _context14.v;
+            return _context14.a(2, extractJson(resp));
         }
       }, _callee12);
     }));
@@ -5962,15 +6135,15 @@ function makeClient(getKey) {
     return _fixFlaggedQuestion.apply(this, arguments);
   } // ---- audit: batch correctness check via Gemini ----
   function _fixFlaggedQuestion() {
-    _fixFlaggedQuestion = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee13(_ref8) {
+    _fixFlaggedQuestion = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee13(_ref0) {
       var question, flagDescription, chapterContext, letters, partsText, _resp, out, stem, choices, currentCorrect, resp;
-      return _regenerator().w(function (_context14) {
-        while (1) switch (_context14.n) {
+      return _regenerator().w(function (_context15) {
+        while (1) switch (_context15.n) {
           case 0:
-            question = _ref8.question, flagDescription = _ref8.flagDescription, chapterContext = _ref8.chapterContext;
+            question = _ref0.question, flagDescription = _ref0.flagDescription, chapterContext = _ref0.chapterContext;
             letters = ['A', 'B', 'C', 'D']; // ---- two-part item ----
             if (!Array.isArray(question === null || question === void 0 ? void 0 : question.parts)) {
-              _context14.n = 2;
+              _context15.n = 2;
               break;
             }
             partsText = question.parts.map(function (p, pi) {
@@ -5978,7 +6151,7 @@ function makeClient(getKey) {
                 return "  ".concat(letters[i], ". ").concat(c);
               }).join('\n') + "\n  Current correct: ".concat(letters[p.correct_index] || '?', " (index ").concat(p.correct_index, ")\n") + "  Explanation: ".concat(p.explanation || '(none)');
             }).join('\n\n');
-            _context14.n = 1;
+            _context15.n = 1;
             return generate({
               maxOutputTokens: 4096,
               disableThinking: true,
@@ -5992,10 +6165,10 @@ function makeClient(getKey) {
               responseSchema: TWO_PART_FIX_SCHEMA
             });
           case 1:
-            _resp = _context14.v;
+            _resp = _context15.v;
             out = extractJson(_resp);
             out.two_part = true;
-            return _context14.a(2, out);
+            return _context15.a(2, out);
           case 2:
             // ---- single MC question ----
             stem = question.question || '(no stem)';
@@ -6003,7 +6176,7 @@ function makeClient(getKey) {
               return "".concat(letters[i], ". ").concat(c);
             }).join('\n');
             currentCorrect = letters[question.correct_index] || '?';
-            _context14.n = 3;
+            _context15.n = 3;
             return generate({
               maxOutputTokens: 4096,
               disableThinking: true,
@@ -6017,8 +6190,8 @@ function makeClient(getKey) {
               responseSchema: FIX_SCHEMA
             });
           case 3:
-            resp = _context14.v;
-            return _context14.a(2, extractJson(resp));
+            resp = _context15.v;
+            return _context15.a(2, extractJson(resp));
         }
       }, _callee13);
     }));
@@ -6057,23 +6230,23 @@ function makeClient(getKey) {
   // See CARS_GENERATION.md — single source of truth for these instructions.
   function _auditQuestions() {
     _auditQuestions = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee14(questions) {
-      var BATCH, all, _loop2, i;
-      return _regenerator().w(function (_context16) {
-        while (1) switch (_context16.n) {
+      var BATCH, all, _loop4, i;
+      return _regenerator().w(function (_context17) {
+        while (1) switch (_context17.n) {
           case 0:
             BATCH = 8;
             all = [];
-            _loop2 = /*#__PURE__*/_regenerator().m(function _loop2(i) {
+            _loop4 = /*#__PURE__*/_regenerator().m(function _loop4(i) {
               var batch, listing, resp, data;
-              return _regenerator().w(function (_context15) {
-                while (1) switch (_context15.n) {
+              return _regenerator().w(function (_context16) {
+                while (1) switch (_context16.n) {
                   case 0:
                     batch = questions.slice(i, i + BATCH);
                     listing = batch.map(function (q, idx) {
                       var letter = ['A', 'B', 'C', 'D'][q.correct_index] || '?';
                       return "--- Question ".concat(i + idx + 1, " ---\n") + "Stem: ".concat(q.question, "\n") + "A. ".concat(q.choices[0], "\nB. ").concat(q.choices[1], "\nC. ").concat(q.choices[2], "\nD. ").concat(q.choices[3], "\n") + "Claimed correct: ".concat(letter, " (index ").concat(q.correct_index, ")\n") + "Explanation: ".concat(q.explanation);
                     }).join('\n\n');
-                    _context15.n = 1;
+                    _context16.n = 1;
                     return generate({
                       maxOutputTokens: 8192,
                       disableThinking: true,
@@ -6087,7 +6260,7 @@ function makeClient(getKey) {
                       responseSchema: AUDIT_SCHEMA
                     });
                   case 1:
-                    resp = _context15.v;
+                    resp = _context16.v;
                     data = extractJson(resp);
                     (data.results || []).forEach(function (r, idx) {
                       all.push(_objectSpread(_objectSpread({}, r), {}, {
@@ -6095,23 +6268,23 @@ function makeClient(getKey) {
                       }));
                     });
                   case 2:
-                    return _context15.a(2);
+                    return _context16.a(2);
                 }
-              }, _loop2);
+              }, _loop4);
             });
             i = 0;
           case 1:
             if (!(i < questions.length)) {
-              _context16.n = 3;
+              _context17.n = 3;
               break;
             }
-            return _context16.d(_regeneratorValues(_loop2(i)), 2);
+            return _context17.d(_regeneratorValues(_loop4(i)), 2);
           case 2:
             i += BATCH;
-            _context16.n = 1;
+            _context17.n = 1;
             break;
           case 3:
-            return _context16.a(2, all);
+            return _context17.a(2, all);
         }
       }, _callee14);
     }));
@@ -6177,10 +6350,10 @@ function makeClient(getKey) {
   function _generateDailyCars() {
     _generateDailyCars = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee15(discipline) {
       var resp, data, answerSlots;
-      return _regenerator().w(function (_context17) {
-        while (1) switch (_context17.n) {
+      return _regenerator().w(function (_context18) {
+        while (1) switch (_context18.n) {
           case 0:
-            _context17.n = 1;
+            _context18.n = 1;
             return generate({
               maxOutputTokens: 32768,
               disableThinking: true,
@@ -6194,7 +6367,7 @@ function makeClient(getKey) {
               responseSchema: CARS_SCHEMA
             });
           case 1:
-            resp = _context17.v;
+            resp = _context18.v;
             data = extractJson(resp); // Tag questions with ids + a stable mode for the quiz runner.
             answerSlots = [0, 1, 2, 3, 0, 1].sort(function () {
               return Math.random() - 0.5;
@@ -6205,7 +6378,7 @@ function makeClient(getKey) {
                 mode: 'mc'
               }, randomizeMCChoiceOrder(q, answerSlots[i]));
             });
-            return _context17.a(2, data);
+            return _context18.a(2, data);
         }
       }, _callee15);
     }));
@@ -6261,10 +6434,10 @@ function makeClient(getKey) {
   function _generateCarsQuestions() {
     _generateCarsQuestions = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee16(passage, discipline) {
       var resp, data, answerSlots;
-      return _regenerator().w(function (_context18) {
-        while (1) switch (_context18.n) {
+      return _regenerator().w(function (_context19) {
+        while (1) switch (_context19.n) {
           case 0:
-            _context18.n = 1;
+            _context19.n = 1;
             return generate({
               maxOutputTokens: 32768,
               disableThinking: true,
@@ -6278,12 +6451,12 @@ function makeClient(getKey) {
               responseSchema: CARS_QUESTIONS_SCHEMA
             });
           case 1:
-            resp = _context18.v;
+            resp = _context19.v;
             data = extractJson(resp);
             answerSlots = [0, 1, 2, 3, 0, 1].sort(function () {
               return Math.random() - 0.5;
             });
-            return _context18.a(2, (data.questions || []).map(function (q, i) {
+            return _context19.a(2, (data.questions || []).map(function (q, i) {
               return _objectSpread({
                 id: "cars_".concat(Date.now(), "_").concat(i),
                 mode: 'mc'
@@ -6331,15 +6504,15 @@ function makeClient(getKey) {
   function _generateDailyConnections() {
     _generateDailyConnections = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee17(termPool, dateStr) {
       var lines, resp;
-      return _regenerator().w(function (_context19) {
-        while (1) switch (_context19.n) {
+      return _regenerator().w(function (_context20) {
+        while (1) switch (_context20.n) {
           case 0:
             // termPool: [{ term, subject, chapter, definition }] across all chapters.
             // Send a compact representation to keep the prompt small.
             lines = termPool.map(function (t) {
               return "- ".concat(t.term).concat(t.subject ? " [".concat(t.subject, "]") : '').concat(t.definition ? ": ".concat(t.definition.slice(0, 140)) : '');
             });
-            _context19.n = 1;
+            _context20.n = 1;
             return generate({
               maxOutputTokens: 8192,
               disableThinking: true,
@@ -6353,8 +6526,8 @@ function makeClient(getKey) {
               responseSchema: CONNECTIONS_SCHEMA
             });
           case 1:
-            resp = _context19.v;
-            return _context19.a(2, extractJson(resp));
+            resp = _context20.v;
+            return _context20.a(2, extractJson(resp));
         }
       }, _callee17);
     }));
@@ -6366,10 +6539,10 @@ function makeClient(getKey) {
   function _generateConnectionExplanation() {
     _generateConnectionExplanation = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee18(category, terms) {
       var resp;
-      return _regenerator().w(function (_context20) {
-        while (1) switch (_context20.n) {
+      return _regenerator().w(function (_context21) {
+        while (1) switch (_context21.n) {
           case 0:
-            _context20.n = 1;
+            _context21.n = 1;
             return generate({
               contents: [{
                 role: 'user',
@@ -6380,8 +6553,8 @@ function makeClient(getKey) {
               maxOutputTokens: 400
             });
           case 1:
-            resp = _context20.v;
-            return _context20.a(2, extractText(resp).trim());
+            resp = _context21.v;
+            return _context21.a(2, extractText(resp).trim());
         }
       }, _callee18);
     }));
@@ -6393,10 +6566,10 @@ function makeClient(getKey) {
   function _generateTermDefinition() {
     _generateTermDefinition = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee19(term, context) {
       var resp;
-      return _regenerator().w(function (_context21) {
-        while (1) switch (_context21.n) {
+      return _regenerator().w(function (_context22) {
+        while (1) switch (_context22.n) {
           case 0:
-            _context21.n = 1;
+            _context22.n = 1;
             return generate({
               contents: [{
                 role: 'user',
@@ -6407,8 +6580,8 @@ function makeClient(getKey) {
               maxOutputTokens: 220
             });
           case 1:
-            resp = _context21.v;
-            return _context21.a(2, extractText(resp).trim());
+            resp = _context22.v;
+            return _context22.a(2, extractText(resp).trim());
         }
       }, _callee19);
     }));
@@ -6458,73 +6631,73 @@ function makeApiClient(getToken) {
   function _call() {
     _call = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee23(path) {
       var _data;
-      var _ref15,
-        _ref15$method,
+      var _ref17,
+        _ref17$method,
         method,
         body,
-        _ref15$auth,
+        _ref17$auth,
         auth,
         headers,
         t,
         res,
         data,
-        _args25 = arguments,
+        _args26 = arguments,
         _t2;
-      return _regenerator().w(function (_context25) {
-        while (1) switch (_context25.p = _context25.n) {
+      return _regenerator().w(function (_context26) {
+        while (1) switch (_context26.p = _context26.n) {
           case 0:
-            _ref15 = _args25.length > 1 && _args25[1] !== undefined ? _args25[1] : {}, _ref15$method = _ref15.method, method = _ref15$method === void 0 ? 'GET' : _ref15$method, body = _ref15.body, _ref15$auth = _ref15.auth, auth = _ref15$auth === void 0 ? false : _ref15$auth;
+            _ref17 = _args26.length > 1 && _args26[1] !== undefined ? _args26[1] : {}, _ref17$method = _ref17.method, method = _ref17$method === void 0 ? 'GET' : _ref17$method, body = _ref17.body, _ref17$auth = _ref17.auth, auth = _ref17$auth === void 0 ? false : _ref17$auth;
             headers = {};
             if (body !== undefined) headers['Content-Type'] = 'application/json';
             if (!auth) {
-              _context25.n = 2;
+              _context26.n = 2;
               break;
             }
             t = getToken();
             if (t) {
-              _context25.n = 1;
+              _context26.n = 1;
               break;
             }
             throw new ApiError(401, 'not signed in');
           case 1:
             headers['Authorization'] = "Bearer ".concat(t);
           case 2:
-            _context25.n = 3;
+            _context26.n = 3;
             return fetch("".concat(API_BASE).concat(path), {
               method,
               headers,
               body: body !== undefined ? JSON.stringify(body) : undefined
             });
           case 3:
-            res = _context25.v;
+            res = _context26.v;
             data = null;
-            _context25.p = 4;
-            _context25.n = 5;
+            _context26.p = 4;
+            _context26.n = 5;
             return res.json();
           case 5:
-            data = _context25.v;
-            _context25.n = 7;
+            data = _context26.v;
+            _context26.n = 7;
             break;
           case 6:
-            _context25.p = 6;
-            _t2 = _context25.v;
+            _context26.p = 6;
+            _t2 = _context26.v;
           case 7:
             if (res.ok) {
-              _context25.n = 8;
+              _context26.n = 8;
               break;
             }
             throw new ApiError(res.status, ((_data = data) === null || _data === void 0 ? void 0 : _data.error) || res.statusText || "HTTP ".concat(res.status));
           case 8:
-            return _context25.a(2, data);
+            return _context26.a(2, data);
         }
       }, _callee23, null, [[4, 6]]);
     }));
     return _call.apply(this, arguments);
   }
   return {
-    signup: function signup(_ref9) {
-      var username = _ref9.username,
-        pin = _ref9.pin;
+    signup: function signup(_ref1) {
+      var username = _ref1.username,
+        pin = _ref1.pin;
       return call('/signup', {
         method: 'POST',
         body: {
@@ -6533,9 +6706,9 @@ function makeApiClient(getToken) {
         }
       });
     },
-    login: function login(_ref0) {
-      var username = _ref0.username,
-        pin = _ref0.pin;
+    login: function login(_ref10) {
+      var username = _ref10.username,
+        pin = _ref10.pin;
       return call('/login', {
         method: 'POST',
         body: {
@@ -6576,13 +6749,13 @@ function makeApiClient(getToken) {
       });
     },
     deleteAttempts: function deleteAttempts() {
-      var _ref1 = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : {},
-        file_id = _ref1.file_id,
-        chapter = _ref1.chapter,
-        subject = _ref1.subject,
-        ts_gte = _ref1.ts_gte,
-        ts_lt = _ref1.ts_lt,
-        all = _ref1.all;
+      var _ref11 = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : {},
+        file_id = _ref11.file_id,
+        chapter = _ref11.chapter,
+        subject = _ref11.subject,
+        ts_gte = _ref11.ts_gte,
+        ts_lt = _ref11.ts_lt,
+        all = _ref11.all;
       return call('/attempts', {
         method: 'DELETE',
         body: {
@@ -6617,11 +6790,11 @@ function makeApiClient(getToken) {
     getCarsPassage: function getCarsPassage(date) {
       return carsSlotFor(date) > 1 ? Promise.reject(new ApiError(404, 'local CARS slot')) : call("/cars/passage?date=".concat(encodeURIComponent(carsBaseDate(date))));
     },
-    postCars: function postCars(_ref10) {
-      var date = _ref10.date,
-        discipline = _ref10.discipline,
-        title = _ref10.title,
-        payload = _ref10.payload;
+    postCars: function postCars(_ref12) {
+      var date = _ref12.date,
+        discipline = _ref12.discipline,
+        title = _ref12.title,
+        payload = _ref12.payload;
       return carsSlotFor(date) > 1 ? Promise.resolve({
         ok: true
       }) : call('/cars', {
@@ -6642,10 +6815,10 @@ function makeApiClient(getToken) {
     getConnections: function getConnections(date) {
       return call("/connections/".concat(encodeURIComponent(date)));
     },
-    postConnections: function postConnections(_ref11) {
-      var date = _ref11.date,
-        title = _ref11.title,
-        payload = _ref11.payload;
+    postConnections: function postConnections(_ref13) {
+      var date = _ref13.date,
+        title = _ref13.title,
+        payload = _ref13.payload;
       return call('/connections', {
         method: 'POST',
         body: {
@@ -6663,17 +6836,17 @@ function makeApiClient(getToken) {
     putBank: function () {
       var _putBank = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee20(bankJson) {
         var t, res, data;
-        return _regenerator().w(function (_context22) {
-          while (1) switch (_context22.n) {
+        return _regenerator().w(function (_context23) {
+          while (1) switch (_context23.n) {
             case 0:
               t = getToken();
               if (t) {
-                _context22.n = 1;
+                _context23.n = 1;
                 break;
               }
               throw new ApiError(401, 'not signed in');
             case 1:
-              _context22.n = 2;
+              _context23.n = 2;
               return fetch("".concat(API_BASE, "/bank"), {
                 method: 'PUT',
                 headers: {
@@ -6683,20 +6856,20 @@ function makeApiClient(getToken) {
                 body: bankJson
               });
             case 2:
-              res = _context22.v;
-              _context22.n = 3;
+              res = _context23.v;
+              _context23.n = 3;
               return res.json().catch(function () {
                 return null;
               });
             case 3:
-              data = _context22.v;
+              data = _context23.v;
               if (res.ok) {
-                _context22.n = 4;
+                _context23.n = 4;
                 break;
               }
               throw new ApiError(res.status, (data === null || data === void 0 ? void 0 : data.error) || "HTTP ".concat(res.status));
             case 4:
-              return _context22.a(2, data);
+              return _context23.a(2, data);
           }
         }, _callee20);
       }));
@@ -6752,11 +6925,11 @@ function makeApiClient(getToken) {
       return call('/exam-bank');
     },
     examBankQuestions: function examBankQuestions() {
-      var _ref12 = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : {},
-        section = _ref12.section,
-        subject = _ref12.subject,
-        chapter = _ref12.chapter,
-        limit = _ref12.limit;
+      var _ref14 = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : {},
+        section = _ref14.section,
+        subject = _ref14.subject,
+        chapter = _ref14.chapter,
+        limit = _ref14.limit;
       var p = new URLSearchParams();
       if (section) p.set('section', section);
       if (subject) p.set('subject', subject);
@@ -6772,11 +6945,11 @@ function makeApiClient(getToken) {
     getChapter: function getChapter(id) {
       return call("/chapters/".concat(encodeURIComponent(id)));
     },
-    createChapter: function createChapter(_ref13) {
-      var subject = _ref13.subject,
-        title = _ref13.title,
-        filename = _ref13.filename,
-        size_bytes = _ref13.size_bytes;
+    createChapter: function createChapter(_ref15) {
+      var subject = _ref15.subject,
+        title = _ref15.title,
+        filename = _ref15.filename,
+        size_bytes = _ref15.size_bytes;
       return call('/chapters', {
         method: 'POST',
         body: {
@@ -6797,64 +6970,6 @@ function makeApiClient(getToken) {
     putChapterStage: function () {
       var _putChapterStage = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee21(id, stage, payload) {
         var t, body, res, data;
-        return _regenerator().w(function (_context23) {
-          while (1) switch (_context23.n) {
-            case 0:
-              t = getToken();
-              if (t) {
-                _context23.n = 1;
-                break;
-              }
-              throw new ApiError(401, 'not signed in');
-            case 1:
-              body = typeof payload === 'string' ? payload : JSON.stringify(payload);
-              _context23.n = 2;
-              return fetch("".concat(API_BASE, "/chapters/").concat(encodeURIComponent(id), "/stage/").concat(encodeURIComponent(stage)), {
-                method: 'PUT',
-                headers: {
-                  'Authorization': "Bearer ".concat(t),
-                  'Content-Type': 'application/json'
-                },
-                body
-              });
-            case 2:
-              res = _context23.v;
-              _context23.n = 3;
-              return res.json().catch(function () {
-                return null;
-              });
-            case 3:
-              data = _context23.v;
-              if (res.ok) {
-                _context23.n = 4;
-                break;
-              }
-              throw new ApiError(res.status, (data === null || data === void 0 ? void 0 : data.error) || "HTTP ".concat(res.status));
-            case 4:
-              return _context23.a(2, data);
-          }
-        }, _callee21);
-      }));
-      function putChapterStage(_x45, _x46, _x47) {
-        return _putChapterStage.apply(this, arguments);
-      }
-      return putChapterStage;
-    }(),
-    addChapterFlag: function addChapterFlag(id, _ref14) {
-      var question_id = _ref14.question_id,
-        description = _ref14.description;
-      return call("/chapters/".concat(encodeURIComponent(id), "/flags"), {
-        method: 'POST',
-        body: {
-          question_id,
-          description
-        },
-        auth: true
-      });
-    },
-    setChapterFlags: function () {
-      var _setChapterFlags = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee22(id, flags) {
-        var t, res, data;
         return _regenerator().w(function (_context24) {
           while (1) switch (_context24.n) {
             case 0:
@@ -6865,14 +6980,15 @@ function makeApiClient(getToken) {
               }
               throw new ApiError(401, 'not signed in');
             case 1:
+              body = typeof payload === 'string' ? payload : JSON.stringify(payload);
               _context24.n = 2;
-              return fetch("".concat(API_BASE, "/chapters/").concat(encodeURIComponent(id), "/flags"), {
+              return fetch("".concat(API_BASE, "/chapters/").concat(encodeURIComponent(id), "/stage/").concat(encodeURIComponent(stage)), {
                 method: 'PUT',
                 headers: {
                   'Authorization': "Bearer ".concat(t),
                   'Content-Type': 'application/json'
                 },
-                body: JSON.stringify(flags)
+                body
               });
             case 2:
               res = _context24.v;
@@ -6889,6 +7005,63 @@ function makeApiClient(getToken) {
               throw new ApiError(res.status, (data === null || data === void 0 ? void 0 : data.error) || "HTTP ".concat(res.status));
             case 4:
               return _context24.a(2, data);
+          }
+        }, _callee21);
+      }));
+      function putChapterStage(_x45, _x46, _x47) {
+        return _putChapterStage.apply(this, arguments);
+      }
+      return putChapterStage;
+    }(),
+    addChapterFlag: function addChapterFlag(id, _ref16) {
+      var question_id = _ref16.question_id,
+        description = _ref16.description;
+      return call("/chapters/".concat(encodeURIComponent(id), "/flags"), {
+        method: 'POST',
+        body: {
+          question_id,
+          description
+        },
+        auth: true
+      });
+    },
+    setChapterFlags: function () {
+      var _setChapterFlags = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee22(id, flags) {
+        var t, res, data;
+        return _regenerator().w(function (_context25) {
+          while (1) switch (_context25.n) {
+            case 0:
+              t = getToken();
+              if (t) {
+                _context25.n = 1;
+                break;
+              }
+              throw new ApiError(401, 'not signed in');
+            case 1:
+              _context25.n = 2;
+              return fetch("".concat(API_BASE, "/chapters/").concat(encodeURIComponent(id), "/flags"), {
+                method: 'PUT',
+                headers: {
+                  'Authorization': "Bearer ".concat(t),
+                  'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(flags)
+              });
+            case 2:
+              res = _context25.v;
+              _context25.n = 3;
+              return res.json().catch(function () {
+                return null;
+              });
+            case 3:
+              data = _context25.v;
+              if (res.ok) {
+                _context25.n = 4;
+                break;
+              }
+              throw new ApiError(res.status, (data === null || data === void 0 ? void 0 : data.error) || "HTTP ".concat(res.status));
+            case 4:
+              return _context25.a(2, data);
           }
         }, _callee22);
       }));
@@ -6908,47 +7081,47 @@ function forceUpdateApp() {
 function _forceUpdateApp() {
   _forceUpdateApp = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee76() {
     var keys, regs, url, _t84;
-    return _regenerator().w(function (_context84) {
-      while (1) switch (_context84.p = _context84.n) {
+    return _regenerator().w(function (_context85) {
+      while (1) switch (_context85.p = _context85.n) {
         case 0:
-          _context84.p = 0;
+          _context85.p = 0;
           if (!('caches' in window)) {
-            _context84.n = 2;
+            _context85.n = 2;
             break;
           }
-          _context84.n = 1;
+          _context85.n = 1;
           return caches.keys();
         case 1:
-          keys = _context84.v;
-          _context84.n = 2;
+          keys = _context85.v;
+          _context85.n = 2;
           return Promise.all(keys.map(function (k) {
             return caches.delete(k);
           }));
         case 2:
           if (!('serviceWorker' in navigator)) {
-            _context84.n = 4;
+            _context85.n = 4;
             break;
           }
-          _context84.n = 3;
+          _context85.n = 3;
           return navigator.serviceWorker.getRegistrations();
         case 3:
-          regs = _context84.v;
-          _context84.n = 4;
+          regs = _context85.v;
+          _context85.n = 4;
           return Promise.all(regs.map(function (r) {
             return r.unregister();
           }));
         case 4:
-          _context84.n = 6;
+          _context85.n = 6;
           break;
         case 5:
-          _context84.p = 5;
-          _t84 = _context84.v;
+          _context85.p = 5;
+          _t84 = _context85.v;
         case 6:
           url = new URL(window.location.href);
           url.searchParams.set('_t', Date.now().toString());
           window.location.replace(url.toString());
         case 7:
-          return _context84.a(2);
+          return _context85.a(2);
       }
     }, _callee76, null, [[0, 5]]);
   }));
@@ -6958,8 +7131,8 @@ var AppCtx = createContext(null);
 var useApp = function useApp() {
   return useContext(AppCtx);
 };
-function AppProvider(_ref16) {
-  var children = _ref16.children;
+function AppProvider(_ref18) {
+  var children = _ref18.children;
   var _useState = useState(function () {
       return storage.get(KEYS.apiKey, '');
     }),
@@ -7146,21 +7319,21 @@ function AppProvider(_ref16) {
   }, []);
   var pushBank = useCallback(/*#__PURE__*/_asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee24() {
     var cur, _t3;
-    return _regenerator().w(function (_context26) {
-      while (1) switch (_context26.p = _context26.n) {
+    return _regenerator().w(function (_context27) {
+      while (1) switch (_context27.p = _context27.n) {
         case 0:
           setPushStatus({
             state: 'pushing',
             lastAt: null,
             error: null
           });
-          _context26.p = 1;
+          _context27.p = 1;
           cur = {
             files: storage.get(KEYS.files, []),
             extractions: storage.get(KEYS.extractions, {}),
             questions: storage.get(KEYS.questions, {})
           };
-          _context26.n = 2;
+          _context27.n = 2;
           return pushBankToGithub(github, cur);
         case 2:
           setPushStatus({
@@ -7168,16 +7341,16 @@ function AppProvider(_ref16) {
             lastAt: Date.now(),
             error: null
           });
-          return _context26.a(2, true);
+          return _context27.a(2, true);
         case 3:
-          _context26.p = 3;
-          _t3 = _context26.v;
+          _context27.p = 3;
+          _t3 = _context27.v;
           setPushStatus({
             state: 'error',
             lastAt: null,
             error: _t3.message
           });
-          return _context26.a(2, false);
+          return _context27.a(2, false);
       }
     }, _callee24, null, [[1, 3]]);
   })), [github]);
@@ -7250,38 +7423,38 @@ function AppProvider(_ref16) {
     var cancelled = false;
     _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee25() {
       var res, ct, data, _t4;
-      return _regenerator().w(function (_context27) {
-        while (1) switch (_context27.p = _context27.n) {
+      return _regenerator().w(function (_context28) {
+        while (1) switch (_context28.p = _context28.n) {
           case 0:
-            _context27.p = 0;
-            _context27.n = 1;
+            _context28.p = 0;
+            _context28.n = 1;
             return fetch('./data.json', {
               cache: 'no-store'
             });
           case 1:
-            res = _context27.v;
+            res = _context28.v;
             if (res.ok) {
-              _context27.n = 2;
+              _context28.n = 2;
               break;
             }
-            return _context27.a(2);
+            return _context28.a(2);
           case 2:
             ct = res.headers.get('content-type') || '';
             if (ct.includes('json')) {
-              _context27.n = 3;
+              _context28.n = 3;
               break;
             }
-            return _context27.a(2);
+            return _context28.a(2);
           case 3:
-            _context27.n = 4;
+            _context28.n = 4;
             return res.json();
           case 4:
-            data = _context27.v;
+            data = _context28.v;
             if (!cancelled) {
-              _context27.n = 5;
+              _context28.n = 5;
               break;
             }
-            return _context27.a(2);
+            return _context28.a(2);
           case 5:
             if (data !== null && data !== void 0 && data.files && data !== null && data !== void 0 && data.questions) {
               setStaticBank({
@@ -7290,13 +7463,13 @@ function AppProvider(_ref16) {
                 questions: data.questions || {}
               });
             }
-            _context27.n = 7;
+            _context28.n = 7;
             break;
           case 6:
-            _context27.p = 6;
-            _t4 = _context27.v;
+            _context28.p = 6;
+            _t4 = _context28.v;
           case 7:
-            return _context27.a(2);
+            return _context28.a(2);
         }
       }, _callee25, null, [[0, 6]]);
     }))();
@@ -7434,24 +7607,24 @@ function AppProvider(_ref16) {
   var syncLockRef = useRef(false);
   var flushSync = useCallback(/*#__PURE__*/_asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee26() {
     var s, queue, CHUNK, remaining, inserted, chunk, resp, idOf, queuedIds, _t5;
-    return _regenerator().w(function (_context28) {
-      while (1) switch (_context28.p = _context28.n) {
+    return _regenerator().w(function (_context29) {
+      while (1) switch (_context29.p = _context29.n) {
         case 0:
           s = storage.get(KEYS.session, null);
           if (s !== null && s !== void 0 && s.token) {
-            _context28.n = 1;
+            _context29.n = 1;
             break;
           }
-          return _context28.a(2, {
+          return _context29.a(2, {
             ok: false,
             reason: 'not signed in'
           });
         case 1:
           if (!syncLockRef.current) {
-            _context28.n = 2;
+            _context29.n = 2;
             break;
           }
-          return _context28.a(2, {
+          return _context29.a(2, {
             ok: false,
             reason: 'busy'
           });
@@ -7459,15 +7632,15 @@ function AppProvider(_ref16) {
           syncLockRef.current = true;
           setSyncBusy(true);
           setSyncError('');
-          _context28.p = 3;
+          _context29.p = 3;
           queue = storage.get(KEYS.attempts, []).filter(function (a) {
             return !a.synced;
           });
           if (queue.length) {
-            _context28.n = 4;
+            _context29.n = 4;
             break;
           }
-          return _context28.a(2, {
+          return _context29.a(2, {
             ok: true,
             inserted: 0
           });
@@ -7478,17 +7651,17 @@ function AppProvider(_ref16) {
           inserted = 0;
         case 5:
           if (!remaining.length) {
-            _context28.n = 7;
+            _context29.n = 7;
             break;
           }
           chunk = remaining.slice(0, CHUNK);
-          _context28.n = 6;
+          _context29.n = 6;
           return api.postAttempts(chunk);
         case 6:
-          resp = _context28.v;
+          resp = _context29.v;
           inserted += resp && typeof resp.inserted === 'number' ? resp.inserted : chunk.length;
           remaining = remaining.slice(CHUNK);
-          _context28.n = 5;
+          _context29.n = 5;
           break;
         case 7:
           // Identify queued rows by client_id when present, falling back to
@@ -7506,30 +7679,30 @@ function AppProvider(_ref16) {
             storage.set(KEYS.attempts, next);
             return next;
           });
-          return _context28.a(2, {
+          return _context29.a(2, {
             ok: true,
             inserted,
             submitted: queue.length
           });
         case 8:
-          _context28.p = 8;
-          _t5 = _context28.v;
+          _context29.p = 8;
+          _t5 = _context29.v;
           setSyncError(_t5.message || 'sync failed');
           if (_t5.status === 401) {
             storage.remove(KEYS.session);
             setSessionState(null);
           }
-          return _context28.a(2, {
+          return _context29.a(2, {
             ok: false,
             reason: _t5.message
           });
         case 9:
-          _context28.p = 9;
+          _context29.p = 9;
           syncLockRef.current = false;
           setSyncBusy(false);
-          return _context28.f(9);
+          return _context29.f(9);
         case 10:
-          return _context28.a(2);
+          return _context29.a(2);
       }
     }, _callee26, null, [[3, 8, 9, 10]]);
   })), [api]);
@@ -7541,30 +7714,30 @@ function AppProvider(_ref16) {
   // exists locally and remotely.
   var pullAttempts = useCallback(/*#__PURE__*/_asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee27() {
     var s, resp, remote, _t6;
-    return _regenerator().w(function (_context29) {
-      while (1) switch (_context29.p = _context29.n) {
+    return _regenerator().w(function (_context30) {
+      while (1) switch (_context30.p = _context30.n) {
         case 0:
           s = storage.get(KEYS.session, null);
           if (s !== null && s !== void 0 && s.token) {
-            _context29.n = 1;
+            _context30.n = 1;
             break;
           }
-          return _context29.a(2, {
+          return _context30.a(2, {
             ok: false,
             reason: 'not signed in'
           });
         case 1:
-          _context29.p = 1;
-          _context29.n = 2;
+          _context30.p = 1;
+          _context30.n = 2;
           return api.getAttempts();
         case 2:
-          resp = _context29.v;
+          resp = _context30.v;
           remote = Array.isArray(resp === null || resp === void 0 ? void 0 : resp.attempts) ? resp.attempts : [];
           if (remote.length) {
-            _context29.n = 3;
+            _context30.n = 3;
             break;
           }
-          return _context29.a(2, {
+          return _context30.a(2, {
             ok: true,
             added: 0,
             total: 0
@@ -7573,24 +7746,24 @@ function AppProvider(_ref16) {
           setAttemptsState(function (prev) {
             var haveCid = new Set();
             var haveLegacy = new Set();
-            var _iterator29 = _createForOfIteratorHelper(prev),
-              _step29;
-            try {
-              for (_iterator29.s(); !(_step29 = _iterator29.n()).done;) {
-                var a = _step29.value;
-                if (a.client_id) haveCid.add(a.client_id);else haveLegacy.add("".concat(a.ts, ":").concat(a.question_id));
-              }
-            } catch (err) {
-              _iterator29.e(err);
-            } finally {
-              _iterator29.f();
-            }
-            var additions = [];
-            var _iterator30 = _createForOfIteratorHelper(remote),
+            var _iterator30 = _createForOfIteratorHelper(prev),
               _step30;
             try {
               for (_iterator30.s(); !(_step30 = _iterator30.n()).done;) {
-                var r = _step30.value;
+                var a = _step30.value;
+                if (a.client_id) haveCid.add(a.client_id);else haveLegacy.add("".concat(a.ts, ":").concat(a.question_id));
+              }
+            } catch (err) {
+              _iterator30.e(err);
+            } finally {
+              _iterator30.f();
+            }
+            var additions = [];
+            var _iterator31 = _createForOfIteratorHelper(remote),
+              _step31;
+            try {
+              for (_iterator31.s(); !(_step31 = _iterator31.n()).done;) {
+                var r = _step31.value;
                 if (r.client_id) {
                   if (haveCid.has(r.client_id)) continue;
                   haveCid.add(r.client_id);
@@ -7614,9 +7787,9 @@ function AppProvider(_ref16) {
                 });
               }
             } catch (err) {
-              _iterator30.e(err);
+              _iterator31.e(err);
             } finally {
-              _iterator30.f();
+              _iterator31.f();
             }
             if (!additions.length) return prev;
             var next = [].concat(_toConsumableArray(prev), additions).sort(function (a, b) {
@@ -7625,14 +7798,14 @@ function AppProvider(_ref16) {
             storage.set(KEYS.attempts, next);
             return next;
           });
-          return _context29.a(2, {
+          return _context30.a(2, {
             ok: true,
             fetched: remote.length
           });
         case 4:
-          _context29.p = 4;
-          _t6 = _context29.v;
-          return _context29.a(2, {
+          _context30.p = 4;
+          _t6 = _context30.v;
+          return _context30.a(2, {
             ok: false,
             reason: _t6.message
           });
@@ -7645,7 +7818,7 @@ function AppProvider(_ref16) {
   // Settings "erase attempts from this day" UI passes local-midnight bounds.
   var eraseStatsFor = useCallback(/*#__PURE__*/_asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee28() {
     var _serverResult$deleted, _serverResult;
-    var _ref22,
+    var _ref24,
       file_id,
       chapter,
       subject,
@@ -7653,20 +7826,20 @@ function AppProvider(_ref16) {
       ts_lt,
       s,
       serverResult,
-      _args30 = arguments,
+      _args31 = arguments,
       _t7;
-    return _regenerator().w(function (_context30) {
-      while (1) switch (_context30.p = _context30.n) {
+    return _regenerator().w(function (_context31) {
+      while (1) switch (_context31.p = _context31.n) {
         case 0:
-          _ref22 = _args30.length > 0 && _args30[0] !== undefined ? _args30[0] : {}, file_id = _ref22.file_id, chapter = _ref22.chapter, subject = _ref22.subject, ts_gte = _ref22.ts_gte, ts_lt = _ref22.ts_lt;
+          _ref24 = _args31.length > 0 && _args31[0] !== undefined ? _args31[0] : {}, file_id = _ref24.file_id, chapter = _ref24.chapter, subject = _ref24.subject, ts_gte = _ref24.ts_gte, ts_lt = _ref24.ts_lt;
           s = storage.get(KEYS.session, null);
           serverResult = null;
           if (!(s !== null && s !== void 0 && s.token)) {
-            _context30.n = 4;
+            _context31.n = 4;
             break;
           }
-          _context30.p = 1;
-          _context30.n = 2;
+          _context31.p = 1;
+          _context31.n = 2;
           return api.deleteAttempts({
             file_id,
             chapter,
@@ -7675,13 +7848,13 @@ function AppProvider(_ref16) {
             ts_lt
           });
         case 2:
-          serverResult = _context30.v;
-          _context30.n = 4;
+          serverResult = _context31.v;
+          _context31.n = 4;
           break;
         case 3:
-          _context30.p = 3;
-          _t7 = _context30.v;
-          return _context30.a(2, {
+          _context31.p = 3;
+          _t7 = _context31.v;
+          return _context31.a(2, {
             ok: false,
             reason: _t7.message
           });
@@ -7701,7 +7874,7 @@ function AppProvider(_ref16) {
             storage.set(KEYS.attempts, next);
             return next;
           });
-          return _context30.a(2, {
+          return _context31.a(2, {
             ok: true,
             serverDeleted: (_serverResult$deleted = (_serverResult = serverResult) === null || _serverResult === void 0 ? void 0 : _serverResult.deleted) !== null && _serverResult$deleted !== void 0 ? _serverResult$deleted : 0
           });
@@ -7716,30 +7889,30 @@ function AppProvider(_ref16) {
     if (!(session !== null && session !== void 0 && session.token)) return;
     _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee29() {
       var _t8, _t9;
-      return _regenerator().w(function (_context31) {
-        while (1) switch (_context31.p = _context31.n) {
+      return _regenerator().w(function (_context32) {
+        while (1) switch (_context32.p = _context32.n) {
           case 0:
-            _context31.p = 0;
-            _context31.n = 1;
+            _context32.p = 0;
+            _context32.n = 1;
             return pullAttempts();
           case 1:
-            _context31.n = 3;
+            _context32.n = 3;
             break;
           case 2:
-            _context31.p = 2;
-            _t8 = _context31.v;
+            _context32.p = 2;
+            _t8 = _context32.v;
           case 3:
-            _context31.p = 3;
-            _context31.n = 4;
+            _context32.p = 3;
+            _context32.n = 4;
             return flushSync();
           case 4:
-            _context31.n = 6;
+            _context32.n = 6;
             break;
           case 5:
-            _context31.p = 5;
-            _t9 = _context31.v;
+            _context32.p = 5;
+            _t9 = _context32.v;
           case 6:
-            return _context31.a(2);
+            return _context32.a(2);
         }
       }, _callee29, null, [[3, 5], [0, 2]]);
     }))();
@@ -7759,36 +7932,36 @@ function AppProvider(_ref16) {
   var statePushTimerRef = useRef(null);
   var pushState = useCallback(/*#__PURE__*/_asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee30() {
     var s, blob, _t0;
-    return _regenerator().w(function (_context32) {
-      while (1) switch (_context32.p = _context32.n) {
+    return _regenerator().w(function (_context33) {
+      while (1) switch (_context33.p = _context33.n) {
         case 0:
           s = storage.get(KEYS.session, null);
           if (!(!(s !== null && s !== void 0 && s.token) || !stateHydratedRef.current)) {
-            _context32.n = 1;
+            _context33.n = 1;
             break;
           }
-          return _context32.a(2);
+          return _context33.a(2);
         case 1:
           blob = serializeSyncState(readSyncState());
           if (!(blob === lastPushedStateRef.current)) {
-            _context32.n = 2;
+            _context33.n = 2;
             break;
           }
-          return _context32.a(2);
+          return _context33.a(2);
         case 2:
-          _context32.p = 2;
-          _context32.n = 3;
+          _context33.p = 2;
+          _context33.n = 3;
           return api.putState(JSON.parse(blob));
         case 3:
           lastPushedStateRef.current = blob;
           storage.set(KEYS.stateUpdatedAt, Date.now());
-          _context32.n = 5;
+          _context33.n = 5;
           break;
         case 4:
-          _context32.p = 4;
-          _t0 = _context32.v;
+          _context33.p = 4;
+          _t0 = _context33.v;
         case 5:
-          return _context32.a(2);
+          return _context33.a(2);
       }
     }, _callee30, null, [[2, 4]]);
   })), [api]);
@@ -7801,46 +7974,46 @@ function AppProvider(_ref16) {
   }, [pushState]);
   var pullState = useCallback(/*#__PURE__*/_asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee31() {
     var _resp2;
-    var s, resp, cloud, cloudUpdatedAt, localUpdatedAt, cloudNewer, merged, _iterator31, _step31, k, th, mergedStr, _t1, _t10;
-    return _regenerator().w(function (_context33) {
-      while (1) switch (_context33.p = _context33.n) {
+    var s, resp, cloud, cloudUpdatedAt, localUpdatedAt, cloudNewer, merged, _iterator32, _step32, k, th, mergedStr, _t1, _t10;
+    return _regenerator().w(function (_context34) {
+      while (1) switch (_context34.p = _context34.n) {
         case 0:
           s = storage.get(KEYS.session, null);
           if (s !== null && s !== void 0 && s.token) {
-            _context33.n = 1;
+            _context34.n = 1;
             break;
           }
-          return _context33.a(2);
+          return _context34.a(2);
         case 1:
-          _context33.p = 1;
-          _context33.n = 2;
+          _context34.p = 1;
+          _context34.n = 2;
           return api.getState();
         case 2:
-          resp = _context33.v;
-          _context33.n = 4;
+          resp = _context34.v;
+          _context34.n = 4;
           break;
         case 3:
-          _context33.p = 3;
-          _t1 = _context33.v;
+          _context34.p = 3;
+          _t1 = _context34.v;
           stateHydratedRef.current = true;
-          return _context33.a(2);
+          return _context34.a(2);
         case 4:
           cloud = resp && resp.state && typeof resp.state === 'object' ? resp.state : {};
           cloudUpdatedAt = ((_resp2 = resp) === null || _resp2 === void 0 ? void 0 : _resp2.updated_at) || 0;
           localUpdatedAt = storage.get(KEYS.stateUpdatedAt, 0) || 0;
           cloudNewer = cloudUpdatedAt > localUpdatedAt;
           merged = mergeSyncState(readSyncState(), cloud, cloudNewer); // Persist the merged result locally...
-          _iterator31 = _createForOfIteratorHelper(SYNC_STATE_KEYS);
+          _iterator32 = _createForOfIteratorHelper(SYNC_STATE_KEYS);
           try {
-            for (_iterator31.s(); !(_step31 = _iterator31.n()).done;) {
-              k = _step31.value;
+            for (_iterator32.s(); !(_step32 = _iterator32.n()).done;) {
+              k = _step32.value;
               if (merged[k] !== undefined) storage.set(k, merged[k]);
             }
             // ...and reflect merged settings in React state so the UI updates without a reload.
           } catch (err) {
-            _iterator31.e(err);
+            _iterator32.e(err);
           } finally {
-            _iterator31.f();
+            _iterator32.f();
           }
           try {
             th = merged['mcat:theme'];
@@ -7866,22 +8039,22 @@ function AppProvider(_ref16) {
           }); // nudge consumers that read progress inline from storage
           // If our merge produced anything the cloud lacked, push the union back up.
           if (!(mergedStr !== serializeSyncState(cloud))) {
-            _context33.n = 8;
+            _context34.n = 8;
             break;
           }
-          _context33.p = 5;
-          _context33.n = 6;
+          _context34.p = 5;
+          _context34.n = 6;
           return api.putState(merged);
         case 6:
-          _context33.n = 8;
+          _context34.n = 8;
           break;
         case 7:
-          _context33.p = 7;
-          _t10 = _context33.v;
+          _context34.p = 7;
+          _t10 = _context34.v;
         case 8:
           storage.set(KEYS.stateUpdatedAt, Date.now());
         case 9:
-          return _context33.a(2);
+          return _context34.a(2);
       }
     }, _callee31, null, [[5, 7], [1, 3]]);
   })), [api, setPalette, setMode, setVolume, setTropicalBg, setBgBlur, setExperimentalUI, setGlass, setAutoDownloadChapters, setAutoDownloadAll, setContributorMode, setReauditEnabled]);
@@ -7895,20 +8068,20 @@ function AppProvider(_ref16) {
     }
     _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee32() {
       var _t11;
-      return _regenerator().w(function (_context34) {
-        while (1) switch (_context34.p = _context34.n) {
+      return _regenerator().w(function (_context35) {
+        while (1) switch (_context35.p = _context35.n) {
           case 0:
-            _context34.p = 0;
-            _context34.n = 1;
+            _context35.p = 0;
+            _context35.n = 1;
             return pullState();
           case 1:
-            _context34.n = 3;
+            _context35.n = 3;
             break;
           case 2:
-            _context34.p = 2;
-            _t11 = _context34.v;
+            _context35.p = 2;
+            _t11 = _context35.v;
           case 3:
-            return _context34.a(2);
+            return _context35.a(2);
         }
       }, _callee32, null, [[0, 2]]);
     }))();
@@ -7954,34 +8127,34 @@ function AppProvider(_ref16) {
     if (!localChapters.length) return;
     var cancelled = false;
     _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee33() {
-      var data, _iterator32, _step32, _loop3, _ret, _t13, _t14;
-      return _regenerator().w(function (_context36) {
-        while (1) switch (_context36.p = _context36.n) {
+      var data, _iterator33, _step33, _loop5, _ret3, _t13, _t14;
+      return _regenerator().w(function (_context37) {
+        while (1) switch (_context37.p = _context37.n) {
           case 0:
-            _context36.p = 0;
-            _context36.n = 1;
+            _context37.p = 0;
+            _context37.n = 1;
             return api.listChapters();
           case 1:
-            data = _context36.v;
+            data = _context37.v;
             if (!cancelled) {
-              _context36.n = 2;
+              _context37.n = 2;
               break;
             }
-            return _context36.a(2);
+            return _context37.a(2);
           case 2:
-            _iterator32 = _createForOfIteratorHelper(data.chapters || []);
-            _context36.p = 3;
-            _loop3 = /*#__PURE__*/_regenerator().m(function _loop3() {
+            _iterator33 = _createForOfIteratorHelper(data.chapters || []);
+            _context37.p = 3;
+            _loop5 = /*#__PURE__*/_regenerator().m(function _loop5() {
               var ch, localFile, localTs, full, localFileId, fileRecord, _t12;
-              return _regenerator().w(function (_context35) {
-                while (1) switch (_context35.p = _context35.n) {
+              return _regenerator().w(function (_context36) {
+                while (1) switch (_context36.p = _context36.n) {
                   case 0:
-                    ch = _step32.value;
+                    ch = _step33.value;
                     if (!cancelled) {
-                      _context35.n = 1;
+                      _context36.n = 1;
                       break;
                     }
-                    return _context35.a(2, {
+                    return _context36.a(2, {
                       v: void 0
                     });
                   case 1:
@@ -7989,28 +8162,28 @@ function AppProvider(_ref16) {
                       return f.chapter_id === ch.id;
                     });
                     if (localFile) {
-                      _context35.n = 2;
+                      _context36.n = 2;
                       break;
                     }
-                    return _context35.a(2, 0);
+                    return _context36.a(2, 0);
                   case 2:
                     localTs = localFile.chapter_updated_at || 0;
                     if (!(ch.updated_at <= localTs)) {
-                      _context35.n = 3;
+                      _context36.n = 3;
                       break;
                     }
-                    return _context35.a(2, 0);
+                    return _context36.a(2, 0);
                   case 3:
-                    _context35.p = 3;
-                    _context35.n = 4;
+                    _context36.p = 3;
+                    _context36.n = 4;
                     return api.getChapter(ch.id);
                   case 4:
-                    full = _context35.v;
+                    full = _context36.v;
                     if (!cancelled) {
-                      _context35.n = 5;
+                      _context36.n = 5;
                       break;
                     }
-                    return _context35.a(2, {
+                    return _context36.a(2, {
                       v: void 0
                     });
                   case 5:
@@ -8039,58 +8212,58 @@ function AppProvider(_ref16) {
                       short: full.short || [],
                       generated_at: new Date(full.updated_at).toISOString()
                     });
-                    _context35.n = 7;
+                    _context36.n = 7;
                     break;
                   case 6:
-                    _context35.p = 6;
-                    _t12 = _context35.v;
+                    _context36.p = 6;
+                    _t12 = _context36.v;
                   case 7:
-                    return _context35.a(2);
+                    return _context36.a(2);
                 }
-              }, _loop3, null, [[3, 6]]);
+              }, _loop5, null, [[3, 6]]);
             });
-            _iterator32.s();
+            _iterator33.s();
           case 4:
-            if ((_step32 = _iterator32.n()).done) {
-              _context36.n = 8;
+            if ((_step33 = _iterator33.n()).done) {
+              _context37.n = 8;
               break;
             }
-            return _context36.d(_regeneratorValues(_loop3()), 5);
+            return _context37.d(_regeneratorValues(_loop5()), 5);
           case 5:
-            _ret = _context36.v;
-            if (!(_ret === 0)) {
-              _context36.n = 6;
+            _ret3 = _context37.v;
+            if (!(_ret3 === 0)) {
+              _context37.n = 6;
               break;
             }
-            return _context36.a(3, 7);
+            return _context37.a(3, 7);
           case 6:
-            if (!_ret) {
-              _context36.n = 7;
+            if (!_ret3) {
+              _context37.n = 7;
               break;
             }
-            return _context36.a(2, _ret.v);
+            return _context37.a(2, _ret3.v);
           case 7:
-            _context36.n = 4;
+            _context37.n = 4;
             break;
           case 8:
-            _context36.n = 10;
+            _context37.n = 10;
             break;
           case 9:
-            _context36.p = 9;
-            _t13 = _context36.v;
-            _iterator32.e(_t13);
+            _context37.p = 9;
+            _t13 = _context37.v;
+            _iterator33.e(_t13);
           case 10:
-            _context36.p = 10;
-            _iterator32.f();
-            return _context36.f(10);
+            _context37.p = 10;
+            _iterator33.f();
+            return _context37.f(10);
           case 11:
-            _context36.n = 13;
+            _context37.n = 13;
             break;
           case 12:
-            _context36.p = 12;
-            _t14 = _context36.v;
+            _context37.p = 12;
+            _t14 = _context37.v;
           case 13:
-            return _context36.a(2);
+            return _context37.a(2);
         }
       }, _callee33, null, [[3, 9, 10, 11], [0, 12]]);
     }))();
@@ -8105,65 +8278,65 @@ function AppProvider(_ref16) {
     if (!autoDownloadAll) return;
     var cancelled = false;
     _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee34() {
-      var data, localIds, _iterator33, _step33, _loop4, _ret2, _t16, _t17;
-      return _regenerator().w(function (_context38) {
-        while (1) switch (_context38.p = _context38.n) {
+      var data, localIds, _iterator34, _step34, _loop6, _ret4, _t16, _t17;
+      return _regenerator().w(function (_context39) {
+        while (1) switch (_context39.p = _context39.n) {
           case 0:
-            _context38.p = 0;
-            _context38.n = 1;
+            _context39.p = 0;
+            _context39.n = 1;
             return api.listChapters();
           case 1:
-            data = _context38.v;
+            data = _context39.v;
             if (!cancelled) {
-              _context38.n = 2;
+              _context39.n = 2;
               break;
             }
-            return _context38.a(2);
+            return _context39.a(2);
           case 2:
             localIds = new Set(files.filter(function (f) {
               return f.chapter_id;
             }).map(function (f) {
               return f.chapter_id;
             }));
-            _iterator33 = _createForOfIteratorHelper(data.chapters || []);
-            _context38.p = 3;
-            _loop4 = /*#__PURE__*/_regenerator().m(function _loop4() {
+            _iterator34 = _createForOfIteratorHelper(data.chapters || []);
+            _context39.p = 3;
+            _loop6 = /*#__PURE__*/_regenerator().m(function _loop6() {
               var _ch$stages;
               var ch, full, localFileId, fileRecord, _t15;
-              return _regenerator().w(function (_context37) {
-                while (1) switch (_context37.p = _context37.n) {
+              return _regenerator().w(function (_context38) {
+                while (1) switch (_context38.p = _context38.n) {
                   case 0:
-                    ch = _step33.value;
+                    ch = _step34.value;
                     if (!cancelled) {
-                      _context37.n = 1;
+                      _context38.n = 1;
                       break;
                     }
-                    return _context37.a(2, {
+                    return _context38.a(2, {
                       v: void 0
                     });
                   case 1:
                     if (!localIds.has(ch.id)) {
-                      _context37.n = 2;
+                      _context38.n = 2;
                       break;
                     }
-                    return _context37.a(2, 0);
+                    return _context38.a(2, 0);
                   case 2:
                     if ((_ch$stages = ch.stages) !== null && _ch$stages !== void 0 && (_ch$stages = _ch$stages.mc) !== null && _ch$stages !== void 0 && _ch$stages.done) {
-                      _context37.n = 3;
+                      _context38.n = 3;
                       break;
                     }
-                    return _context37.a(2, 0);
+                    return _context38.a(2, 0);
                   case 3:
-                    _context37.p = 3;
-                    _context37.n = 4;
+                    _context38.p = 3;
+                    _context38.n = 4;
                     return api.getChapter(ch.id);
                   case 4:
-                    full = _context37.v;
+                    full = _context38.v;
                     if (!cancelled) {
-                      _context37.n = 5;
+                      _context38.n = 5;
                       break;
                     }
-                    return _context37.a(2, {
+                    return _context38.a(2, {
                       v: void 0
                     });
                   case 5:
@@ -8192,58 +8365,58 @@ function AppProvider(_ref16) {
                       short: full.short || [],
                       generated_at: new Date(full.updated_at).toISOString()
                     });
-                    _context37.n = 7;
+                    _context38.n = 7;
                     break;
                   case 6:
-                    _context37.p = 6;
-                    _t15 = _context37.v;
+                    _context38.p = 6;
+                    _t15 = _context38.v;
                   case 7:
-                    return _context37.a(2);
+                    return _context38.a(2);
                 }
-              }, _loop4, null, [[3, 6]]);
+              }, _loop6, null, [[3, 6]]);
             });
-            _iterator33.s();
+            _iterator34.s();
           case 4:
-            if ((_step33 = _iterator33.n()).done) {
-              _context38.n = 8;
+            if ((_step34 = _iterator34.n()).done) {
+              _context39.n = 8;
               break;
             }
-            return _context38.d(_regeneratorValues(_loop4()), 5);
+            return _context39.d(_regeneratorValues(_loop6()), 5);
           case 5:
-            _ret2 = _context38.v;
-            if (!(_ret2 === 0)) {
-              _context38.n = 6;
+            _ret4 = _context39.v;
+            if (!(_ret4 === 0)) {
+              _context39.n = 6;
               break;
             }
-            return _context38.a(3, 7);
+            return _context39.a(3, 7);
           case 6:
-            if (!_ret2) {
-              _context38.n = 7;
+            if (!_ret4) {
+              _context39.n = 7;
               break;
             }
-            return _context38.a(2, _ret2.v);
+            return _context39.a(2, _ret4.v);
           case 7:
-            _context38.n = 4;
+            _context39.n = 4;
             break;
           case 8:
-            _context38.n = 10;
+            _context39.n = 10;
             break;
           case 9:
-            _context38.p = 9;
-            _t16 = _context38.v;
-            _iterator33.e(_t16);
+            _context39.p = 9;
+            _t16 = _context39.v;
+            _iterator34.e(_t16);
           case 10:
-            _context38.p = 10;
-            _iterator33.f();
-            return _context38.f(10);
+            _context39.p = 10;
+            _iterator34.f();
+            return _context39.f(10);
           case 11:
-            _context38.n = 13;
+            _context39.n = 13;
             break;
           case 12:
-            _context38.p = 12;
-            _t17 = _context38.v;
+            _context39.p = 12;
+            _t17 = _context39.v;
           case 13:
-            return _context38.a(2);
+            return _context39.a(2);
         }
       }, _callee34, null, [[3, 9, 10, 11], [0, 12]]);
     }))();
@@ -8355,45 +8528,45 @@ function ApiKeyGate() {
     showAccount = _useState54[0],
     setShowAccount = _useState54[1];
   var save = /*#__PURE__*/function () {
-    var _ref29 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee35() {
+    var _ref31 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee35() {
       var trimmed, _t18;
-      return _regenerator().w(function (_context39) {
-        while (1) switch (_context39.p = _context39.n) {
+      return _regenerator().w(function (_context40) {
+        while (1) switch (_context40.p = _context40.n) {
           case 0:
             trimmed = val.trim();
             if (trimmed.startsWith('AIza')) {
-              _context39.n = 1;
+              _context40.n = 1;
               break;
             }
             setErr('That does not look like a Google AI API key (should start with AIza).');
-            return _context39.a(2);
+            return _context40.a(2);
           case 1:
             setBusy(true);
             setErr('');
             storage.set(KEYS.apiKey, trimmed);
-            _context39.p = 2;
-            _context39.n = 3;
+            _context40.p = 2;
+            _context40.n = 3;
             return client.ping();
           case 3:
             setApiKey(trimmed);
-            _context39.n = 5;
+            _context40.n = 5;
             break;
           case 4:
-            _context39.p = 4;
-            _t18 = _context39.v;
+            _context40.p = 4;
+            _t18 = _context40.v;
             storage.remove(KEYS.apiKey);
             setErr("Key rejected: ".concat(_t18.message));
           case 5:
-            _context39.p = 5;
+            _context40.p = 5;
             setBusy(false);
-            return _context39.f(5);
+            return _context40.f(5);
           case 6:
-            return _context39.a(2);
+            return _context40.a(2);
         }
       }, _callee35, null, [[2, 4, 5, 6]]);
     }));
     return function save() {
-      return _ref29.apply(this, arguments);
+      return _ref31.apply(this, arguments);
     };
   }();
   return /*#__PURE__*/React.createElement("div", {
@@ -8536,21 +8709,21 @@ function UploadPanel() {
     }));
   };
   var startUploads = /*#__PURE__*/function () {
-    var _ref30 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee36() {
-      var _loop5, i;
-      return _regenerator().w(function (_context41) {
-        while (1) switch (_context41.n) {
+    var _ref32 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee36() {
+      var _loop7, i;
+      return _regenerator().w(function (_context42) {
+        while (1) switch (_context42.n) {
           case 0:
-            _loop5 = /*#__PURE__*/_regenerator().m(function _loop5(i) {
+            _loop7 = /*#__PURE__*/_regenerator().m(function _loop7(i) {
               var meta, record, _t19;
-              return _regenerator().w(function (_context40) {
-                while (1) switch (_context40.p = _context40.n) {
+              return _regenerator().w(function (_context41) {
+                while (1) switch (_context41.p = _context41.n) {
                   case 0:
                     if (!(pending[i].status !== 'queued')) {
-                      _context40.n = 1;
+                      _context41.n = 1;
                       break;
                     }
-                    return _context40.a(2, 1);
+                    return _context41.a(2, 1);
                   case 1:
                     setPending(function (p) {
                       return p.map(function (e, idx) {
@@ -8559,11 +8732,11 @@ function UploadPanel() {
                         }) : e;
                       });
                     });
-                    _context40.p = 2;
-                    _context40.n = 3;
+                    _context41.p = 2;
+                    _context41.n = 3;
                     return client.uploadFile(pending[i].file);
                   case 3:
-                    meta = _context40.v;
+                    meta = _context41.v;
                     record = {
                       file_id: meta.name,
                       // e.g. "files/abc-123"
@@ -8587,11 +8760,11 @@ function UploadPanel() {
                         }) : e;
                       });
                     });
-                    _context40.n = 5;
+                    _context41.n = 5;
                     break;
                   case 4:
-                    _context40.p = 4;
-                    _t19 = _context40.v;
+                    _context41.p = 4;
+                    _t19 = _context41.v;
                     setPending(function (p) {
                       return p.map(function (entry, idx) {
                         return idx === i ? _objectSpread(_objectSpread({}, entry), {}, {
@@ -8601,34 +8774,34 @@ function UploadPanel() {
                       });
                     });
                   case 5:
-                    return _context40.a(2);
+                    return _context41.a(2);
                 }
-              }, _loop5, null, [[2, 4]]);
+              }, _loop7, null, [[2, 4]]);
             });
             i = 0;
           case 1:
             if (!(i < pending.length)) {
-              _context41.n = 4;
+              _context42.n = 4;
               break;
             }
-            return _context41.d(_regeneratorValues(_loop5(i)), 2);
+            return _context42.d(_regeneratorValues(_loop7(i)), 2);
           case 2:
-            if (!_context41.v) {
-              _context41.n = 3;
+            if (!_context42.v) {
+              _context42.n = 3;
               break;
             }
-            return _context41.a(3, 3);
+            return _context42.a(3, 3);
           case 3:
             i++;
-            _context41.n = 1;
+            _context42.n = 1;
             break;
           case 4:
-            return _context41.a(2);
+            return _context42.a(2);
         }
       }, _callee36);
     }));
     return function startUploads() {
-      return _ref30.apply(this, arguments);
+      return _ref32.apply(this, arguments);
     };
   }();
   return /*#__PURE__*/React.createElement("div", {
@@ -8735,9 +8908,9 @@ function UploadPanel() {
 }
 
 // ---------- extraction preview ----------
-function ExtractionPreview(_ref31) {
+function ExtractionPreview(_ref33) {
   var _data$summary_sentenc, _data$context_example, _data$key_terms;
-  var data = _ref31.data;
+  var data = _ref33.data;
   var _useState61 = useState('summary'),
     _useState62 = _slicedToArray(_useState61, 2),
     tab = _useState62[0],
@@ -8753,10 +8926,10 @@ function ExtractionPreview(_ref31) {
     className: "mt-3 bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg"
   }, /*#__PURE__*/React.createElement("div", {
     className: "flex border-b border-[var(--border-soft)]"
-  }, tabs.map(function (_ref32) {
-    var _ref33 = _slicedToArray(_ref32, 2),
-      k = _ref33[0],
-      label = _ref33[1];
+  }, tabs.map(function (_ref34) {
+    var _ref35 = _slicedToArray(_ref34, 2),
+      k = _ref35[0],
+      label = _ref35[1];
     return /*#__PURE__*/React.createElement("button", {
       key: k,
       onClick: function onClick() {
@@ -8795,10 +8968,10 @@ function ExtractionPreview(_ref31) {
 }
 
 // ---------- file row ----------
-function PublishToBankButton(_ref34) {
-  var file = _ref34.file,
-    extraction = _ref34.extraction,
-    qbank = _ref34.qbank;
+function PublishToBankButton(_ref36) {
+  var file = _ref36.file,
+    extraction = _ref36.extraction,
+    qbank = _ref36.qbank;
   var _useApp3 = useApp(),
     api = _useApp3.api,
     session = _useApp3.session,
@@ -8815,27 +8988,27 @@ function PublishToBankButton(_ref34) {
   // Need at least an extraction to publish anything meaningful.
   if (!extraction) return null;
   var publish = /*#__PURE__*/function () {
-    var _ref35 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee37() {
+    var _ref37 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee37() {
       var _qbank$mc, _qbank$twoPart, _qbank$short, chapterId, created, pushes, _i14, _pushes, _pushes$_i, stage, payload, _t20;
-      return _regenerator().w(function (_context42) {
-        while (1) switch (_context42.p = _context42.n) {
+      return _regenerator().w(function (_context43) {
+        while (1) switch (_context43.p = _context43.n) {
           case 0:
             if (!busy) {
-              _context42.n = 1;
+              _context43.n = 1;
               break;
             }
-            return _context42.a(2);
+            return _context43.a(2);
           case 1:
             setBusy(true);
             setStatus(null);
-            _context42.p = 2;
+            _context43.p = 2;
             // 1. Ensure chapter exists (POST is idempotent by uploader+subject+title).
             chapterId = file.chapter_id;
             if (chapterId) {
-              _context42.n = 4;
+              _context43.n = 4;
               break;
             }
-            _context42.n = 3;
+            _context43.n = 3;
             return api.createChapter({
               subject: file.subject,
               title: file.chapter,
@@ -8843,7 +9016,7 @@ function PublishToBankButton(_ref34) {
               size_bytes: file.size_bytes
             });
           case 3:
-            created = _context42.v;
+            created = _context43.v;
             chapterId = created.id;
             // Persist the link on the file record.
             setFiles(function (prev) {
@@ -8863,41 +9036,41 @@ function PublishToBankButton(_ref34) {
             _i14 = 0, _pushes = pushes;
           case 5:
             if (!(_i14 < _pushes.length)) {
-              _context42.n = 7;
+              _context43.n = 7;
               break;
             }
             _pushes$_i = _slicedToArray(_pushes[_i14], 2), stage = _pushes$_i[0], payload = _pushes$_i[1];
-            _context42.n = 6;
+            _context43.n = 6;
             return api.putChapterStage(chapterId, stage, payload);
           case 6:
             _i14++;
-            _context42.n = 5;
+            _context43.n = 5;
             break;
           case 7:
             setStatus({
               kind: 'ok',
               msg: "Published ".concat(pushes.length, " stage").concat(pushes.length === 1 ? '' : 's')
             });
-            _context42.n = 9;
+            _context43.n = 9;
             break;
           case 8:
-            _context42.p = 8;
-            _t20 = _context42.v;
+            _context43.p = 8;
+            _t20 = _context43.v;
             setStatus({
               kind: 'err',
               msg: _t20.message
             });
           case 9:
-            _context42.p = 9;
+            _context43.p = 9;
             setBusy(false);
-            return _context42.f(9);
+            return _context43.f(9);
           case 10:
-            return _context42.a(2);
+            return _context43.a(2);
         }
       }, _callee37, null, [[2, 8, 9, 10]]);
     }));
     return function publish() {
-      return _ref35.apply(this, arguments);
+      return _ref37.apply(this, arguments);
     };
   }();
   return /*#__PURE__*/React.createElement("div", {
@@ -8911,17 +9084,17 @@ function PublishToBankButton(_ref34) {
     className: "text-xs px-2 py-1 border border-[var(--accent-border)] text-[var(--accent-text)] hover:bg-[var(--accent-soft)] disabled:opacity-40 rounded font-medium"
   }, busy ? 'Publishing…' : file.chapter_id ? 'Update bank' : 'Publish to bank'));
 }
-function FileRow(_ref36) {
+function FileRow(_ref38) {
   var _qbank$mc2, _qbank$short2, _qbank$twoPart2, _extraction$key_terms2;
-  var file = _ref36.file,
-    extraction = _ref36.extraction,
-    qbank = _ref36.qbank,
-    busyStage = _ref36.busyStage,
-    onProcess = _ref36.onProcess,
-    onRemove = _ref36.onRemove,
-    readOnly = _ref36.readOnly,
-    _ref36$flagCount = _ref36.flagCount,
-    flagCount = _ref36$flagCount === void 0 ? 0 : _ref36$flagCount;
+  var file = _ref38.file,
+    extraction = _ref38.extraction,
+    qbank = _ref38.qbank,
+    busyStage = _ref38.busyStage,
+    onProcess = _ref38.onProcess,
+    onRemove = _ref38.onRemove,
+    readOnly = _ref38.readOnly,
+    _ref38$flagCount = _ref38.flagCount,
+    flagCount = _ref38$flagCount === void 0 ? 0 : _ref38$flagCount;
   var _useState67 = useState(false),
     _useState68 = _slicedToArray(_useState67, 2),
     open = _useState68[0],
@@ -9037,12 +9210,12 @@ function FileRow(_ref36) {
     data: extraction
   }));
 }
-function FileRowMenu(_ref37) {
-  var hasExtraction = _ref37.hasExtraction,
-    isOpen = _ref37.isOpen,
-    toggleOpen = _ref37.toggleOpen,
-    publishSlot = _ref37.publishSlot,
-    onRemove = _ref37.onRemove;
+function FileRowMenu(_ref39) {
+  var hasExtraction = _ref39.hasExtraction,
+    isOpen = _ref39.isOpen,
+    toggleOpen = _ref39.toggleOpen,
+    publishSlot = _ref39.publishSlot,
+    onRemove = _ref39.onRemove;
   var _useState69 = useState(false),
     _useState70 = _slicedToArray(_useState69, 2),
     open = _useState70[0],
@@ -9099,20 +9272,20 @@ function FileRowMenu(_ref37) {
 function _readPendingFlagCountsByFile() {
   var q = storage.get(KEYS.flagQueue, []) || [];
   var map = {};
-  var _iterator34 = _createForOfIteratorHelper(q),
-    _step34;
+  var _iterator35 = _createForOfIteratorHelper(q),
+    _step35;
   try {
-    for (_iterator34.s(); !(_step34 = _iterator34.n()).done;) {
-      var f = _step34.value;
+    for (_iterator35.s(); !(_step35 = _iterator35.n()).done;) {
+      var f = _step35.value;
       if (!f || f.status === 'done') continue;
       var fid = f.file_id;
       if (!fid) continue;
       map[fid] = (map[fid] || 0) + 1;
     }
   } catch (err) {
-    _iterator34.e(err);
+    _iterator35.e(err);
   } finally {
-    _iterator34.f();
+    _iterator35.f();
   }
   return map;
 }
@@ -9154,18 +9327,18 @@ function FileList() {
   }, []);
   var grouped = useMemo(function () {
     var g = {};
-    var _iterator35 = _createForOfIteratorHelper(files),
-      _step35;
+    var _iterator36 = _createForOfIteratorHelper(files),
+      _step36;
     try {
-      for (_iterator35.s(); !(_step35 = _iterator35.n()).done;) {
-        var f = _step35.value;
+      for (_iterator36.s(); !(_step36 = _iterator36.n()).done;) {
+        var f = _step36.value;
         if (!g[f.subject]) g[f.subject] = [];
         g[f.subject].push(f);
       }
     } catch (err) {
-      _iterator35.e(err);
+      _iterator36.e(err);
     } finally {
-      _iterator35.f();
+      _iterator36.f();
     }
     for (var _i15 = 0, _Object$keys = Object.keys(g); _i15 < _Object$keys.length; _i15++) {
       var k = _Object$keys[_i15];
@@ -9191,26 +9364,26 @@ function FileList() {
     });
   }, [setFiles]);
   var processOne = useCallback(/*#__PURE__*/function () {
-    var _ref38 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee38(file) {
+    var _ref40 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee38(file) {
       var existingQ, ext, mc, haveTermFor, allTerms, missingTerms, termExtraction, termQs, short, twoPart, _t21;
-      return _regenerator().w(function (_context43) {
-        while (1) switch (_context43.p = _context43.n) {
+      return _regenerator().w(function (_context44) {
+        while (1) switch (_context44.p = _context44.n) {
           case 0:
             if (!busy[file.file_id]) {
-              _context43.n = 1;
+              _context44.n = 1;
               break;
             }
-            return _context43.a(2);
+            return _context44.a(2);
           case 1:
             markFile(file.file_id, {
               processError: null
             });
             existingQ = questions[file.file_id] || {};
-            _context43.p = 2;
+            _context44.p = 2;
             // Step 1: extraction (skip if already cached)
             ext = extractions[file.file_id];
             if (ext) {
-              _context43.n = 4;
+              _context44.n = 4;
               break;
             }
             setBusy(function (b) {
@@ -9218,16 +9391,16 @@ function FileList() {
                 [file.file_id]: 'extracting'
               });
             });
-            _context43.n = 3;
+            _context44.n = 3;
             return client.extractFromPdf(file.file_uri, file.mime_type, "".concat(file.subject, " \u2014 ").concat(file.chapter));
           case 3:
-            ext = _context43.v;
+            ext = _context44.v;
             setExtraction(file.file_id, ext);
           case 4:
             // Step 2: MC bank (skip if already cached and non-empty)
             mc = existingQ.mc;
             if (!(!mc || !mc.length)) {
-              _context43.n = 6;
+              _context44.n = 6;
               break;
             }
             setBusy(function (b) {
@@ -9235,12 +9408,12 @@ function FileList() {
                 [file.file_id]: 'generating MC'
               });
             });
-            _context43.n = 5;
+            _context44.n = 5;
             return client.generateMCQuestions(file.file_uri, file.mime_type, ext, file.chapter);
           case 5:
-            mc = _context43.v;
+            mc = _context44.v;
             if (!(!mc || !mc.length)) {
-              _context43.n = 6;
+              _context44.n = 6;
               break;
             }
             throw new Error('MC generation returned no questions — try again');
@@ -9259,7 +9432,7 @@ function FileList() {
               return !haveTermFor.has(t);
             });
             if (!(missingTerms.length > 0)) {
-              _context43.n = 8;
+              _context44.n = 8;
               break;
             }
             setBusy(function (b) {
@@ -9272,16 +9445,16 @@ function FileList() {
                 return missingTerms.includes(t.term);
               })
             });
-            _context43.n = 7;
+            _context44.n = 7;
             return client.generateTermQuestions(termExtraction, file.chapter);
           case 7:
-            termQs = _context43.v;
+            termQs = _context44.v;
             mc = [].concat(_toConsumableArray(mc), _toConsumableArray(termQs));
           case 8:
             // Step 4: short answer bank
             short = existingQ.short;
             if (!(!short || !short.length)) {
-              _context43.n = 10;
+              _context44.n = 10;
               break;
             }
             setBusy(function (b) {
@@ -9289,12 +9462,12 @@ function FileList() {
                 [file.file_id]: 'generating short'
               });
             });
-            _context43.n = 9;
+            _context44.n = 9;
             return client.generateShortAnswers(file.file_uri, file.mime_type, ext, file.chapter);
           case 9:
-            short = _context43.v;
+            short = _context44.v;
             if (!(!short || !short.length)) {
-              _context43.n = 10;
+              _context44.n = 10;
               break;
             }
             throw new Error('Short-answer generation returned no questions — try again');
@@ -9303,7 +9476,7 @@ function FileList() {
             // returned [] silently due to Gemini rate limits or malformed responses).
             twoPart = existingQ.twoPart;
             if (!(!twoPart || !twoPart.length)) {
-              _context43.n = 12;
+              _context44.n = 12;
               break;
             }
             setBusy(function (b) {
@@ -9311,12 +9484,12 @@ function FileList() {
                 [file.file_id]: 'generating two-part'
               });
             });
-            _context43.n = 11;
+            _context44.n = 11;
             return client.generateTwoPartQuestions(ext, file.chapter);
           case 11:
-            twoPart = _context43.v;
+            twoPart = _context44.v;
             if (!(!twoPart || !twoPart.length)) {
-              _context43.n = 12;
+              _context44.n = 12;
               break;
             }
             throw new Error('Two-part generation returned no questions — try again');
@@ -9338,96 +9511,96 @@ function FileList() {
                 pushBank();
               }, 250);
             }
-            _context43.n = 14;
+            _context44.n = 14;
             break;
           case 13:
-            _context43.p = 13;
-            _t21 = _context43.v;
+            _context44.p = 13;
+            _t21 = _context44.v;
             markFile(file.file_id, {
               processError: _t21.message
             });
           case 14:
-            _context43.p = 14;
+            _context44.p = 14;
             setBusy(function (b) {
               var n = _objectSpread({}, b);
               delete n[file.file_id];
               return n;
             });
-            return _context43.f(14);
+            return _context44.f(14);
           case 15:
-            return _context43.a(2);
+            return _context44.a(2);
         }
       }, _callee38, null, [[2, 13, 14, 15]]);
     }));
     return function (_x50) {
-      return _ref38.apply(this, arguments);
+      return _ref40.apply(this, arguments);
     };
   }(), [busy, client, extractions, questions, markFile, setExtraction, setQuestionsFor, github, pushBank]);
   var processAll = useCallback(/*#__PURE__*/function () {
-    var _ref39 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee39(subject) {
-      var list, _iterator36, _step36, f, _t22;
-      return _regenerator().w(function (_context44) {
-        while (1) switch (_context44.p = _context44.n) {
+    var _ref41 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee39(subject) {
+      var list, _iterator37, _step37, f, _t22;
+      return _regenerator().w(function (_context45) {
+        while (1) switch (_context45.p = _context45.n) {
           case 0:
             list = grouped[subject].filter(function (f) {
               var q = questions[f.file_id];
               return !(extractions[f.file_id] && q !== null && q !== void 0 && q.mc && q !== null && q !== void 0 && q.short);
             });
-            _iterator36 = _createForOfIteratorHelper(list);
-            _context44.p = 1;
-            _iterator36.s();
+            _iterator37 = _createForOfIteratorHelper(list);
+            _context45.p = 1;
+            _iterator37.s();
           case 2:
-            if ((_step36 = _iterator36.n()).done) {
-              _context44.n = 4;
+            if ((_step37 = _iterator37.n()).done) {
+              _context45.n = 4;
               break;
             }
-            f = _step36.value;
-            _context44.n = 3;
+            f = _step37.value;
+            _context45.n = 3;
             return processOne(f);
           case 3:
-            _context44.n = 2;
+            _context45.n = 2;
             break;
           case 4:
-            _context44.n = 6;
+            _context45.n = 6;
             break;
           case 5:
-            _context44.p = 5;
-            _t22 = _context44.v;
-            _iterator36.e(_t22);
+            _context45.p = 5;
+            _t22 = _context45.v;
+            _iterator37.e(_t22);
           case 6:
-            _context44.p = 6;
-            _iterator36.f();
-            return _context44.f(6);
+            _context45.p = 6;
+            _iterator37.f();
+            return _context45.f(6);
           case 7:
-            return _context44.a(2);
+            return _context45.a(2);
         }
       }, _callee39, null, [[1, 5, 6, 7]]);
     }));
     return function (_x51) {
-      return _ref39.apply(this, arguments);
+      return _ref41.apply(this, arguments);
     };
   }(), [grouped, extractions, questions, processOne]);
   var removeFile = /*#__PURE__*/function () {
-    var _ref40 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee40(record) {
+    var _ref42 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee40(record) {
       var _t23;
-      return _regenerator().w(function (_context45) {
-        while (1) switch (_context45.p = _context45.n) {
+      return _regenerator().w(function (_context46) {
+        while (1) switch (_context46.p = _context46.n) {
           case 0:
             if (confirm("Remove ".concat(record.filename, "? Also deletes from Gemini's file store."))) {
-              _context45.n = 1;
+              _context46.n = 1;
               break;
             }
-            return _context45.a(2);
+            return _context46.a(2);
           case 1:
-            _context45.p = 1;
-            _context45.n = 2;
+            _context46.p = 1;
+            _context46.n = 2;
             return client.deleteFile(record.file_id);
           case 2:
-            _context45.n = 4;
+            _context46.n = 4;
             break;
           case 3:
-            _context45.p = 3;
-            _t23 = _context45.v;
+            _context46.p = 3;
+            _t23 = _context46.v;
             console.warn('remote delete failed', _t23);
           case 4:
             setFiles(function (prev) {
@@ -9438,12 +9611,12 @@ function FileList() {
             setExtraction(record.file_id, undefined);
             setQuestionsFor(record.file_id, undefined);
           case 5:
-            return _context45.a(2);
+            return _context46.a(2);
         }
       }, _callee40, null, [[1, 3]]);
     }));
     return function removeFile(_x52) {
-      return _ref40.apply(this, arguments);
+      return _ref42.apply(this, arguments);
     };
   }();
   if (!files.length) {
@@ -9453,10 +9626,10 @@ function FileList() {
   }
   return /*#__PURE__*/React.createElement("div", {
     className: "space-y-4"
-  }, Object.entries(grouped).map(function (_ref41) {
-    var _ref42 = _slicedToArray(_ref41, 2),
-      subject = _ref42[0],
-      items = _ref42[1];
+  }, Object.entries(grouped).map(function (_ref43) {
+    var _ref44 = _slicedToArray(_ref43, 2),
+      subject = _ref44[0],
+      items = _ref44[1];
     var unfinished = items.filter(function (f) {
       var q = questions[f.file_id];
       return !(extractions[f.file_id] && q !== null && q !== void 0 && q.mc && q !== null && q !== void 0 && q.short);
@@ -9505,29 +9678,29 @@ function shuffle(arr) {
   var a = arr.slice();
   for (var i = a.length - 1; i > 0; i--) {
     var j = Math.floor(Math.random() * (i + 1));
-    var _ref43 = [a[j], a[i]];
-    a[i] = _ref43[0];
-    a[j] = _ref43[1];
+    var _ref45 = [a[j], a[i]];
+    a[i] = _ref45[0];
+    a[j] = _ref45[1];
   }
   return a;
 }
 
 // item shape: { id, mode, file_id, chapter, subject, q }
-function buildPool(_ref44, mode, scope) {
-  var files = _ref44.files,
-    questions = _ref44.questions,
-    extractions = _ref44.extractions,
-    attempts = _ref44.attempts;
+function buildPool(_ref46, mode, scope) {
+  var files = _ref46.files,
+    questions = _ref46.questions,
+    extractions = _ref46.extractions,
+    attempts = _ref46.attempts;
   var readyFiles = files.filter(function (f) {
     var qb = questions[f.file_id];
     return extractions[f.file_id] && (qb === null || qb === void 0 ? void 0 : qb.mc) && (qb === null || qb === void 0 ? void 0 : qb.short);
   });
   var pool = [];
-  var _iterator37 = _createForOfIteratorHelper(readyFiles),
-    _step37;
+  var _iterator38 = _createForOfIteratorHelper(readyFiles),
+    _step38;
   try {
-    for (_iterator37.s(); !(_step37 = _iterator37.n()).done;) {
-      var f = _step37.value;
+    for (_iterator38.s(); !(_step38 = _iterator38.n()).done;) {
+      var f = _step38.value;
       var meta = {
         file_id: f.file_id,
         chapter: f.chapter,
@@ -9539,11 +9712,11 @@ function buildPool(_ref44, mode, scope) {
         // carry its own `subject` (e.g. a physics equation living in the cross-subject
         // "Lab Techniques and Equations" chapter credits Physics); fall back to the
         // chapter's subject. This per-item subject is what attempts are recorded under.
-        var _iterator39 = _createForOfIteratorHelper(Array.isArray(questions[f.file_id].mc) ? questions[f.file_id].mc : []),
-          _step39;
+        var _iterator40 = _createForOfIteratorHelper(Array.isArray(questions[f.file_id].mc) ? questions[f.file_id].mc : []),
+          _step40;
         try {
-          for (_iterator39.s(); !(_step39 = _iterator39.n()).done;) {
-            var q = _step39.value;
+          for (_iterator40.s(); !(_step40 = _iterator40.n()).done;) {
+            var q = _step40.value;
             pool.push(_objectSpread(_objectSpread({
               id: q.id,
               mode: 'mc',
@@ -9553,15 +9726,15 @@ function buildPool(_ref44, mode, scope) {
             }));
           }
         } catch (err) {
-          _iterator39.e(err);
+          _iterator40.e(err);
         } finally {
-          _iterator39.f();
+          _iterator40.f();
         }
-        var _iterator40 = _createForOfIteratorHelper(Array.isArray(questions[f.file_id].twoPart) ? questions[f.file_id].twoPart : []),
-          _step40;
+        var _iterator41 = _createForOfIteratorHelper(Array.isArray(questions[f.file_id].twoPart) ? questions[f.file_id].twoPart : []),
+          _step41;
         try {
-          for (_iterator40.s(); !(_step40 = _iterator40.n()).done;) {
-            var _q = _step40.value;
+          for (_iterator41.s(); !(_step41 = _iterator41.n()).done;) {
+            var _q = _step41.value;
             pool.push(_objectSpread(_objectSpread({
               id: _q.id,
               mode: 'two_part',
@@ -9571,16 +9744,16 @@ function buildPool(_ref44, mode, scope) {
             }));
           }
         } catch (err) {
-          _iterator40.e(err);
+          _iterator41.e(err);
         } finally {
-          _iterator40.f();
+          _iterator41.f();
         }
       } else if (mode === 'short') {
-        var _iterator41 = _createForOfIteratorHelper(Array.isArray(questions[f.file_id].short) ? questions[f.file_id].short : []),
-          _step41;
+        var _iterator42 = _createForOfIteratorHelper(Array.isArray(questions[f.file_id].short) ? questions[f.file_id].short : []),
+          _step42;
         try {
-          for (_iterator41.s(); !(_step41 = _iterator41.n()).done;) {
-            var _q2 = _step41.value;
+          for (_iterator42.s(); !(_step42 = _iterator42.n()).done;) {
+            var _q2 = _step42.value;
             pool.push(_objectSpread(_objectSpread({
               id: _q2.id,
               mode,
@@ -9590,9 +9763,9 @@ function buildPool(_ref44, mode, scope) {
             }));
           }
         } catch (err) {
-          _iterator41.e(err);
+          _iterator42.e(err);
         } finally {
-          _iterator41.f();
+          _iterator42.f();
         }
       } else if (mode === 'match') {
         var terms = (extractions[f.file_id].key_terms || []).slice();
@@ -9613,23 +9786,23 @@ function buildPool(_ref44, mode, scope) {
       }
     }
   } catch (err) {
-    _iterator37.e(err);
+    _iterator38.e(err);
   } finally {
-    _iterator37.f();
+    _iterator38.f();
   }
   if (scope !== null && scope !== void 0 && scope.misses) {
     var wrong = new Set();
-    var _iterator38 = _createForOfIteratorHelper(attempts),
-      _step38;
+    var _iterator39 = _createForOfIteratorHelper(attempts),
+      _step39;
     try {
-      for (_iterator38.s(); !(_step38 = _iterator38.n()).done;) {
-        var a = _step38.value;
+      for (_iterator39.s(); !(_step39 = _iterator39.n()).done;) {
+        var a = _step39.value;
         if (!a.correct) wrong.add(a.question_id);
       }
     } catch (err) {
-      _iterator38.e(err);
+      _iterator39.e(err);
     } finally {
-      _iterator38.f();
+      _iterator39.f();
     }
     pool = pool.filter(function (x) {
       return wrong.has(x.id);
@@ -9654,23 +9827,23 @@ function buildPool(_ref44, mode, scope) {
 // Build a list of flashcards (term + definition pairs) from every selected
 // chapter's key_terms extraction. Used by the "Review flashcards" launcher
 // path. Returns [{ term, definition, file_id, chapter, subject }].
-function buildFlashcardPool(_ref45, fileIds) {
-  var files = _ref45.files,
-    extractions = _ref45.extractions;
+function buildFlashcardPool(_ref47, fileIds) {
+  var files = _ref47.files,
+    extractions = _ref47.extractions;
   var out = [];
-  var _iterator42 = _createForOfIteratorHelper(files),
-    _step42;
+  var _iterator43 = _createForOfIteratorHelper(files),
+    _step43;
   try {
-    for (_iterator42.s(); !(_step42 = _iterator42.n()).done;) {
-      var f = _step42.value;
+    for (_iterator43.s(); !(_step43 = _iterator43.n()).done;) {
+      var f = _step43.value;
       if (fileIds && fileIds.size > 0 && !fileIds.has(f.file_id)) continue;
       var ext = extractions[f.file_id];
       var terms = (ext === null || ext === void 0 ? void 0 : ext.key_terms) || [];
-      var _iterator43 = _createForOfIteratorHelper(terms),
-        _step43;
+      var _iterator44 = _createForOfIteratorHelper(terms),
+        _step44;
       try {
-        for (_iterator43.s(); !(_step43 = _iterator43.n()).done;) {
-          var t = _step43.value;
+        for (_iterator44.s(); !(_step44 = _iterator44.n()).done;) {
+          var t = _step44.value;
           if (!(t !== null && t !== void 0 && t.term)) continue;
           out.push({
             term: t.term,
@@ -9681,21 +9854,21 @@ function buildFlashcardPool(_ref45, fileIds) {
           });
         }
       } catch (err) {
-        _iterator43.e(err);
+        _iterator44.e(err);
       } finally {
-        _iterator43.f();
+        _iterator44.f();
       }
     }
   } catch (err) {
-    _iterator42.e(err);
+    _iterator43.e(err);
   } finally {
-    _iterator42.f();
+    _iterator43.f();
   }
   return out;
 }
-function QuizLauncher(_ref46) {
-  var onStart = _ref46.onStart,
-    onStartFlashcards = _ref46.onStartFlashcards;
+function QuizLauncher(_ref48) {
+  var onStart = _ref48.onStart,
+    onStartFlashcards = _ref48.onStartFlashcards;
   var ctx = useApp();
   var files = ctx.files,
     questions = ctx.questions,
@@ -9734,17 +9907,17 @@ function QuizLauncher(_ref46) {
     for (var _i16 = 0, _arr2 = [qb.mc, qb.twoPart, qb.short]; _i16 < _arr2.length; _i16++) {
       var arr = _arr2[_i16];
       if (Array.isArray(arr)) {
-        var _iterator44 = _createForOfIteratorHelper(arr),
-          _step44;
+        var _iterator45 = _createForOfIteratorHelper(arr),
+          _step45;
         try {
-          for (_iterator44.s(); !(_step44 = _iterator44.n()).done;) {
-            var q = _step44.value;
+          for (_iterator45.s(); !(_step45 = _iterator45.n()).done;) {
+            var q = _step45.value;
             subs.add(q.subject || f.subject);
           }
         } catch (err) {
-          _iterator44.e(err);
+          _iterator45.e(err);
         } finally {
-          _iterator44.f();
+          _iterator45.f();
         }
       }
     }
@@ -9755,28 +9928,28 @@ function QuizLauncher(_ref46) {
   // Tree: { [creditSubject]: [file, ...] }
   var grouped = useMemo(function () {
     var g = {};
-    var _iterator45 = _createForOfIteratorHelper(readyChapters),
-      _step45;
+    var _iterator46 = _createForOfIteratorHelper(readyChapters),
+      _step46;
     try {
-      for (_iterator45.s(); !(_step45 = _iterator45.n()).done;) {
-        var f = _step45.value;
-        var _iterator46 = _createForOfIteratorHelper(fileSubjects(f)),
-          _step46;
+      for (_iterator46.s(); !(_step46 = _iterator46.n()).done;) {
+        var f = _step46.value;
+        var _iterator47 = _createForOfIteratorHelper(fileSubjects(f)),
+          _step47;
         try {
-          for (_iterator46.s(); !(_step46 = _iterator46.n()).done;) {
-            var subj = _step46.value;
+          for (_iterator47.s(); !(_step47 = _iterator47.n()).done;) {
+            var subj = _step47.value;
             (g[subj] = g[subj] || []).push(f);
           }
         } catch (err) {
-          _iterator46.e(err);
+          _iterator47.e(err);
         } finally {
-          _iterator46.f();
+          _iterator47.f();
         }
       }
     } catch (err) {
-      _iterator45.e(err);
+      _iterator46.e(err);
     } finally {
-      _iterator45.f();
+      _iterator46.f();
     }
     for (var _i17 = 0, _Object$keys2 = Object.keys(g); _i17 < _Object$keys2.length; _i17++) {
       var key = _Object$keys2[_i17];
@@ -9792,28 +9965,28 @@ function QuizLauncher(_ref46) {
   // Every valid (subject, file) selection key for the current ready chapters.
   var allKeys = useMemo(function () {
     var s = new Set();
-    var _iterator47 = _createForOfIteratorHelper(readyChapters),
-      _step47;
+    var _iterator48 = _createForOfIteratorHelper(readyChapters),
+      _step48;
     try {
-      for (_iterator47.s(); !(_step47 = _iterator47.n()).done;) {
-        var f = _step47.value;
-        var _iterator48 = _createForOfIteratorHelper(fileSubjects(f)),
-          _step48;
+      for (_iterator48.s(); !(_step48 = _iterator48.n()).done;) {
+        var f = _step48.value;
+        var _iterator49 = _createForOfIteratorHelper(fileSubjects(f)),
+          _step49;
         try {
-          for (_iterator48.s(); !(_step48 = _iterator48.n()).done;) {
-            var subj = _step48.value;
+          for (_iterator49.s(); !(_step49 = _iterator49.n()).done;) {
+            var subj = _step49.value;
             s.add(selKey(subj, f.file_id));
           }
         } catch (err) {
-          _iterator48.e(err);
+          _iterator49.e(err);
         } finally {
-          _iterator48.f();
+          _iterator49.f();
         }
       }
     } catch (err) {
-      _iterator47.e(err);
+      _iterator48.e(err);
     } finally {
-      _iterator47.f();
+      _iterator48.f();
     }
     return s;
   }, [readyChapters, fileSubjects]);
@@ -9836,34 +10009,34 @@ function QuizLauncher(_ref46) {
   useEffect(function () {
     setSelected(function (prev) {
       var next = new Set();
-      var _iterator49 = _createForOfIteratorHelper(prev),
-        _step49;
+      var _iterator50 = _createForOfIteratorHelper(prev),
+        _step50;
       try {
-        for (_iterator49.s(); !(_step49 = _iterator49.n()).done;) {
-          var key = _step49.value;
+        for (_iterator50.s(); !(_step50 = _iterator50.n()).done;) {
+          var key = _step50.value;
           if (allKeys.has(key)) next.add(key);
         }
       } catch (err) {
-        _iterator49.e(err);
+        _iterator50.e(err);
       } finally {
-        _iterator49.f();
+        _iterator50.f();
       }
       return next.size ? next : new Set(allKeys);
     });
   }, [allKeys]);
   var wrongCount = useMemo(function () {
     var w = new Set();
-    var _iterator50 = _createForOfIteratorHelper(attempts),
-      _step50;
+    var _iterator51 = _createForOfIteratorHelper(attempts),
+      _step51;
     try {
-      for (_iterator50.s(); !(_step50 = _iterator50.n()).done;) {
-        var a = _step50.value;
+      for (_iterator51.s(); !(_step51 = _iterator51.n()).done;) {
+        var a = _step51.value;
         if (!a.correct) w.add(a.question_id);
       }
     } catch (err) {
-      _iterator50.e(err);
+      _iterator51.e(err);
     } finally {
-      _iterator50.f();
+      _iterator51.f();
     }
     return w.size;
   }, [attempts]);
@@ -9873,19 +10046,19 @@ function QuizLauncher(_ref46) {
   var _useMemo = useMemo(function () {
       var fileSet = new Set(),
         subjSet = new Set();
-      var _iterator51 = _createForOfIteratorHelper(selected),
-        _step51;
+      var _iterator52 = _createForOfIteratorHelper(selected),
+        _step52;
       try {
-        for (_iterator51.s(); !(_step51 = _iterator51.n()).done;) {
-          var key = _step51.value;
+        for (_iterator52.s(); !(_step52 = _iterator52.n()).done;) {
+          var key = _step52.value;
           var i = key.indexOf(SEP);
           subjSet.add(key.slice(0, i));
           fileSet.add(key.slice(i + 1));
         }
       } catch (err) {
-        _iterator51.e(err);
+        _iterator52.e(err);
       } finally {
-        _iterator51.f();
+        _iterator52.f();
       }
       return {
         selFiles: fileSet,
@@ -9910,31 +10083,31 @@ function QuizLauncher(_ref46) {
   var masteredKeys = useMemo(function () {
     var g = storage.get(KEYS.lessonGates, {}) || {};
     var out = new Set();
-    var _iterator52 = _createForOfIteratorHelper(readyChapters),
-      _step52;
+    var _iterator53 = _createForOfIteratorHelper(readyChapters),
+      _step53;
     try {
-      for (_iterator52.s(); !(_step52 = _iterator52.n()).done;) {
+      for (_iterator53.s(); !(_step53 = _iterator53.n()).done;) {
         var _g$f$chapter_id;
-        var f = _step52.value;
+        var f = _step53.value;
         if (f.chapter_id && (_g$f$chapter_id = g[f.chapter_id]) !== null && _g$f$chapter_id !== void 0 && _g$f$chapter_id.mastered) {
-          var _iterator53 = _createForOfIteratorHelper(fileSubjects(f)),
-            _step53;
+          var _iterator54 = _createForOfIteratorHelper(fileSubjects(f)),
+            _step54;
           try {
-            for (_iterator53.s(); !(_step53 = _iterator53.n()).done;) {
-              var subj = _step53.value;
+            for (_iterator54.s(); !(_step54 = _iterator54.n()).done;) {
+              var subj = _step54.value;
               out.add(selKey(subj, f.file_id));
             }
           } catch (err) {
-            _iterator53.e(err);
+            _iterator54.e(err);
           } finally {
-            _iterator53.f();
+            _iterator54.f();
           }
         }
       }
     } catch (err) {
-      _iterator52.e(err);
+      _iterator53.e(err);
     } finally {
-      _iterator52.f();
+      _iterator53.f();
     }
     return out;
   }, [readyChapters, fileSubjects]);
@@ -9977,30 +10150,30 @@ function QuizLauncher(_ref46) {
         return next.has(key);
       });
       if (allOn) {
-        var _iterator54 = _createForOfIteratorHelper(keys),
-          _step54;
-        try {
-          for (_iterator54.s(); !(_step54 = _iterator54.n()).done;) {
-            var key = _step54.value;
-            next.delete(key);
-          }
-        } catch (err) {
-          _iterator54.e(err);
-        } finally {
-          _iterator54.f();
-        }
-      } else {
         var _iterator55 = _createForOfIteratorHelper(keys),
           _step55;
         try {
           for (_iterator55.s(); !(_step55 = _iterator55.n()).done;) {
-            var _key = _step55.value;
-            next.add(_key);
+            var key = _step55.value;
+            next.delete(key);
           }
         } catch (err) {
           _iterator55.e(err);
         } finally {
           _iterator55.f();
+        }
+      } else {
+        var _iterator56 = _createForOfIteratorHelper(keys),
+          _step56;
+        try {
+          for (_iterator56.s(); !(_step56 = _iterator56.n()).done;) {
+            var _key = _step56.value;
+            next.add(_key);
+          }
+        } catch (err) {
+          _iterator56.e(err);
+        } finally {
+          _iterator56.f();
         }
       }
       return next;
@@ -10021,10 +10194,10 @@ function QuizLauncher(_ref46) {
     className: "font-semibold mb-3"
   }, "Start a quiz"), /*#__PURE__*/React.createElement("div", {
     className: "grid grid-cols-3 gap-2"
-  }, modes.map(function (_ref47) {
-    var _ref48 = _slicedToArray(_ref47, 2),
-      k = _ref48[0],
-      label = _ref48[1];
+  }, modes.map(function (_ref49) {
+    var _ref50 = _slicedToArray(_ref49, 2),
+      k = _ref50[0],
+      label = _ref50[1];
     return /*#__PURE__*/React.createElement("button", {
       key: k,
       onClick: function onClick() {
@@ -10059,10 +10232,10 @@ function QuizLauncher(_ref46) {
     className: "text-sm text-[var(--text-muted)] bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg p-3"
   }, "Pool draws only from your ", wrongCount, " previously-missed question", wrongCount === 1 ? '' : 's', ".") : /*#__PURE__*/React.createElement("div", {
     className: "border border-[var(--border-soft)] rounded-lg divide-y divide-[var(--border-soft)] max-h-96 overflow-y-auto"
-  }, Object.entries(grouped).map(function (_ref49) {
-    var _ref50 = _slicedToArray(_ref49, 2),
-      subject = _ref50[0],
-      items = _ref50[1];
+  }, Object.entries(grouped).map(function (_ref51) {
+    var _ref52 = _slicedToArray(_ref51, 2),
+      subject = _ref52[0],
+      items = _ref52[1];
     var open = !!openSubjects[subject];
     var subjectSelectedCount = items.filter(function (f) {
       return selected.has(selKey(subject, f.file_id));
@@ -10175,9 +10348,9 @@ function QuizLauncher(_ref46) {
 // with prev/next, an exit button, and a progress counter. Reuses the
 // existing Flashcard component so the flip behaviour stays consistent
 // with the related-terms strip shown after each MC answer.
-function FlashcardReview(_ref51) {
-  var cards = _ref51.cards,
-    onExit = _ref51.onExit;
+function FlashcardReview(_ref53) {
+  var cards = _ref53.cards,
+    onExit = _ref53.onExit;
   var _useState85 = useState(0),
     _useState86 = _slicedToArray(_useState85, 2),
     idx = _useState86[0],
@@ -10264,9 +10437,9 @@ var FLAG_PRESETS = [{
   label: 'Garbled / encoding error',
   text: 'Question text contains garbled characters or encoding errors (e.g. â€" instead of —, subscript numbers rendered as symbols).'
 }];
-function FlagQuestionModal(_ref52) {
-  var item = _ref52.item,
-    onClose = _ref52.onClose;
+function FlagQuestionModal(_ref54) {
+  var item = _ref54.item,
+    onClose = _ref54.onClose;
   var _useApp5 = useApp(),
     api = _useApp5.api,
     session = _useApp5.session,
@@ -10297,40 +10470,40 @@ function FlagQuestionModal(_ref52) {
     });
   };
   var submit = /*#__PURE__*/function () {
-    var _ref53 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee41() {
+    var _ref55 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee41() {
       var queue, _t24, _t25;
-      return _regenerator().w(function (_context46) {
-        while (1) switch (_context46.p = _context46.n) {
+      return _regenerator().w(function (_context47) {
+        while (1) switch (_context47.p = _context47.n) {
           case 0:
             if (description.trim()) {
-              _context46.n = 1;
+              _context47.n = 1;
               break;
             }
             setStatus({
               kind: 'err',
               msg: 'Describe the problem first.'
             });
-            return _context46.a(2);
+            return _context47.a(2);
           case 1:
             setBusy(true);
             setStatus(null);
-            _context46.p = 2;
+            _context47.p = 2;
             if (!(session && chapterId)) {
-              _context46.n = 6;
+              _context47.n = 6;
               break;
             }
-            _context46.p = 3;
-            _context46.n = 4;
+            _context47.p = 3;
+            _context47.n = 4;
             return api.addChapterFlag(chapterId, {
               question_id: item.id,
               description: description.trim()
             });
           case 4:
-            _context46.n = 6;
+            _context47.n = 6;
             break;
           case 5:
-            _context46.p = 5;
-            _t24 = _context46.v;
+            _context47.p = 5;
+            _t24 = _context47.v;
           case 6:
             queue = storage.get(KEYS.flagQueue, []);
             queue.push({
@@ -10357,76 +10530,76 @@ function FlagQuestionModal(_ref52) {
               msg: 'Flagged. We\'ll fix it on the next pipeline run.'
             });
             setTimeout(onClose, 900);
-            _context46.n = 8;
+            _context47.n = 8;
             break;
           case 7:
-            _context46.p = 7;
-            _t25 = _context46.v;
+            _context47.p = 7;
+            _t25 = _context47.v;
             setStatus({
               kind: 'err',
               msg: _t25.message
             });
           case 8:
-            _context46.p = 8;
+            _context47.p = 8;
             setBusy(false);
-            return _context46.f(8);
+            return _context47.f(8);
           case 9:
-            return _context46.a(2);
+            return _context47.a(2);
         }
       }, _callee41, null, [[3, 5], [2, 7, 8, 9]]);
     }));
     return function submit() {
-      return _ref53.apply(this, arguments);
+      return _ref55.apply(this, arguments);
     };
   }();
   var fixNow = /*#__PURE__*/function () {
-    var _ref54 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee42() {
+    var _ref56 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee42() {
       var fix, fileId, qbank, cleanParts, nextTp, nextMc, _t26, _t27, _t28;
-      return _regenerator().w(function (_context47) {
-        while (1) switch (_context47.p = _context47.n) {
+      return _regenerator().w(function (_context48) {
+        while (1) switch (_context48.p = _context48.n) {
           case 0:
             if (description.trim()) {
-              _context47.n = 1;
+              _context48.n = 1;
               break;
             }
             setStatus({
               kind: 'err',
               msg: 'Describe the problem first.'
             });
-            return _context47.a(2);
+            return _context48.a(2);
           case 1:
             if (apiKey) {
-              _context47.n = 2;
+              _context48.n = 2;
               break;
             }
             setStatus({
               kind: 'err',
               msg: 'Add a Gemini API key in Settings to fix now.'
             });
-            return _context47.a(2);
+            return _context48.a(2);
           case 2:
             setBusy(true);
             setStatus({
               kind: 'info',
               msg: 'Sending to Gemini…'
             });
-            _context47.p = 3;
-            _context47.n = 4;
+            _context48.p = 3;
+            _context48.n = 4;
             return client.fixFlaggedQuestion({
               question: item.q,
               flagDescription: description.trim(),
               chapterContext: item.chapter
             });
           case 4:
-            fix = _context47.v;
+            fix = _context48.v;
             fileId = item.file_id;
             qbank = questions[fileId];
             if (!fix.two_part) {
-              _context47.n = 9;
+              _context48.n = 9;
               break;
             }
             if (!(qbank !== null && qbank !== void 0 && qbank.twoPart && fix.action === 'edit' && Array.isArray(fix.parts) && fix.parts.length === 2)) {
-              _context47.n = 8;
+              _context48.n = 8;
               break;
             }
             cleanParts = fix.parts.map(function (p) {
@@ -10449,28 +10622,28 @@ function FlagQuestionModal(_ref52) {
               twoPart: nextTp
             }));
             if (!(chapterId && session)) {
-              _context47.n = 8;
+              _context48.n = 8;
               break;
             }
-            _context47.p = 5;
-            _context47.n = 6;
+            _context48.p = 5;
+            _context48.n = 6;
             return api.putChapterStage(chapterId, 'two_part', nextTp);
           case 6:
-            _context47.n = 8;
+            _context48.n = 8;
             break;
           case 7:
-            _context47.p = 7;
-            _t26 = _context47.v;
+            _context48.p = 7;
+            _t26 = _context48.v;
           case 8:
-            _context47.n = 13;
+            _context48.n = 13;
             break;
           case 9:
             if (!(qbank !== null && qbank !== void 0 && qbank.mc)) {
-              _context47.n = 13;
+              _context48.n = 13;
               break;
             }
             if (!(fix.action === 'edit')) {
-              _context47.n = 13;
+              _context48.n = 13;
               break;
             }
             nextMc = qbank.mc.map(function (q) {
@@ -10488,44 +10661,44 @@ function FlagQuestionModal(_ref52) {
               mc: nextMc
             }));
             if (!(chapterId && session)) {
-              _context47.n = 13;
+              _context48.n = 13;
               break;
             }
-            _context47.p = 10;
-            _context47.n = 11;
+            _context48.p = 10;
+            _context48.n = 11;
             return api.putChapterStage(chapterId, 'mc', nextMc);
           case 11:
-            _context47.n = 13;
+            _context48.n = 13;
             break;
           case 12:
-            _context47.p = 12;
-            _t27 = _context47.v;
+            _context48.p = 12;
+            _t27 = _context48.v;
           case 13:
             setStatus({
               kind: 'ok',
               msg: fix.action === 'skip' ? "Gemini skipped: ".concat(fix.rationale || 'no real problem found') : 'Fixed and saved!'
             });
             if (fix.action === 'edit') setTimeout(onClose, 1200);
-            _context47.n = 15;
+            _context48.n = 15;
             break;
           case 14:
-            _context47.p = 14;
-            _t28 = _context47.v;
+            _context48.p = 14;
+            _t28 = _context48.v;
             setStatus({
               kind: 'err',
               msg: _t28.message
             });
           case 15:
-            _context47.p = 15;
+            _context48.p = 15;
             setBusy(false);
-            return _context47.f(15);
+            return _context48.f(15);
           case 16:
-            return _context47.a(2);
+            return _context48.a(2);
         }
       }, _callee42, null, [[10, 12], [5, 7], [3, 14, 15, 16]]);
     }));
     return function fixNow() {
-      return _ref54.apply(this, arguments);
+      return _ref56.apply(this, arguments);
     };
   }();
   return /*#__PURE__*/React.createElement("div", {
@@ -10602,11 +10775,11 @@ function relatedTermsForItem(item, extractions) {
   });
   var matches = [];
   var seen = new Set();
-  var _iterator56 = _createForOfIteratorHelper(ranked),
-    _step56;
+  var _iterator57 = _createForOfIteratorHelper(ranked),
+    _step57;
   try {
-    for (_iterator56.s(); !(_step56 = _iterator56.n()).done;) {
-      var kt = _step56.value;
+    for (_iterator57.s(); !(_step57 = _iterator57.n()).done;) {
+      var kt = _step57.value;
       var term = (kt.term || '').trim();
       if (!term || seen.has(term.toLowerCase())) continue;
       var hit = void 0;
@@ -10622,9 +10795,9 @@ function relatedTermsForItem(item, extractions) {
       }
     }
   } catch (err) {
-    _iterator56.e(err);
+    _iterator57.e(err);
   } finally {
-    _iterator56.f();
+    _iterator57.f();
   }
   return matches;
 }
@@ -11507,7 +11680,7 @@ var MOLECULES = [
 }];
 
 // Build the lookup table + matcher pattern once at module load.
-var _ref55 = function () {
+var _ref57 = function () {
     var lookup = new Map(); // normalized key → canonical PubChem name
     var acronymExact = new Set(); // case-sensitive surface form for acronyms
     var representatives = new Map(); // canonical name → representative compound for PubChem
@@ -11516,11 +11689,11 @@ var _ref55 = function () {
       var m = _MOLECULES[_i18];
       if (m.representative) representatives.set(m.name, m.representative);
       var allNames = [m.name].concat(_toConsumableArray(m.variants || []));
-      var _iterator57 = _createForOfIteratorHelper(allNames),
-        _step57;
+      var _iterator58 = _createForOfIteratorHelper(allNames),
+        _step58;
       try {
-        for (_iterator57.s(); !(_step57 = _iterator57.n()).done;) {
-          var surface = _step57.value;
+        for (_iterator58.s(); !(_step58 = _iterator58.n()).done;) {
+          var surface = _step58.value;
           allSurface.push(surface);
           if (m.acronym) {
             acronymExact.add(surface);
@@ -11530,9 +11703,9 @@ var _ref55 = function () {
           }
         }
       } catch (err) {
-        _iterator57.e(err);
+        _iterator58.e(err);
       } finally {
-        _iterator57.f();
+        _iterator58.f();
       }
     }
     // Longest first so multi-word phrases win over their substrings.
@@ -11549,10 +11722,10 @@ var _ref55 = function () {
       _molRepresentative: representatives
     };
   }(),
-  _molRegex = _ref55._molRegex,
-  _molLookup = _ref55._molLookup,
-  _molAcronymExact = _ref55._molAcronymExact,
-  _molRepresentative = _ref55._molRepresentative;
+  _molRegex = _ref57._molRegex,
+  _molLookup = _ref57._molLookup,
+  _molAcronymExact = _ref57._molAcronymExact,
+  _molRepresentative = _ref57._molRepresentative;
 
 // Cheap IUPAC-shape detector — returns true when the surface text looks
 // enough like a systematic chemical name (parent-stem + locants + suffix)
@@ -11686,11 +11859,11 @@ function parseMoleculesInText(text) {
   });
   var out = [];
   var last = 0;
-  var _iterator58 = _createForOfIteratorHelper(all),
-    _step58;
+  var _iterator59 = _createForOfIteratorHelper(all),
+    _step59;
   try {
-    for (_iterator58.s(); !(_step58 = _iterator58.n()).done;) {
-      var m = _step58.value;
+    for (_iterator59.s(); !(_step59 = _iterator59.n()).done;) {
+      var m = _step59.value;
       if (m.start < last) continue; // skip overlapping (shouldn't happen after the filter, defensive)
       if (m.start > last) out.push({
         type: 'text',
@@ -11704,9 +11877,9 @@ function parseMoleculesInText(text) {
       last = m.end;
     }
   } catch (err) {
-    _iterator58.e(err);
+    _iterator59.e(err);
   } finally {
-    _iterator58.f();
+    _iterator59.f();
   }
   if (last < text.length) out.push({
     type: 'text',
@@ -11727,8 +11900,8 @@ var MoleculeViewerCtx = createContext({
 function useMoleculeViewer() {
   return useContext(MoleculeViewerCtx);
 }
-function MoleculeProvider(_ref17) {
-  var children = _ref17.children;
+function MoleculeProvider(_ref19) {
+  var children = _ref19.children;
   var _useState93 = useState(null),
     _useState94 = _slicedToArray(_useState93, 2),
     target = _useState94[0],
@@ -11752,9 +11925,9 @@ function MoleculeProvider(_ref17) {
     }
   }));
 }
-function MoleculeModal(_ref18) {
-  var name = _ref18.name,
-    onClose = _ref18.onClose;
+function MoleculeModal(_ref20) {
+  var name = _ref20.name,
+    onClose = _ref20.onClose;
   var _useState95 = useState(false),
     _useState96 = _slicedToArray(_useState95, 2),
     errored = _useState96[0],
@@ -11832,9 +12005,9 @@ function MoleculeModal(_ref18) {
 // names wrapped in clickable spans that open the viewer modal. Safe to nest
 // inside <p>, <li>, etc. — yields a single <span>. Use this anywhere a quiz
 // or flashcard shows free-form text.
-function MoleculeText(_ref19) {
-  var text = _ref19.text,
-    className = _ref19.className;
+function MoleculeText(_ref21) {
+  var text = _ref21.text,
+    className = _ref21.className;
   var _useMoleculeViewer = useMoleculeViewer(),
     open = _useMoleculeViewer.open;
   if (typeof text !== 'string' || !text) return text || null;
@@ -12093,18 +12266,18 @@ var FIGURES = [
 
 // Build the figure lookup + matcher pattern once at module load (mirrors the
 // molecule table builder).
-var _ref20 = function () {
+var _ref22 = function () {
     var lookup = new Map(); // normalized surface → { label, title }
     var acronymExact = new Set(); // case-sensitive surface form for acronyms
     var allSurface = [];
     for (var _i19 = 0, _FIGURES = FIGURES; _i19 < _FIGURES.length; _i19++) {
       var f = _FIGURES[_i19];
       var allNames = [f.label].concat(_toConsumableArray(f.variants || []));
-      var _iterator59 = _createForOfIteratorHelper(allNames),
-        _step59;
+      var _iterator60 = _createForOfIteratorHelper(allNames),
+        _step60;
       try {
-        for (_iterator59.s(); !(_step59 = _iterator59.n()).done;) {
-          var surface = _step59.value;
+        for (_iterator60.s(); !(_step60 = _iterator60.n()).done;) {
+          var surface = _step60.value;
           allSurface.push(surface);
           var entry = {
             label: f.label,
@@ -12116,9 +12289,9 @@ var _ref20 = function () {
           } else lookup.set(surface.toLowerCase(), entry);
         }
       } catch (err) {
-        _iterator59.e(err);
+        _iterator60.e(err);
       } finally {
-        _iterator59.f();
+        _iterator60.f();
       }
     }
     allSurface.sort(function (a, b) {
@@ -12131,9 +12304,9 @@ var _ref20 = function () {
       _figAcronymExact: acronymExact
     };
   }(),
-  _figRegex = _ref20._figRegex,
-  _figLookup = _ref20._figLookup,
-  _figAcronymExact = _ref20._figAcronymExact;
+  _figRegex = _ref22._figRegex,
+  _figLookup = _ref22._figLookup,
+  _figAcronymExact = _ref22._figAcronymExact;
 
 // Resolve a free-form figure string (from a lesson's `figures` array) to a
 // { title, label }. Known dictionary terms map to their curated article;
@@ -12224,8 +12397,8 @@ var FigureViewerCtx = createContext({
 function useFigureViewer() {
   return useContext(FigureViewerCtx);
 }
-function FigureProvider(_ref21) {
-  var children = _ref21.children;
+function FigureProvider(_ref23) {
+  var children = _ref23.children;
   var _useState97 = useState(null),
     _useState98 = _slicedToArray(_useState97, 2),
     target = _useState98[0],
@@ -12253,10 +12426,10 @@ function FigureProvider(_ref21) {
     }
   }));
 }
-function FigureModal(_ref23) {
-  var title = _ref23.title,
-    label = _ref23.label,
-    onClose = _ref23.onClose;
+function FigureModal(_ref25) {
+  var title = _ref25.title,
+    label = _ref25.label,
+    onClose = _ref25.onClose;
   var _useState99 = useState({
       loading: true
     }),
@@ -12351,9 +12524,9 @@ function FigureModal(_ref23) {
 
 // Inline renderer: wraps known figure terms in clickable spans that open the
 // figure modal. Mirrors MoleculeText. Yields a single <span>; safe in <p>/<li>.
-function FigureText(_ref24) {
-  var text = _ref24.text,
-    className = _ref24.className;
+function FigureText(_ref26) {
+  var text = _ref26.text,
+    className = _ref26.className;
   var _useFigureViewer = useFigureViewer(),
     open = _useFigureViewer.open;
   if (typeof text !== 'string' || !text) return text || null;
@@ -12426,12 +12599,12 @@ function _calcEvaluate(expr) {
     return NaN;
   }
 }
-function CalculatorModal(_ref25) {
-  var expr = _ref25.expr,
-    setExpr = _ref25.setExpr,
-    onClose = _ref25.onClose,
-    onMinimize = _ref25.onMinimize,
-    minimized = _ref25.minimized;
+function CalculatorModal(_ref27) {
+  var expr = _ref27.expr,
+    setExpr = _ref27.setExpr,
+    onClose = _ref27.onClose,
+    onMinimize = _ref27.onMinimize,
+    minimized = _ref27.minimized;
   var result = useMemo(function () {
     if (!expr.trim()) return '';
     var v = _calcEvaluate(expr);
@@ -12583,10 +12756,10 @@ function CalculatorModal(_ref25) {
     className: "text-right text-2xl font-semibold text-[var(--text-strong)] font-mono break-all min-h-[2rem]"
   }, result || (expr ? '…' : '0'))), /*#__PURE__*/React.createElement("div", {
     className: "grid grid-cols-5 gap-1.5"
-  }, sci.map(function (_ref26) {
-    var _ref27 = _slicedToArray(_ref26, 2),
-      label = _ref27[0],
-      fn = _ref27[1];
+  }, sci.map(function (_ref28) {
+    var _ref29 = _slicedToArray(_ref28, 2),
+      label = _ref29[0],
+      fn = _ref29[1];
     return /*#__PURE__*/React.createElement("button", {
       key: label,
       onClick: fn,
@@ -12594,11 +12767,11 @@ function CalculatorModal(_ref25) {
     }, label);
   })), /*#__PURE__*/React.createElement("div", {
     className: "grid grid-cols-4 gap-1.5"
-  }, grid.map(function (_ref28, i) {
-    var _ref56 = _slicedToArray(_ref28, 3),
-      label = _ref56[0],
-      fn = _ref56[1],
-      kind = _ref56[2];
+  }, grid.map(function (_ref30, i) {
+    var _ref58 = _slicedToArray(_ref30, 3),
+      label = _ref58[0],
+      fn = _ref58[1],
+      kind = _ref58[2];
     var isOp = kind === 'op';
     var isEq = kind === 'eq';
     var wide = label === '0';
@@ -12681,9 +12854,9 @@ var PERIODIC_CATEGORIES = {
     fg: '#380a0a'
   }
 };
-function PeriodicTableModal(_ref57) {
+function PeriodicTableModal(_ref59) {
   var _PERIODIC_CATEGORIES$;
-  var onClose = _ref57.onClose;
+  var onClose = _ref59.onClose;
   var _useState101 = useState(null),
     _useState102 = _slicedToArray(_useState101, 2),
     selected = _useState102[0],
@@ -12782,10 +12955,10 @@ function PeriodicTableModal(_ref57) {
     className: "text-[10px] uppercase tracking-wide text-[var(--text-muted)] mb-1.5"
   }, "Categories"), /*#__PURE__*/React.createElement("div", {
     className: "grid grid-cols-2 gap-x-2 gap-y-1"
-  }, Object.entries(PERIODIC_CATEGORIES).map(function (_ref58) {
-    var _ref59 = _slicedToArray(_ref58, 2),
-      k = _ref59[0],
-      c = _ref59[1];
+  }, Object.entries(PERIODIC_CATEGORIES).map(function (_ref60) {
+    var _ref61 = _slicedToArray(_ref60, 2),
+      k = _ref61[0],
+      c = _ref61[1];
     return /*#__PURE__*/React.createElement("div", {
       key: k,
       className: "flex items-center gap-2 text-[11px]"
@@ -12808,9 +12981,9 @@ function PeriodicTableModal(_ref57) {
 // inline molecule-link spans (which are also role="button") nest in valid
 // HTML — buttons can't contain buttons. Clicks bubble up to toggle flip;
 // MoleculeText spans stopPropagation so they don't accidentally flip.
-function Flashcard(_ref60) {
-  var term = _ref60.term,
-    definition = _ref60.definition;
+function Flashcard(_ref62) {
+  var term = _ref62.term,
+    definition = _ref62.definition;
   var _useState103 = useState(false),
     _useState104 = _slicedToArray(_useState103, 2),
     flipped = _useState104[0],
@@ -12900,8 +13073,8 @@ function Flashcard(_ref60) {
     text: definition
   }))));
 }
-function RelatedFlashcards(_ref61) {
-  var item = _ref61.item;
+function RelatedFlashcards(_ref63) {
+  var item = _ref63.item;
   var _useApp6 = useApp(),
     extractions = _useApp6.extractions;
   var related = useMemo(function () {
@@ -12966,11 +13139,11 @@ function localStructure(url) {
 function isImagePath(s) {
   return typeof s === 'string' && (s.startsWith('assets/') || /pubchem\.ncbi/i.test(s) || /\.(png|jpe?g|svg|gif|webp)(\?|$)/i.test(s));
 }
-function MCQuestion(_ref62) {
-  var item = _ref62.item,
-    onAnswer = _ref62.onAnswer,
-    nextSlot = _ref62.nextSlot,
-    onFlag = _ref62.onFlag;
+function MCQuestion(_ref64) {
+  var item = _ref64.item,
+    onAnswer = _ref64.onAnswer,
+    nextSlot = _ref64.nextSlot,
+    onFlag = _ref64.onFlag;
   var _useState105 = useState(null),
     _useState106 = _slicedToArray(_useState105, 2),
     picked = _useState106[0],
@@ -13073,12 +13246,12 @@ function MCQuestion(_ref62) {
 }
 
 // ---------- quiz: short answer ----------
-function ShortAnswerQuestion(_ref63) {
+function ShortAnswerQuestion(_ref65) {
   var _item$q$key_points;
-  var item = _ref63.item,
-    onAnswer = _ref63.onAnswer,
-    onAnswerOverride = _ref63.onAnswerOverride,
-    nextSlot = _ref63.nextSlot;
+  var item = _ref65.item,
+    onAnswer = _ref65.onAnswer,
+    onAnswerOverride = _ref65.onAnswerOverride,
+    nextSlot = _ref65.nextSlot;
   var _useApp7 = useApp(),
     client = _useApp7.client,
     apiKey = _useApp7.apiKey;
@@ -13124,31 +13297,31 @@ function ShortAnswerQuestion(_ref63) {
     finalize(false);
   };
   var submit = /*#__PURE__*/function () {
-    var _ref64 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee43() {
+    var _ref66 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee43() {
       var ok, res, _t29;
-      return _regenerator().w(function (_context48) {
-        while (1) switch (_context48.p = _context48.n) {
+      return _regenerator().w(function (_context49) {
+        while (1) switch (_context49.p = _context49.n) {
           case 0:
             setRevealed(true);
             // Exact match: grade locally and finalize immediately (no Gemini).
             if (!exact) {
-              _context48.n = 1;
+              _context49.n = 1;
               break;
             }
             ok = accepted.includes(norm(text));
             setExactCorrect(ok);
             finalize(ok);
-            return _context48.a(2);
+            return _context49.a(2);
           case 1:
             if (!(!apiKey || !text.trim())) {
-              _context48.n = 2;
+              _context49.n = 2;
               break;
             }
-            return _context48.a(2);
+            return _context49.a(2);
           case 2:
             setAutoBusy(true);
-            _context48.p = 3;
-            _context48.n = 4;
+            _context49.p = 3;
+            _context49.n = 4;
             return client.gradeShortAnswer({
               prompt: item.q.prompt,
               ideal_answer: item.q.ideal_answer,
@@ -13157,27 +13330,27 @@ function ShortAnswerQuestion(_ref63) {
               chapter: item.chapter
             });
           case 4:
-            res = _context48.v;
+            res = _context49.v;
             setAuto(res);
-            _context48.n = 6;
+            _context49.n = 6;
             break;
           case 5:
-            _context48.p = 5;
-            _t29 = _context48.v;
+            _context49.p = 5;
+            _t29 = _context49.v;
             setAuto({
               error: (_t29 === null || _t29 === void 0 ? void 0 : _t29.message) || 'grading failed'
             });
           case 6:
-            _context48.p = 6;
+            _context49.p = 6;
             setAutoBusy(false);
-            return _context48.f(6);
+            return _context49.f(6);
           case 7:
-            return _context48.a(2);
+            return _context49.a(2);
         }
       }, _callee43, null, [[3, 5, 6, 7]]);
     }));
     return function submit() {
-      return _ref64.apply(this, arguments);
+      return _ref66.apply(this, arguments);
     };
   }();
   var finalize = function finalize(correct) {
@@ -13313,11 +13486,11 @@ function ShortAnswerQuestion(_ref63) {
 
 // ---------- quiz: matching ----------
 // ---------- quiz: two-part ----------
-function TwoPartQuestion(_ref65) {
-  var item = _ref65.item,
-    onAnswer = _ref65.onAnswer,
-    nextSlot = _ref65.nextSlot,
-    onFlag = _ref65.onFlag;
+function TwoPartQuestion(_ref67) {
+  var item = _ref67.item,
+    onAnswer = _ref67.onAnswer,
+    nextSlot = _ref67.nextSlot,
+    onFlag = _ref67.onFlag;
   var parts = item.q.parts || [];
   var _useState121 = useState(0),
     _useState122 = _slicedToArray(_useState121, 2),
@@ -13397,11 +13570,11 @@ function TwoPartQuestion(_ref65) {
     title: "Flag this two-part item for review"
   }, "\u2691 Flag")));
 }
-function SinglePart(_ref66) {
-  var part = _ref66.part,
-    onAnswer = _ref66.onAnswer,
-    nextSlot = _ref66.nextSlot,
-    continueLabel = _ref66.continueLabel;
+function SinglePart(_ref68) {
+  var part = _ref68.part,
+    onAnswer = _ref68.onAnswer,
+    nextSlot = _ref68.nextSlot,
+    continueLabel = _ref68.continueLabel;
   var _useState127 = useState(null),
     _useState128 = _slicedToArray(_useState127, 2),
     picked = _useState128[0],
@@ -13502,10 +13675,10 @@ function SinglePart(_ref66) {
 // user sketches it on a canvas, then reveals the real structure and self-grades.
 // Mirrors SinglePart's contract (onAnswer + nextSlot) so TwoPartQuestion can mix
 // draw parts and multiple-choice parts in the same question.
-function DrawPart(_ref67) {
-  var part = _ref67.part,
-    onAnswer = _ref67.onAnswer,
-    nextSlot = _ref67.nextSlot;
+function DrawPart(_ref69) {
+  var part = _ref69.part,
+    onAnswer = _ref69.onAnswer,
+    nextSlot = _ref69.nextSlot;
   var canvasRef = useRef(null);
   var drawing = useRef(false);
   var last = useRef(null);
@@ -13642,10 +13815,10 @@ function DrawPart(_ref67) {
     className: "text-sm px-4 py-2 rounded font-medium bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)]"
   }, "Continue \u2192"))), advanced && nextSlot);
 }
-function MatchingQuestion(_ref68) {
-  var item = _ref68.item,
-    onAnswer = _ref68.onAnswer,
-    nextSlot = _ref68.nextSlot;
+function MatchingQuestion(_ref70) {
+  var item = _ref70.item,
+    onAnswer = _ref70.onAnswer,
+    nextSlot = _ref70.nextSlot;
   var pairs = item.q.terms; // [{term, definition}, ...]
   var termOrder = useMemo(function () {
     return pairs.map(function (_, i) {
@@ -13689,9 +13862,9 @@ function MatchingQuestion(_ref68) {
     if (usedDefs.has(j)) {
       var _Object$entries$find;
       // unpair: find the term linked to this def
-      var termIdx = (_Object$entries$find = Object.entries(pairings).find(function (_ref69) {
-        var _ref70 = _slicedToArray(_ref69, 2),
-          v = _ref70[1];
+      var termIdx = (_Object$entries$find = Object.entries(pairings).find(function (_ref71) {
+        var _ref72 = _slicedToArray(_ref71, 2),
+          v = _ref72[1];
         return v === j;
       })) === null || _Object$entries$find === void 0 ? void 0 : _Object$entries$find[0];
       if (termIdx !== undefined) {
@@ -13771,9 +13944,9 @@ function MatchingQuestion(_ref68) {
   }, defOrder.map(function (j, displayIdx) {
     var _Object$entries$find2;
     var used = usedDefs.has(j);
-    var termIdx = (_Object$entries$find2 = Object.entries(pairings).find(function (_ref71) {
-      var _ref72 = _slicedToArray(_ref71, 2),
-        v = _ref72[1];
+    var termIdx = (_Object$entries$find2 = Object.entries(pairings).find(function (_ref73) {
+      var _ref74 = _slicedToArray(_ref73, 2),
+        v = _ref74[1];
       return v === j;
     })) === null || _Object$entries$find2 === void 0 ? void 0 : _Object$entries$find2[0];
     var correct = submitted && termIdx !== undefined && Number(termIdx) === j;
@@ -13852,10 +14025,10 @@ function useQuizTimer() {
 }
 
 // ---------- quiz: runner ----------
-function QuizRunner(_ref73) {
-  var items = _ref73.items,
-    onExit = _ref73.onExit,
-    onPause = _ref73.onPause;
+function QuizRunner(_ref75) {
+  var items = _ref75.items,
+    onExit = _ref75.onExit,
+    onPause = _ref75.onPause;
   var _useApp8 = useApp(),
     addAttempt = _useApp8.addAttempt,
     updateLastAttempt = _useApp8.updateLastAttempt,
@@ -13917,10 +14090,10 @@ function QuizRunner(_ref73) {
     setShowTable = _useState164[1];
   var item = items[index];
   var isLast = index === items.length - 1;
-  var handleAnswer = function handleAnswer(_ref74) {
-    var correct = _ref74.correct,
-      user_answer = _ref74.user_answer,
-      isInterim = _ref74.isInterim;
+  var handleAnswer = function handleAnswer(_ref76) {
+    var correct = _ref76.correct,
+      user_answer = _ref76.user_answer,
+      isInterim = _ref76.isInterim;
     if (isInterim) return; // two-part items emit interim results between parts; only score the final
     if (answered) return;
     setAnswered(true);
@@ -13950,8 +14123,8 @@ function QuizRunner(_ref73) {
   // this question_id so account-side stats reflect the corrected verdict,
   // and updates the in-memory results array so this quiz's summary screen
   // matches. The server upserts on (user_id, client_id).
-  var handleAnswerOverride = function handleAnswerOverride(_ref75) {
-    var correct = _ref75.correct;
+  var handleAnswerOverride = function handleAnswerOverride(_ref77) {
+    var correct = _ref77.correct;
     if (!answered) return;
     updateLastAttempt(item.id, {
       correct: !!correct
@@ -14070,11 +14243,11 @@ function QuizRunner(_ref73) {
 }
 
 // ---------- quiz: summary ----------
-function QuizSummary(_ref76) {
-  var results = _ref76.results,
-    elapsedTime = _ref76.elapsedTime,
-    onRestart = _ref76.onRestart,
-    onDrillMisses = _ref76.onDrillMisses;
+function QuizSummary(_ref78) {
+  var results = _ref78.results,
+    elapsedTime = _ref78.elapsedTime,
+    onRestart = _ref78.onRestart,
+    onDrillMisses = _ref78.onDrillMisses;
   var correct = results.filter(function (r) {
     return r.correct;
   }).length;
@@ -14145,25 +14318,25 @@ function WeakSpotQuiz() {
   var weak = useMemo(function () {
     var gates = storage.get(KEYS.lessonGates, {}) || {};
     var fileById = {};
-    var _iterator60 = _createForOfIteratorHelper(files),
-      _step60;
-    try {
-      for (_iterator60.s(); !(_step60 = _iterator60.n()).done;) {
-        var f = _step60.value;
-        fileById[f.file_id] = f;
-      }
-    } catch (err) {
-      _iterator60.e(err);
-    } finally {
-      _iterator60.f();
-    }
-    var stat = {};
-    var _iterator61 = _createForOfIteratorHelper(attempts),
+    var _iterator61 = _createForOfIteratorHelper(files),
       _step61;
     try {
       for (_iterator61.s(); !(_step61 = _iterator61.n()).done;) {
+        var f = _step61.value;
+        fileById[f.file_id] = f;
+      }
+    } catch (err) {
+      _iterator61.e(err);
+    } finally {
+      _iterator61.f();
+    }
+    var stat = {};
+    var _iterator62 = _createForOfIteratorHelper(attempts),
+      _step62;
+    try {
+      for (_iterator62.s(); !(_step62 = _iterator62.n()).done;) {
         var _gates$_f$chapter_id;
-        var a = _step61.value;
+        var a = _step62.value;
         var _f = fileById[a.file_id];
         if (!_f || !_f.chapter_id || !((_gates$_f$chapter_id = gates[_f.chapter_id]) !== null && _gates$_f$chapter_id !== void 0 && _gates$_f$chapter_id.mastered)) continue;
         var s = stat[a.file_id] || (stat[a.file_id] = {
@@ -14177,9 +14350,9 @@ function WeakSpotQuiz() {
         if (a.correct) s.correct++;
       }
     } catch (err) {
-      _iterator61.e(err);
+      _iterator62.e(err);
     } finally {
-      _iterator61.f();
+      _iterator62.f();
     }
     return Object.values(stat).filter(function (s) {
       return s.total > 0;
@@ -14196,17 +14369,17 @@ function WeakSpotQuiz() {
   // score pulls proportionally more questions (50% acc weighs 2x a 75% chapter).
   var weights = useMemo(function () {
     var w = {};
-    var _iterator62 = _createForOfIteratorHelper(weak),
-      _step62;
+    var _iterator63 = _createForOfIteratorHelper(weak),
+      _step63;
     try {
-      for (_iterator62.s(); !(_step62 = _iterator62.n()).done;) {
-        var c = _step62.value;
+      for (_iterator63.s(); !(_step63 = _iterator63.n()).done;) {
+        var c = _step63.value;
         w[c.fid] = Math.max(0.0001, 1 - c.acc);
       }
     } catch (err) {
-      _iterator62.e(err);
+      _iterator63.e(err);
     } finally {
-      _iterator62.f();
+      _iterator63.f();
     }
     return w;
   }, [weak]);
@@ -14224,11 +14397,11 @@ function WeakSpotQuiz() {
     var want = allocateCounts(weights, total);
     var chosen = [];
     var used = new Set();
-    var _iterator63 = _createForOfIteratorHelper(weak),
-      _step63;
+    var _iterator64 = _createForOfIteratorHelper(weak),
+      _step64;
     try {
-      for (_iterator63.s(); !(_step63 = _iterator63.n()).done;) {
-        var c = _step63.value;
+      for (_iterator64.s(); !(_step64 = _iterator64.n()).done;) {
+        var c = _step64.value;
         var n = want[c.fid] || 0;
         if (n <= 0) continue;
         var pool = buildPool(ctx, 'mc', {
@@ -14236,26 +14409,26 @@ function WeakSpotQuiz() {
         }).filter(function (x) {
           return !used.has(x.id);
         });
-        var _iterator65 = _createForOfIteratorHelper(shuffle(pool).slice(0, n)),
-          _step65;
+        var _iterator66 = _createForOfIteratorHelper(shuffle(pool).slice(0, n)),
+          _step66;
         try {
-          for (_iterator65.s(); !(_step65 = _iterator65.n()).done;) {
-            var _p = _step65.value;
+          for (_iterator66.s(); !(_step66 = _iterator66.n()).done;) {
+            var _p = _step66.value;
             chosen.push(_p);
             used.add(_p.id);
           }
         } catch (err) {
-          _iterator65.e(err);
+          _iterator66.e(err);
         } finally {
-          _iterator65.f();
+          _iterator66.f();
         }
       }
       // A chapter may run out of questions before filling its slots; backfill the
       // shortfall from the remaining pool, still weighted toward weaker chapters.
     } catch (err) {
-      _iterator63.e(err);
+      _iterator64.e(err);
     } finally {
-      _iterator63.f();
+      _iterator64.f();
     }
     if (chosen.length < total) {
       var rest = buildPool(ctx, 'mc', {
@@ -14268,18 +14441,18 @@ function WeakSpotQuiz() {
       var extra = weightedSample(rest, function (it) {
         return weights[it.file_id] || 0.0001;
       }, Math.min(total - chosen.length, rest.length));
-      var _iterator64 = _createForOfIteratorHelper(extra),
-        _step64;
+      var _iterator65 = _createForOfIteratorHelper(extra),
+        _step65;
       try {
-        for (_iterator64.s(); !(_step64 = _iterator64.n()).done;) {
-          var p = _step64.value;
+        for (_iterator65.s(); !(_step65 = _iterator65.n()).done;) {
+          var p = _step65.value;
           chosen.push(p);
           used.add(p.id);
         }
       } catch (err) {
-        _iterator64.e(err);
+        _iterator65.e(err);
       } finally {
-        _iterator64.f();
+        _iterator65.f();
       }
     }
     var items = shuffle(chosen).slice(0, total);
@@ -14488,11 +14661,11 @@ function practicePassageResult(entry, attempts) {
   var picks = {};
   var correct = 0;
   var completedAt = 0;
-  var _iterator66 = _createForOfIteratorHelper(attempts || []),
-    _step66;
+  var _iterator67 = _createForOfIteratorHelper(attempts || []),
+    _step67;
   try {
-    for (_iterator66.s(); !(_step66 = _iterator66.n()).done;) {
-      var a = _step66.value;
+    for (_iterator67.s(); !(_step67 = _iterator67.n()).done;) {
+      var a = _step67.value;
       if (a.file_id !== practicePassageFileId(entry)) continue;
       if (questionIds.size && !questionIds.has(a.question_id)) continue;
       if (picks[a.question_id] != null) continue;
@@ -14503,9 +14676,9 @@ function practicePassageResult(entry, attempts) {
       completedAt = Math.max(completedAt, a.ts || a.created_at || 0);
     }
   } catch (err) {
-    _iterator66.e(err);
+    _iterator67.e(err);
   } finally {
-    _iterator66.f();
+    _iterator67.f();
   }
   var answered = Object.keys(picks).length;
   return {
@@ -14517,12 +14690,12 @@ function practicePassageResult(entry, attempts) {
     picks
   };
 }
-function PracticePassageBankList(_ref77) {
+function PracticePassageBankList(_ref79) {
   var _PRACTICE_PASSAGE_SEC, _open$sectionKey;
-  var _ref77$sectionKey = _ref77.sectionKey,
-    sectionKey = _ref77$sectionKey === void 0 ? '' : _ref77$sectionKey,
-    _ref77$title = _ref77.title,
-    title = _ref77$title === void 0 ? 'Generated passage bank' : _ref77$title;
+  var _ref79$sectionKey = _ref79.sectionKey,
+    sectionKey = _ref79$sectionKey === void 0 ? '' : _ref79$sectionKey,
+    _ref79$title = _ref79.title,
+    title = _ref79$title === void 0 ? 'Generated passage bank' : _ref79$title;
   var _useApp0 = useApp(),
     attempts = _useApp0.attempts;
   var _useState169 = useState(function () {
@@ -14655,28 +14828,39 @@ function PracticePassagesView() {
     storage.set('mcat:practicePassageSection', key);
   };
   var generate = /*#__PURE__*/function () {
-    var _ref78 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee44() {
-      var out, id, _t30;
-      return _regenerator().w(function (_context49) {
-        while (1) switch (_context49.p = _context49.n) {
+    var _ref80 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee44() {
+      var avoid, out, id, _t30;
+      return _regenerator().w(function (_context50) {
+        while (1) switch (_context50.p = _context50.n) {
           case 0:
             if (!(!apiKey || state === 'generating')) {
-              _context49.n = 1;
+              _context50.n = 1;
               break;
             }
-            return _context49.a(2);
+            return _context50.a(2);
           case 1:
             setState('generating');
             setErr('');
             setOpen(false);
-            _context49.p = 2;
-            _context49.n = 3;
+            _context50.p = 2;
+            avoid = getPracticePassageBank().filter(function (entry) {
+              return entry.sectionKey === selected.key;
+            }).slice(0, 8).map(function (entry) {
+              var _entry$payload4, _entry$payload5, _entry$payload6;
+              return {
+                title: ((_entry$payload4 = entry.payload) === null || _entry$payload4 === void 0 ? void 0 : _entry$payload4.title) || entry.title || '',
+                discipline: ((_entry$payload5 = entry.payload) === null || _entry$payload5 === void 0 ? void 0 : _entry$payload5.discipline) || entry.discipline || '',
+                passage: ((_entry$payload6 = entry.payload) === null || _entry$payload6 === void 0 ? void 0 : _entry$payload6.passage) || ''
+              };
+            });
+            _context50.n = 3;
             return client.generatePracticePassage({
               section: selected.label,
-              focus: focus.trim()
+              focus: focus.trim(),
+              avoid
             });
           case 3:
-            out = _context49.v;
+            out = _context50.v;
             id = String(Date.now());
             savePracticePassage({
               id,
@@ -14692,20 +14876,20 @@ function PracticePassagesView() {
             setPayload(out);
             setRunId(id);
             setState('ready');
-            _context49.n = 5;
+            _context50.n = 5;
             break;
           case 4:
-            _context49.p = 4;
-            _t30 = _context49.v;
+            _context50.p = 4;
+            _t30 = _context50.v;
             setErr(_t30.message || 'Could not generate passage.');
             setState('error');
           case 5:
-            return _context49.a(2);
+            return _context50.a(2);
         }
       }, _callee44, null, [[2, 4]]);
     }));
     return function generate() {
-      return _ref78.apply(this, arguments);
+      return _ref80.apply(this, arguments);
     };
   }();
   return /*#__PURE__*/React.createElement("div", {
@@ -14918,9 +15102,9 @@ function StudyView() {
 var BIRD_GAP = 5; // px below the speech bubble
 var BIRD_SHIFT = 4; // px horizontal nudge (negative = rightward)
 
-function BirdHero(_ref79) {
-  var username = _ref79.username,
-    quote = _ref79.quote;
+function BirdHero(_ref81) {
+  var username = _ref81.username,
+    quote = _ref81.quote;
   return /*#__PURE__*/React.createElement("div", {
     className: "relative bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl px-4 sm:px-6 pt-5 sm:pt-6 pb-0 overflow-hidden"
   }, /*#__PURE__*/React.createElement("div", {
@@ -15048,12 +15232,12 @@ function HomeActivity() {
 // ---------- daily CARS ----------
 // reveal=false: attempt mode — selectable, no correct/incorrect shown.
 // reveal=true:  review mode — locked, answers + explanations shown.
-function CarsQuestion(_ref80) {
-  var q = _ref80.q,
-    index = _ref80.index,
-    picked = _ref80.picked,
-    onPick = _ref80.onPick,
-    reveal = _ref80.reveal;
+function CarsQuestion(_ref82) {
+  var q = _ref82.q,
+    index = _ref82.index,
+    picked = _ref82.picked,
+    onPick = _ref82.onPick,
+    reveal = _ref82.reveal;
   var letters = ['A', 'B', 'C', 'D'];
   var noPick = picked == null;
   return /*#__PURE__*/React.createElement("div", {
@@ -15105,8 +15289,9 @@ function CarsQuestion(_ref80) {
     }, letters[i], "."), " ", ce);
   }))));
 }
-function PassageTable(_ref81) {
-  var table = _ref81.table;
+function PassageTable(_ref83) {
+  var table = _ref83.table;
+  table = normalizePracticePassageTable(table);
   if (!table || !Array.isArray(table.columns) || !Array.isArray(table.rows) || !table.columns.length || !table.rows.length) return null;
   return /*#__PURE__*/React.createElement("div", {
     className: "my-4 overflow-x-auto rounded-lg border border-[var(--border-soft)]"
@@ -15141,13 +15326,13 @@ function PassageTable(_ref81) {
 // the no-build, CDN-only setup intact and yields a text-selectable PDF. Bundles the
 // passage, every question with the user's pick vs. the correct answer, and all
 // explanations, so it can be dropped straight into a chat with Claude to analyse misses.
-function downloadCarsPdf(_ref82) {
-  var date = _ref82.date,
-    payload = _ref82.payload,
-    questions = _ref82.questions,
-    picks = _ref82.picks,
-    score = _ref82.score,
-    elapsedMs = _ref82.elapsedMs;
+function downloadCarsPdf(_ref84) {
+  var date = _ref84.date,
+    payload = _ref84.payload,
+    questions = _ref84.questions,
+    picks = _ref84.picks,
+    score = _ref84.score,
+    elapsedMs = _ref84.elapsedMs;
   var letters = ['A', 'B', 'C', 'D'];
   var esc = function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>]/g, function (c) {
@@ -15224,23 +15409,23 @@ function downloadCarsPdf(_ref82) {
     setTimeout(go, 800);
   }
 }
-function CarsRunner(_ref83) {
-  var date = _ref83.date,
-    payload = _ref83.payload,
-    onClose = _ref83.onClose,
-    alreadyDone = _ref83.alreadyDone,
-    _ref83$label = _ref83.label,
-    label = _ref83$label === void 0 ? 'Daily CARS' : _ref83$label,
-    _ref83$subject = _ref83.subject,
-    subject = _ref83$subject === void 0 ? 'CARS' : _ref83$subject,
-    _ref83$fileIdPrefix = _ref83.fileIdPrefix,
-    fileIdPrefix = _ref83$fileIdPrefix === void 0 ? 'cars' : _ref83$fileIdPrefix,
-    _ref83$chapterPrefix = _ref83.chapterPrefix,
-    chapterPrefix = _ref83$chapterPrefix === void 0 ? 'Daily CARS' : _ref83$chapterPrefix,
-    _ref83$persistResult = _ref83.persistResult,
-    persistResult = _ref83$persistResult === void 0 ? true : _ref83$persistResult,
-    _ref83$savedResultOve = _ref83.savedResultOverride,
-    savedResultOverride = _ref83$savedResultOve === void 0 ? null : _ref83$savedResultOve;
+function CarsRunner(_ref85) {
+  var date = _ref85.date,
+    payload = _ref85.payload,
+    onClose = _ref85.onClose,
+    alreadyDone = _ref85.alreadyDone,
+    _ref85$label = _ref85.label,
+    label = _ref85$label === void 0 ? 'Daily CARS' : _ref85$label,
+    _ref85$subject = _ref85.subject,
+    subject = _ref85$subject === void 0 ? 'CARS' : _ref85$subject,
+    _ref85$fileIdPrefix = _ref85.fileIdPrefix,
+    fileIdPrefix = _ref85$fileIdPrefix === void 0 ? 'cars' : _ref85$fileIdPrefix,
+    _ref85$chapterPrefix = _ref85.chapterPrefix,
+    chapterPrefix = _ref85$chapterPrefix === void 0 ? 'Daily CARS' : _ref85$chapterPrefix,
+    _ref85$persistResult = _ref85.persistResult,
+    persistResult = _ref85$persistResult === void 0 ? true : _ref85$persistResult,
+    _ref85$savedResultOve = _ref85.savedResultOverride,
+    savedResultOverride = _ref85$savedResultOve === void 0 ? null : _ref85$savedResultOve;
   var _useApp11 = useApp(),
     addAttempt = _useApp11.addAttempt,
     flushSync = _useApp11.flushSync;
@@ -15588,10 +15773,10 @@ function CarsRunner(_ref83) {
 }
 
 // Home card — today's CARS. Generates the set if nobody has yet (and the user has a key).
-function DailyCarsSlotCard(_ref84) {
+function DailyCarsSlotCard(_ref86) {
   var _payload$questions;
-  var date = _ref84.date,
-    slot = _ref84.slot;
+  var date = _ref86.date,
+    slot = _ref86.slot;
   var _useApp12 = useApp(),
     api = _useApp12.api,
     client = _useApp12.client,
@@ -15667,54 +15852,54 @@ function DailyCarsSlotCard(_ref84) {
         setState('ready');
       }
     }).catch(/*#__PURE__*/function () {
-      var _ref85 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee45(e) {
+      var _ref87 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee45(e) {
         var _gen, gen, src, questions, discipline, d2, _t31, _t32, _t33;
-        return _regenerator().w(function (_context50) {
-          while (1) switch (_context50.p = _context50.n) {
+        return _regenerator().w(function (_context51) {
+          while (1) switch (_context51.p = _context51.n) {
             case 0:
               if (!cancelled) {
-                _context50.n = 1;
+                _context51.n = 1;
                 break;
               }
-              return _context50.a(2);
+              return _context51.a(2);
             case 1:
               if (!(e.status !== 404)) {
-                _context50.n = 2;
+                _context51.n = 2;
                 break;
               }
               setErr(e.message);
               setState('error');
-              return _context50.a(2);
+              return _context51.a(2);
             case 2:
               if (!(!apiKey || !session)) {
-                _context50.n = 3;
+                _context51.n = 3;
                 break;
               }
               setState('unavailable');
-              return _context50.a(2);
+              return _context51.a(2);
             case 3:
               setState('generating');
-              _context50.p = 4;
+              _context51.p = 4;
               // Preferred path: pull a real public-domain passage from Project Gutenberg,
               // then have Gemini write only the (hard) questions about it.
               gen = null;
               if (localOnly) {
-                _context50.n = 10;
+                _context51.n = 10;
                 break;
               }
-              _context50.p = 5;
-              _context50.n = 6;
+              _context51.p = 5;
+              _context51.n = 6;
               return api.getCarsPassage(baseDate);
             case 6:
-              src = _context50.v;
+              src = _context51.v;
               if (!(src !== null && src !== void 0 && src.passage)) {
-                _context50.n = 8;
+                _context51.n = 8;
                 break;
               }
-              _context50.n = 7;
+              _context51.n = 7;
               return client.generateCarsQuestions(src.passage, src.discipline);
             case 7:
-              questions = _context50.v;
+              questions = _context51.v;
               if (questions !== null && questions !== void 0 && questions.length) {
                 gen = {
                   passage: src.passage,
@@ -15725,33 +15910,33 @@ function DailyCarsSlotCard(_ref84) {
                 };
               }
             case 8:
-              _context50.n = 10;
+              _context51.n = 10;
               break;
             case 9:
-              _context50.p = 9;
-              _t31 = _context50.v;
+              _context51.p = 9;
+              _t31 = _context51.v;
             case 10:
               if (gen) {
-                _context50.n = 12;
+                _context51.n = 12;
                 break;
               }
               discipline = carsDisciplineFor(date, slot);
-              _context50.n = 11;
+              _context51.n = 11;
               return client.generateDailyCars(discipline);
             case 11:
-              gen = _context50.v;
+              gen = _context51.v;
             case 12:
               if ((_gen = gen) !== null && _gen !== void 0 && (_gen = _gen.questions) !== null && _gen !== void 0 && _gen.length) {
-                _context50.n = 13;
+                _context51.n = 13;
                 break;
               }
               throw new Error('Generation returned no questions.');
             case 13:
               if (localOnly) {
-                _context50.n = 14;
+                _context51.n = 14;
                 break;
               }
-              _context50.n = 14;
+              _context51.n = 14;
               return api.postCars({
                 date: baseDate,
                 discipline: gen.discipline || carsDisciplineFor(date, slot),
@@ -15764,46 +15949,46 @@ function DailyCarsSlotCard(_ref84) {
                 setPayload(gen);
                 setState('ready');
               }
-              _context50.n = 21;
+              _context51.n = 21;
               break;
             case 15:
-              _context50.p = 15;
-              _t32 = _context50.v;
+              _context51.p = 15;
+              _t32 = _context51.v;
               if (localOnly) {
-                _context50.n = 20;
+                _context51.n = 20;
                 break;
               }
-              _context50.p = 16;
-              _context50.n = 17;
+              _context51.p = 16;
+              _context51.n = 17;
               return api.getCars(baseDate);
             case 17:
-              d2 = _context50.v;
+              d2 = _context51.v;
               if (cancelled) {
-                _context50.n = 18;
+                _context51.n = 18;
                 break;
               }
               setCarsCachePayload(date, d2.payload);
               setPayload(d2.payload);
               setState('ready');
-              return _context50.a(2);
+              return _context51.a(2);
             case 18:
-              _context50.n = 20;
+              _context51.n = 20;
               break;
             case 19:
-              _context50.p = 19;
-              _t33 = _context50.v;
+              _context51.p = 19;
+              _t33 = _context51.v;
             case 20:
               if (!cancelled) {
                 setErr(_t32.message);
                 setState('error');
               }
             case 21:
-              return _context50.a(2);
+              return _context51.a(2);
           }
         }, _callee45, null, [[16, 19], [5, 9], [4, 15]]);
       }));
       return function (_x53) {
-        return _ref85.apply(this, arguments);
+        return _ref87.apply(this, arguments);
       };
     }());
     return function () {
@@ -15947,29 +16132,29 @@ function CarsArchive() {
     api.listCars().then(function (d) {
       if (cancelled) return;
       var byDate = {};
-      var _iterator67 = _createForOfIteratorHelper(d.days || []),
-        _step67;
-      try {
-        for (_iterator67.s(); !(_step67 = _iterator67.n()).done;) {
-          var row = _step67.value;
-          byDate[row.date] = row;
-        }
-      } catch (err) {
-        _iterator67.e(err);
-      } finally {
-        _iterator67.f();
-      }
-      var _iterator68 = _createForOfIteratorHelper(getLocalCarsDays()),
+      var _iterator68 = _createForOfIteratorHelper(d.days || []),
         _step68;
       try {
         for (_iterator68.s(); !(_step68 = _iterator68.n()).done;) {
-          var _row = _step68.value;
-          byDate[_row.date] = _objectSpread(_objectSpread({}, _row), byDate[_row.date] || {});
+          var row = _step68.value;
+          byDate[row.date] = row;
         }
       } catch (err) {
         _iterator68.e(err);
       } finally {
         _iterator68.f();
+      }
+      var _iterator69 = _createForOfIteratorHelper(getLocalCarsDays()),
+        _step69;
+      try {
+        for (_iterator69.s(); !(_step69 = _iterator69.n()).done;) {
+          var _row = _step69.value;
+          byDate[_row.date] = _objectSpread(_objectSpread({}, _row), byDate[_row.date] || {});
+        }
+      } catch (err) {
+        _iterator69.e(err);
+      } finally {
+        _iterator69.f();
       }
       setDays(Object.values(byDate).sort(function (a, b) {
         return String(b.date).localeCompare(String(a.date));
@@ -15987,51 +16172,51 @@ function CarsArchive() {
     };
   }, [api]);
   var openDay = /*#__PURE__*/function () {
-    var _ref86 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee46(date) {
+    var _ref88 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee46(date) {
       var cachedPayload, d, _t34;
-      return _regenerator().w(function (_context51) {
-        while (1) switch (_context51.p = _context51.n) {
+      return _regenerator().w(function (_context52) {
+        while (1) switch (_context52.p = _context52.n) {
           case 0:
             // Instant if already downloaded; otherwise fetch and cache it.
             cachedPayload = getCarsCachePayload(date);
             if (!cachedPayload) {
-              _context51.n = 1;
+              _context52.n = 1;
               break;
             }
             setOpen({
               date,
               payload: cachedPayload
             });
-            return _context51.a(2);
+            return _context52.a(2);
           case 1:
             setLoadingDate(date);
-            _context51.p = 2;
-            _context51.n = 3;
+            _context52.p = 2;
+            _context52.n = 3;
             return api.getCars(date);
           case 3:
-            d = _context51.v;
+            d = _context52.v;
             setCarsCachePayload(date, d.payload);
             setOpen({
               date,
               payload: d.payload
             });
-            _context51.n = 5;
+            _context52.n = 5;
             break;
           case 4:
-            _context51.p = 4;
-            _t34 = _context51.v;
+            _context52.p = 4;
+            _t34 = _context52.v;
             setErr(_t34.message);
           case 5:
-            _context51.p = 5;
+            _context52.p = 5;
             setLoadingDate(null);
-            return _context51.f(5);
+            return _context52.f(5);
           case 6:
-            return _context51.a(2);
+            return _context52.a(2);
         }
       }, _callee46, null, [[2, 4, 5, 6]]);
     }));
     return function openDay(_x54) {
-      return _ref86.apply(this, arguments);
+      return _ref88.apply(this, arguments);
     };
   }();
 
@@ -16139,9 +16324,9 @@ function lookupLocalDef(term, extractions) {
   }
   return null;
 }
-function SolvedConnectionGroup(_ref87) {
-  var group = _ref87.group,
-    date = _ref87.date;
+function SolvedConnectionGroup(_ref89) {
+  var group = _ref89.group,
+    date = _ref89.date;
   var _useApp14 = useApp(),
     client = _useApp14.client,
     apiKey = _useApp14.apiKey,
@@ -16171,17 +16356,17 @@ function SolvedConnectionGroup(_ref87) {
     setExplainErr = _useState246[1];
   var _useState247 = useState(function () {
       var seed = {};
-      var _iterator69 = _createForOfIteratorHelper(group.terms),
-        _step69;
+      var _iterator70 = _createForOfIteratorHelper(group.terms),
+        _step70;
       try {
-        for (_iterator69.s(); !(_step69 = _iterator69.n()).done;) {
-          var t = _step69.value;
+        for (_iterator70.s(); !(_step70 = _iterator70.n()).done;) {
+          var t = _step70.value;
           seed[t] = lookupLocalDef(t, extractions) || getTermDefCache(t) || null;
         }
       } catch (err) {
-        _iterator69.e(err);
+        _iterator70.e(err);
       } finally {
-        _iterator69.f();
+        _iterator70.f();
       }
       return seed;
     }),
@@ -16194,100 +16379,100 @@ function SolvedConnectionGroup(_ref87) {
     setTermBusy = _useState250[1];
   var fetchExplain = useCallback(/*#__PURE__*/_asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee47() {
     var text, _t35;
-    return _regenerator().w(function (_context52) {
-      while (1) switch (_context52.p = _context52.n) {
+    return _regenerator().w(function (_context53) {
+      while (1) switch (_context53.p = _context53.n) {
         case 0:
           if (!(explain || explainBusy)) {
-            _context52.n = 1;
+            _context53.n = 1;
             break;
           }
-          return _context52.a(2);
+          return _context53.a(2);
         case 1:
           if (apiKey) {
-            _context52.n = 2;
+            _context53.n = 2;
             break;
           }
           setExplainErr('Add a Gemini API key in Settings to load explanations.');
-          return _context52.a(2);
+          return _context53.a(2);
         case 2:
           setExplainBusy(true);
           setExplainErr('');
-          _context52.p = 3;
-          _context52.n = 4;
+          _context53.p = 3;
+          _context53.n = 4;
           return client.generateConnectionExplanation(group.category, group.terms);
         case 4:
-          text = _context52.v;
+          text = _context53.v;
           setExplain(text);
           setConnExplain(date, group.category, text);
-          _context52.n = 6;
+          _context53.n = 6;
           break;
         case 5:
-          _context52.p = 5;
-          _t35 = _context52.v;
+          _context53.p = 5;
+          _t35 = _context53.v;
           setExplainErr(_t35.message || 'Could not load explanation.');
         case 6:
-          _context52.p = 6;
+          _context53.p = 6;
           setExplainBusy(false);
-          return _context52.f(6);
+          return _context53.f(6);
         case 7:
-          return _context52.a(2);
+          return _context53.a(2);
       }
     }, _callee47, null, [[3, 5, 6, 7]]);
   })), [client, apiKey, group.category, group.terms, date, explain, explainBusy]);
   var fetchTermDef = useCallback(/*#__PURE__*/function () {
-    var _ref89 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee48(term) {
+    var _ref91 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee48(term) {
       var def, _t36;
-      return _regenerator().w(function (_context53) {
-        while (1) switch (_context53.p = _context53.n) {
+      return _regenerator().w(function (_context54) {
+        while (1) switch (_context54.p = _context54.n) {
           case 0:
             if (!(termDefs[term] || termBusy[term])) {
-              _context53.n = 1;
+              _context54.n = 1;
               break;
             }
-            return _context53.a(2);
+            return _context54.a(2);
           case 1:
             if (apiKey) {
-              _context53.n = 2;
+              _context54.n = 2;
               break;
             }
-            return _context53.a(2);
+            return _context54.a(2);
           case 2:
             setTermBusy(function (b) {
               return _objectSpread(_objectSpread({}, b), {}, {
                 [term]: true
               });
             });
-            _context53.p = 3;
-            _context53.n = 4;
+            _context54.p = 3;
+            _context54.n = 4;
             return client.generateTermDefinition(term, group.category);
           case 4:
-            def = _context53.v;
+            def = _context54.v;
             setTermDefs(function (d) {
               return _objectSpread(_objectSpread({}, d), {}, {
                 [term]: def
               });
             });
             setTermDefCache(term, def);
-            _context53.n = 6;
+            _context54.n = 6;
             break;
           case 5:
-            _context53.p = 5;
-            _t36 = _context53.v;
+            _context54.p = 5;
+            _t36 = _context54.v;
           case 6:
-            _context53.p = 6;
+            _context54.p = 6;
             setTermBusy(function (b) {
               return _objectSpread(_objectSpread({}, b), {}, {
                 [term]: false
               });
             });
-            return _context53.f(6);
+            return _context54.f(6);
           case 7:
-            return _context53.a(2);
+            return _context54.a(2);
         }
       }, _callee48, null, [[3, 5, 6, 7]]);
     }));
     return function (_x55) {
-      return _ref89.apply(this, arguments);
+      return _ref91.apply(this, arguments);
     };
   }(), [client, apiKey, group.category, termDefs, termBusy]);
 
@@ -16296,18 +16481,18 @@ function SolvedConnectionGroup(_ref87) {
   useEffect(function () {
     if (!open) return;
     fetchExplain();
-    var _iterator70 = _createForOfIteratorHelper(group.terms),
-      _step70;
+    var _iterator71 = _createForOfIteratorHelper(group.terms),
+      _step71;
     try {
-      for (_iterator70.s(); !(_step70 = _iterator70.n()).done;) {
-        var t = _step70.value;
+      for (_iterator71.s(); !(_step71 = _iterator71.n()).done;) {
+        var t = _step71.value;
         if (!termDefs[t]) fetchTermDef(t);
       }
       // eslint-disable-next-line
     } catch (err) {
-      _iterator70.e(err);
+      _iterator71.e(err);
     } finally {
-      _iterator70.f();
+      _iterator71.f();
     }
   }, [open]);
   return /*#__PURE__*/React.createElement("div", {
@@ -16423,17 +16608,17 @@ function seededShuffle(arr, seedStr) {
   var out = arr.slice();
   for (var _i23 = out.length - 1; _i23 > 0; _i23--) {
     var j = Math.floor(rng() * (_i23 + 1));
-    var _ref90 = [out[j], out[_i23]];
-    out[_i23] = _ref90[0];
-    out[j] = _ref90[1];
+    var _ref92 = [out[j], out[_i23]];
+    out[_i23] = _ref92[0];
+    out[j] = _ref92[1];
   }
   return out;
 }
-function ConnectionsRunner(_ref91) {
-  var date = _ref91.date,
-    payload = _ref91.payload,
-    onClose = _ref91.onClose,
-    alreadyDone = _ref91.alreadyDone;
+function ConnectionsRunner(_ref93) {
+  var date = _ref93.date,
+    payload = _ref93.payload,
+    onClose = _ref93.onClose,
+    alreadyDone = _ref93.alreadyDone;
   var _useApp15 = useApp(),
     addAttempt = _useApp15.addAttempt,
     flushSync = _useApp15.flushSync;
@@ -16546,9 +16731,9 @@ function ConnectionsRunner(_ref91) {
       var out = o.slice();
       for (var i = out.length - 1; i > 0; i--) {
         var j = Math.floor(Math.random() * (i + 1));
-        var _ref92 = [out[j], out[i]];
-        out[i] = _ref92[0];
-        out[j] = _ref92[1];
+        var _ref94 = [out[j], out[i]];
+        out[i] = _ref94[0];
+        out[j] = _ref94[1];
       }
       return out;
     });
@@ -16789,18 +16974,18 @@ function DailyConnectionsCard() {
   var termPool = useMemo(function () {
     var out = [];
     var seen = new Set();
-    var _iterator71 = _createForOfIteratorHelper(files),
-      _step71;
+    var _iterator72 = _createForOfIteratorHelper(files),
+      _step72;
     try {
-      for (_iterator71.s(); !(_step71 = _iterator71.n()).done;) {
-        var f = _step71.value;
+      for (_iterator72.s(); !(_step72 = _iterator72.n()).done;) {
+        var f = _step72.value;
         var ext = extractions[f.file_id];
         if (!(ext !== null && ext !== void 0 && ext.key_terms)) continue;
-        var _iterator72 = _createForOfIteratorHelper(ext.key_terms),
-          _step72;
+        var _iterator73 = _createForOfIteratorHelper(ext.key_terms),
+          _step73;
         try {
-          for (_iterator72.s(); !(_step72 = _iterator72.n()).done;) {
-            var kt = _step72.value;
+          for (_iterator73.s(); !(_step73 = _iterator73.n()).done;) {
+            var kt = _step73.value;
             var key = (kt.term || '').trim();
             if (!key || seen.has(key.toLowerCase())) continue;
             seen.add(key.toLowerCase());
@@ -16812,15 +16997,15 @@ function DailyConnectionsCard() {
             });
           }
         } catch (err) {
-          _iterator72.e(err);
+          _iterator73.e(err);
         } finally {
-          _iterator72.f();
+          _iterator73.f();
         }
       }
     } catch (err) {
-      _iterator71.e(err);
+      _iterator72.e(err);
     } finally {
-      _iterator71.f();
+      _iterator72.f();
     }
     return out;
   }, [files, extractions]);
@@ -16834,41 +17019,41 @@ function DailyConnectionsCard() {
       setPayload(d.payload);
       setState('ready');
     }).catch(/*#__PURE__*/function () {
-      var _ref93 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee50(e) {
-        var poolSet, norm, normMap, _iterator73, _step73, t, n, reconcile, buildValid, gen, lastErr, attempt, d2, _t38, _t39, _t40;
-        return _regenerator().w(function (_context55) {
-          while (1) switch (_context55.p = _context55.n) {
+      var _ref95 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee50(e) {
+        var poolSet, norm, normMap, _iterator74, _step74, t, n, reconcile, buildValid, gen, lastErr, attempt, d2, _t38, _t39, _t40;
+        return _regenerator().w(function (_context56) {
+          while (1) switch (_context56.p = _context56.n) {
             case 0:
               if (!cancelled) {
-                _context55.n = 1;
+                _context56.n = 1;
                 break;
               }
-              return _context55.a(2);
+              return _context56.a(2);
             case 1:
               if (!(e.status !== 404)) {
-                _context55.n = 2;
+                _context56.n = 2;
                 break;
               }
               setErr(e.message);
               setState('error');
-              return _context55.a(2);
+              return _context56.a(2);
             case 2:
               if (!(!apiKey || !session)) {
-                _context55.n = 3;
+                _context56.n = 3;
                 break;
               }
               setState('unavailable');
-              return _context55.a(2);
+              return _context56.a(2);
             case 3:
               if (!(termPool.length < 24)) {
-                _context55.n = 4;
+                _context56.n = 4;
                 break;
               }
               setState('needs-terms');
-              return _context55.a(2);
+              return _context56.a(2);
             case 4:
               setState('generating');
-              _context55.p = 5;
+              _context56.p = 5;
               // The model occasionally returns a term whose casing / spacing / punctuation
               // differs slightly from the pool (e.g. "Reticular formation" vs "reticular
               // formation"). Reconcile to the canonical pool spelling instead of failing, and
@@ -16880,74 +17065,74 @@ function DailyConnectionsCard() {
                 return (s || '').toLowerCase().replace(/[\s\-_/]+/g, ' ').replace(/[^a-z0-9 ]/g, '').trim();
               };
               normMap = new Map();
-              _iterator73 = _createForOfIteratorHelper(termPool);
+              _iterator74 = _createForOfIteratorHelper(termPool);
               try {
-                for (_iterator73.s(); !(_step73 = _iterator73.n()).done;) {
-                  t = _step73.value;
+                for (_iterator74.s(); !(_step74 = _iterator74.n()).done;) {
+                  t = _step74.value;
                   n = norm(t.term);
                   if (n && !normMap.has(n)) normMap.set(n, t.term);
                 }
               } catch (err) {
-                _iterator73.e(err);
+                _iterator74.e(err);
               } finally {
-                _iterator73.f();
+                _iterator74.f();
               }
               reconcile = function reconcile(term) {
                 if (poolSet.has(term)) return term;
                 var n = norm(term);
                 if (!n) return null;
                 if (normMap.has(n)) return normMap.get(n);
-                var _iterator74 = _createForOfIteratorHelper(normMap),
-                  _step74;
+                var _iterator75 = _createForOfIteratorHelper(normMap),
+                  _step75;
                 try {
-                  for (_iterator74.s(); !(_step74 = _iterator74.n()).done;) {
-                    var _step74$value = _slicedToArray(_step74.value, 2),
-                      pn = _step74$value[0],
-                      canon = _step74$value[1];
+                  for (_iterator75.s(); !(_step75 = _iterator75.n()).done;) {
+                    var _step75$value = _slicedToArray(_step75.value, 2),
+                      pn = _step75$value[0],
+                      canon = _step75$value[1];
                     if (pn.includes(n) || n.includes(pn)) return canon;
                   }
                 } catch (err) {
-                  _iterator74.e(err);
+                  _iterator75.e(err);
                 } finally {
-                  _iterator74.f();
+                  _iterator75.f();
                 }
                 return null;
               };
               buildValid = /*#__PURE__*/function () {
-                var _ref94 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee49() {
+                var _ref96 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee49() {
                   var _gen$groups;
-                  var gen, usedTerms, _iterator75, _step75, g, _t37;
-                  return _regenerator().w(function (_context54) {
-                    while (1) switch (_context54.p = _context54.n) {
+                  var gen, usedTerms, _iterator76, _step76, g, _t37;
+                  return _regenerator().w(function (_context55) {
+                    while (1) switch (_context55.p = _context55.n) {
                       case 0:
-                        _context54.n = 1;
+                        _context55.n = 1;
                         return client.generateDailyConnections(termPool, today);
                       case 1:
-                        gen = _context54.v;
+                        gen = _context55.v;
                         if (gen !== null && gen !== void 0 && (_gen$groups = gen.groups) !== null && _gen$groups !== void 0 && _gen$groups.length) {
-                          _context54.n = 2;
+                          _context55.n = 2;
                           break;
                         }
                         throw new Error('Generation returned no groups.');
                       case 2:
                         if (!(gen.groups.length !== 4)) {
-                          _context54.n = 3;
+                          _context55.n = 3;
                           break;
                         }
                         throw new Error('Generation did not return 4 groups.');
                       case 3:
                         usedTerms = new Set();
-                        _iterator75 = _createForOfIteratorHelper(gen.groups);
-                        _context54.p = 4;
-                        _iterator75.s();
+                        _iterator76 = _createForOfIteratorHelper(gen.groups);
+                        _context55.p = 4;
+                        _iterator76.s();
                       case 5:
-                        if ((_step75 = _iterator75.n()).done) {
-                          _context54.n = 8;
+                        if ((_step76 = _iterator76.n()).done) {
+                          _context55.n = 8;
                           break;
                         }
-                        g = _step75.value;
+                        g = _step76.value;
                         if (!(!Array.isArray(g.terms) || g.terms.length !== 4)) {
-                          _context54.n = 6;
+                          _context55.n = 6;
                           break;
                         }
                         throw new Error('Each group must have 4 terms.');
@@ -16960,57 +17145,57 @@ function DailyConnectionsCard() {
                           return canon;
                         });
                       case 7:
-                        _context54.n = 5;
+                        _context55.n = 5;
                         break;
                       case 8:
-                        _context54.n = 10;
+                        _context55.n = 10;
                         break;
                       case 9:
-                        _context54.p = 9;
-                        _t37 = _context54.v;
-                        _iterator75.e(_t37);
+                        _context55.p = 9;
+                        _t37 = _context55.v;
+                        _iterator76.e(_t37);
                       case 10:
-                        _context54.p = 10;
-                        _iterator75.f();
-                        return _context54.f(10);
+                        _context55.p = 10;
+                        _iterator76.f();
+                        return _context55.f(10);
                       case 11:
-                        return _context54.a(2, gen);
+                        return _context55.a(2, gen);
                     }
                   }, _callee49, null, [[4, 9, 10, 11]]);
                 }));
                 return function buildValid() {
-                  return _ref94.apply(this, arguments);
+                  return _ref96.apply(this, arguments);
                 };
               }();
               gen = null, lastErr = null;
               attempt = 0;
             case 6:
               if (!(attempt < 3 && !cancelled)) {
-                _context55.n = 11;
+                _context56.n = 11;
                 break;
               }
-              _context55.p = 7;
-              _context55.n = 8;
+              _context56.p = 7;
+              _context56.n = 8;
               return buildValid();
             case 8:
-              gen = _context55.v;
-              return _context55.a(3, 11);
+              gen = _context56.v;
+              return _context56.a(3, 11);
             case 9:
-              _context55.p = 9;
-              _t38 = _context55.v;
+              _context56.p = 9;
+              _t38 = _context56.v;
               lastErr = _t38;
             case 10:
               attempt++;
-              _context55.n = 6;
+              _context56.n = 6;
               break;
             case 11:
               if (gen) {
-                _context55.n = 12;
+                _context56.n = 12;
                 break;
               }
               throw lastErr || new Error('Could not generate a valid puzzle.');
             case 12:
-              _context55.n = 13;
+              _context56.n = 13;
               return api.postConnections({
                 date: today,
                 title: gen.title || '',
@@ -17022,42 +17207,42 @@ function DailyConnectionsCard() {
                 setPayload(gen);
                 setState('ready');
               }
-              _context55.n = 20;
+              _context56.n = 20;
               break;
             case 14:
-              _context55.p = 14;
-              _t39 = _context55.v;
-              _context55.p = 15;
-              _context55.n = 16;
+              _context56.p = 14;
+              _t39 = _context56.v;
+              _context56.p = 15;
+              _context56.n = 16;
               return api.getConnections(today);
             case 16:
-              d2 = _context55.v;
+              d2 = _context56.v;
               if (cancelled) {
-                _context55.n = 17;
+                _context56.n = 17;
                 break;
               }
               setConnectionsCachePayload(today, d2.payload);
               setPayload(d2.payload);
               setState('ready');
-              return _context55.a(2);
+              return _context56.a(2);
             case 17:
-              _context55.n = 19;
+              _context56.n = 19;
               break;
             case 18:
-              _context55.p = 18;
-              _t40 = _context55.v;
+              _context56.p = 18;
+              _t40 = _context56.v;
             case 19:
               if (!cancelled) {
                 setErr(_t39.message);
                 setState('error');
               }
             case 20:
-              return _context55.a(2);
+              return _context56.a(2);
           }
         }, _callee50, null, [[15, 18], [7, 9], [5, 14]]);
       }));
       return function (_x56) {
-        return _ref93.apply(this, arguments);
+        return _ref95.apply(this, arguments);
       };
     }());
     return function () {
@@ -17177,50 +17362,50 @@ function ConnectionsArchive() {
     };
   }, [api]);
   var openDay = /*#__PURE__*/function () {
-    var _ref95 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee51(date) {
+    var _ref97 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee51(date) {
       var cachedPayload, d, _t41;
-      return _regenerator().w(function (_context56) {
-        while (1) switch (_context56.p = _context56.n) {
+      return _regenerator().w(function (_context57) {
+        while (1) switch (_context57.p = _context57.n) {
           case 0:
             cachedPayload = getConnectionsCachePayload(date);
             if (!cachedPayload) {
-              _context56.n = 1;
+              _context57.n = 1;
               break;
             }
             setOpen({
               date,
               payload: cachedPayload
             });
-            return _context56.a(2);
+            return _context57.a(2);
           case 1:
             setLoadingDate(date);
-            _context56.p = 2;
-            _context56.n = 3;
+            _context57.p = 2;
+            _context57.n = 3;
             return api.getConnections(date);
           case 3:
-            d = _context56.v;
+            d = _context57.v;
             setConnectionsCachePayload(date, d.payload);
             setOpen({
               date,
               payload: d.payload
             });
-            _context56.n = 5;
+            _context57.n = 5;
             break;
           case 4:
-            _context56.p = 4;
-            _t41 = _context56.v;
+            _context57.p = 4;
+            _t41 = _context57.v;
             setErr(_t41.message);
           case 5:
-            _context56.p = 5;
+            _context57.p = 5;
             setLoadingDate(null);
-            return _context56.f(5);
+            return _context57.f(5);
           case 6:
-            return _context56.a(2);
+            return _context57.a(2);
         }
       }, _callee51, null, [[2, 4, 5, 6]]);
     }));
     return function openDay(_x57) {
-      return _ref95.apply(this, arguments);
+      return _ref97.apply(this, arguments);
     };
   }();
   var visibleDays = days && (expanded ? days : days.slice(0, 3));
@@ -17290,9 +17475,9 @@ function ConnectionsArchive() {
 // CARS calendar — GitHub-style grid of daily CARS activity + accuracy.
 function CarsCalendar() {
   var results = getCarsResults();
-  var done = Object.entries(results).filter(function (_ref96) {
-    var _ref97 = _slicedToArray(_ref96, 2),
-      r = _ref97[1];
+  var done = Object.entries(results).filter(function (_ref98) {
+    var _ref99 = _slicedToArray(_ref98, 2),
+      r = _ref99[1];
     return r && r.total;
   });
   var WEEKS = 13;
@@ -17314,9 +17499,9 @@ function CarsCalendar() {
     if (r && r.total) streak++;else if (_i24 === 0) continue;else break;
   }
   var doneCount = done.length;
-  var avgAcc = doneCount ? Math.round(done.reduce(function (s, _ref98) {
-    var _ref99 = _slicedToArray(_ref98, 2),
-      r = _ref99[1];
+  var avgAcc = doneCount ? Math.round(done.reduce(function (s, _ref100) {
+    var _ref101 = _slicedToArray(_ref100, 2),
+      r = _ref101[1];
     return s + r.score / r.total;
   }, 0) / doneCount * 100) : 0;
   return /*#__PURE__*/React.createElement("div", {
@@ -17360,8 +17545,8 @@ function CarsCalendar() {
 }
 
 // ---------- home view ----------
-function HomeView(_ref100) {
-  var onGoToStudy = _ref100.onGoToStudy;
+function HomeView(_ref102) {
+  var onGoToStudy = _ref102.onGoToStudy;
   var _useApp18 = useApp(),
     session = _useApp18.session;
   var username = (session === null || session === void 0 ? void 0 : session.username) || 'student';
@@ -17541,39 +17726,39 @@ function chapterNum(chapter) {
 // Largest-remainder allocation of `total` slots across weighted keys.
 function allocateCounts(weights, total) {
   var entries = Object.entries(weights);
-  var sum = entries.reduce(function (a, _ref101) {
-    var _ref102 = _slicedToArray(_ref101, 2),
-      w = _ref102[1];
+  var sum = entries.reduce(function (a, _ref103) {
+    var _ref104 = _slicedToArray(_ref103, 2),
+      w = _ref104[1];
     return a + w;
   }, 0) || 1;
-  var raw = entries.map(function (_ref103) {
-    var _ref104 = _slicedToArray(_ref103, 2),
-      k = _ref104[0],
-      w = _ref104[1];
+  var raw = entries.map(function (_ref105) {
+    var _ref106 = _slicedToArray(_ref105, 2),
+      k = _ref106[0],
+      w = _ref106[1];
     return [k, w / sum * total];
   });
   var out = {};
   var used = 0;
-  var _iterator76 = _createForOfIteratorHelper(raw),
-    _step76;
+  var _iterator77 = _createForOfIteratorHelper(raw),
+    _step77;
   try {
-    for (_iterator76.s(); !(_step76 = _iterator76.n()).done;) {
-      var _step76$value = _slicedToArray(_step76.value, 2),
-        k = _step76$value[0],
-        r = _step76$value[1];
+    for (_iterator77.s(); !(_step77 = _iterator77.n()).done;) {
+      var _step77$value = _slicedToArray(_step77.value, 2),
+        k = _step77$value[0],
+        r = _step77$value[1];
       out[k] = Math.floor(r);
       used += out[k];
     }
   } catch (err) {
-    _iterator76.e(err);
+    _iterator77.e(err);
   } finally {
-    _iterator76.f();
+    _iterator77.f();
   }
   var rem = total - used;
-  var fracs = raw.map(function (_ref105) {
-    var _ref106 = _slicedToArray(_ref105, 2),
-      k = _ref106[0],
-      r = _ref106[1];
+  var fracs = raw.map(function (_ref107) {
+    var _ref108 = _slicedToArray(_ref107, 2),
+      k = _ref108[0],
+      r = _ref108[1];
     return [k, r - Math.floor(r)];
   }).sort(function (a, b) {
     return b[1] - a[1];
@@ -17588,17 +17773,17 @@ function weightedSample(items, weightFn, k) {
   var out = [];
   while (out.length < k && pool.length) {
     var total = 0;
-    var _iterator77 = _createForOfIteratorHelper(pool),
-      _step77;
+    var _iterator78 = _createForOfIteratorHelper(pool),
+      _step78;
     try {
-      for (_iterator77.s(); !(_step77 = _iterator77.n()).done;) {
-        var it = _step77.value;
+      for (_iterator78.s(); !(_step78 = _iterator78.n()).done;) {
+        var it = _step78.value;
         total += Math.max(0.0001, weightFn(it));
       }
     } catch (err) {
-      _iterator77.e(err);
+      _iterator78.e(err);
     } finally {
-      _iterator77.f();
+      _iterator78.f();
     }
     var r = Math.random() * total;
     var idx = pool.length - 1;
@@ -17621,23 +17806,23 @@ function assembleSection(section, available) {
   var target = arguments.length > 2 && arguments[2] !== undefined ? arguments[2] : MINI_EXAM_PER_SECTION;
   var weights = MINI_EXAM_BLUEPRINT[section] || {};
   var bySubject = {};
-  var _iterator78 = _createForOfIteratorHelper(available),
-    _step78;
+  var _iterator79 = _createForOfIteratorHelper(available),
+    _step79;
   try {
-    for (_iterator78.s(); !(_step78 = _iterator78.n()).done;) {
-      var _it = _step78.value;
+    for (_iterator79.s(); !(_step79 = _iterator79.n()).done;) {
+      var _it = _step79.value;
       var subj = canonicalizeSubject(_it.subject) || 'Other';
       (bySubject[subj] || (bySubject[subj] = [])).push(_it);
     }
   } catch (err) {
-    _iterator78.e(err);
+    _iterator79.e(err);
   } finally {
-    _iterator78.f();
+    _iterator79.f();
   }
   var desired = Object.keys(weights).length ? allocateCounts(weights, target) : {};
   var chosen = [];
   var used = new Set();
-  var _loop6 = function _loop6() {
+  var _loop8 = function _loop8() {
     var _Object$entries2$_i = _slicedToArray(_Object$entries2[_i25], 2),
       subj = _Object$entries2$_i[0],
       want = _Object$entries2$_i[1];
@@ -17648,39 +17833,39 @@ function assembleSection(section, available) {
     var picked = weightedSample(items, function (it) {
       return ab[chapterNum(it.chapter)] || 1;
     }, Math.min(want, items.length));
-    var _iterator79 = _createForOfIteratorHelper(picked),
-      _step79;
-    try {
-      for (_iterator79.s(); !(_step79 = _iterator79.n()).done;) {
-        var p = _step79.value;
-        chosen.push(p);
-        used.add(p.id);
-      }
-    } catch (err) {
-      _iterator79.e(err);
-    } finally {
-      _iterator79.f();
-    }
-  };
-  for (var _i25 = 0, _Object$entries2 = Object.entries(desired); _i25 < _Object$entries2.length; _i25++) {
-    _loop6();
-  }
-  if (chosen.length < target) {
-    var _iterator80 = _createForOfIteratorHelper(shuffle(available.filter(function (it) {
-        return !used.has(it.id);
-      }))),
+    var _iterator80 = _createForOfIteratorHelper(picked),
       _step80;
     try {
       for (_iterator80.s(); !(_step80 = _iterator80.n()).done;) {
-        var it = _step80.value;
-        if (chosen.length >= target) break;
-        chosen.push(it);
-        used.add(it.id);
+        var p = _step80.value;
+        chosen.push(p);
+        used.add(p.id);
       }
     } catch (err) {
       _iterator80.e(err);
     } finally {
       _iterator80.f();
+    }
+  };
+  for (var _i25 = 0, _Object$entries2 = Object.entries(desired); _i25 < _Object$entries2.length; _i25++) {
+    _loop8();
+  }
+  if (chosen.length < target) {
+    var _iterator81 = _createForOfIteratorHelper(shuffle(available.filter(function (it) {
+        return !used.has(it.id);
+      }))),
+      _step81;
+    try {
+      for (_iterator81.s(); !(_step81 = _iterator81.n()).done;) {
+        var it = _step81.value;
+        if (chosen.length >= target) break;
+        chosen.push(it);
+        used.add(it.id);
+      }
+    } catch (err) {
+      _iterator81.e(err);
+    } finally {
+      _iterator81.f();
     }
   }
   return shuffle(chosen).slice(0, target);
@@ -17715,17 +17900,17 @@ function MiniExamCard() {
   }, []);
   var sectionCounts = useMemo(function () {
     var m = {};
-    var _iterator81 = _createForOfIteratorHelper((stats === null || stats === void 0 ? void 0 : stats.by_section) || []),
-      _step81;
+    var _iterator82 = _createForOfIteratorHelper((stats === null || stats === void 0 ? void 0 : stats.by_section) || []),
+      _step82;
     try {
-      for (_iterator81.s(); !(_step81 = _iterator81.n()).done;) {
-        var row = _step81.value;
+      for (_iterator82.s(); !(_step82 = _iterator82.n()).done;) {
+        var row = _step82.value;
         if (row.section) m[row.section] = row.n;
       }
     } catch (err) {
-      _iterator81.e(err);
+      _iterator82.e(err);
     } finally {
-      _iterator81.f();
+      _iterator82.f();
     }
     return m;
   }, [stats]);
@@ -17734,25 +17919,25 @@ function MiniExamCard() {
   }, 0);
   var target = MINI_EXAM_SECTIONS.length * MINI_EXAM_PER_SECTION;
   var start = /*#__PURE__*/function () {
-    var _ref107 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee52() {
-      var items, _iterator82, _step82, section, res, picked, _iterator83, _step83, q, _t42, _t43;
-      return _regenerator().w(function (_context57) {
-        while (1) switch (_context57.p = _context57.n) {
+    var _ref109 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee52() {
+      var items, _iterator83, _step83, section, res, picked, _iterator84, _step84, q, _t42, _t43;
+      return _regenerator().w(function (_context58) {
+        while (1) switch (_context58.p = _context58.n) {
           case 0:
             setLoading(true);
             setErr('');
-            _context57.p = 1;
+            _context58.p = 1;
             items = [];
-            _iterator82 = _createForOfIteratorHelper(MINI_EXAM_SECTIONS);
-            _context57.p = 2;
-            _iterator82.s();
+            _iterator83 = _createForOfIteratorHelper(MINI_EXAM_SECTIONS);
+            _context58.p = 2;
+            _iterator83.s();
           case 3:
-            if ((_step82 = _iterator82.n()).done) {
-              _context57.n = 6;
+            if ((_step83 = _iterator83.n()).done) {
+              _context58.n = 6;
               break;
             }
-            section = _step82.value;
-            _context57.n = 4;
+            section = _step83.value;
+            _context58.n = 4;
             return api.examBankQuestions({
               section,
               limit: 120
@@ -17762,12 +17947,12 @@ function MiniExamCard() {
               };
             });
           case 4:
-            res = _context57.v;
+            res = _context58.v;
             picked = assembleSection(section, (res === null || res === void 0 ? void 0 : res.questions) || [], MINI_EXAM_PER_SECTION);
-            _iterator83 = _createForOfIteratorHelper(picked);
+            _iterator84 = _createForOfIteratorHelper(picked);
             try {
-              for (_iterator83.s(); !(_step83 = _iterator83.n()).done;) {
-                q = _step83.value;
+              for (_iterator84.s(); !(_step84 = _iterator84.n()).done;) {
+                q = _step84.value;
                 items.push({
                   id: q.id,
                   mode: 'mc',
@@ -17782,31 +17967,31 @@ function MiniExamCard() {
                 });
               }
             } catch (err) {
-              _iterator83.e(err);
+              _iterator84.e(err);
             } finally {
-              _iterator83.f();
+              _iterator84.f();
             }
           case 5:
-            _context57.n = 3;
+            _context58.n = 3;
             break;
           case 6:
-            _context57.n = 8;
+            _context58.n = 8;
             break;
           case 7:
-            _context57.p = 7;
-            _t42 = _context57.v;
-            _iterator82.e(_t42);
+            _context58.p = 7;
+            _t42 = _context58.v;
+            _iterator83.e(_t42);
           case 8:
-            _context57.p = 8;
-            _iterator82.f();
-            return _context57.f(8);
+            _context58.p = 8;
+            _iterator83.f();
+            return _context58.f(8);
           case 9:
             if (items.length) {
-              _context57.n = 10;
+              _context58.n = 10;
               break;
             }
             setErr('The shared exam bank is empty. Generate daily exams to seed it, then try again.');
-            return _context57.a(2);
+            return _context58.a(2);
           case 10:
             sfxQuizStart();
             window.dispatchEvent(new CustomEvent('mcat:startQuiz', {
@@ -17814,23 +17999,23 @@ function MiniExamCard() {
                 items
               }
             }));
-            _context57.n = 12;
+            _context58.n = 12;
             break;
           case 11:
-            _context57.p = 11;
-            _t43 = _context57.v;
+            _context58.p = 11;
+            _t43 = _context58.v;
             setErr('Could not load the exam bank. Try again in a moment.');
           case 12:
-            _context57.p = 12;
+            _context58.p = 12;
             setLoading(false);
-            return _context57.f(12);
+            return _context58.f(12);
           case 13:
-            return _context57.a(2);
+            return _context58.a(2);
         }
       }, _callee52, null, [[2, 7, 8, 9], [1, 11, 12, 13]]);
     }));
     return function start() {
-      return _ref107.apply(this, arguments);
+      return _ref109.apply(this, arguments);
     };
   }();
   return /*#__PURE__*/React.createElement("div", {
@@ -17863,8 +18048,8 @@ function MiniExamCard() {
     className: "w-full bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] disabled:opacity-40 rounded-lg py-3 sm:py-2.5 font-medium"
   }, loading ? 'Assembling exam…' : readyTotal === 0 ? 'Bank empty — generate daily exams first' : "Start ".concat(readyTotal, "-question mini exam")));
 }
-function DailyExamCard(_ref108) {
-  var onGoToStudy = _ref108.onGoToStudy;
+function DailyExamCard(_ref110) {
+  var onGoToStudy = _ref110.onGoToStudy;
   var _useApp20 = useApp(),
     client = _useApp20.client,
     api = _useApp20.api,
@@ -17934,17 +18119,17 @@ function DailyExamCard(_ref108) {
       return x.id;
     }));
     var seen = new Set();
-    var _iterator84 = _createForOfIteratorHelper(attempts),
-      _step84;
+    var _iterator85 = _createForOfIteratorHelper(attempts),
+      _step85;
     try {
-      for (_iterator84.s(); !(_step84 = _iterator84.n()).done;) {
-        var a = _step84.value;
+      for (_iterator85.s(); !(_step85 = _iterator85.n()).done;) {
+        var a = _step85.value;
         if (ids.has(a.question_id) && a.ts && todayStr(new Date(a.ts)) === today) seen.add(a.question_id);
       }
     } catch (err) {
-      _iterator84.e(err);
+      _iterator85.e(err);
     } finally {
-      _iterator84.f();
+      _iterator85.f();
     }
     return seen.size;
   }, [items, attempts, today]);
@@ -17967,26 +18152,26 @@ function DailyExamCard(_ref108) {
     setState('idle');
   }, [payload, apiKey, mastered.length]);
   var generate = /*#__PURE__*/function () {
-    var _ref109 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee53() {
+    var _ref111 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee53() {
       var questionsOut, p, contribution, _t44;
-      return _regenerator().w(function (_context58) {
-        while (1) switch (_context58.p = _context58.n) {
+      return _regenerator().w(function (_context59) {
+        while (1) switch (_context59.p = _context59.n) {
           case 0:
             if (!(!apiKey || !mastered.length)) {
-              _context58.n = 1;
+              _context59.n = 1;
               break;
             }
-            return _context58.a(2);
+            return _context59.a(2);
           case 1:
             setState('generating');
             setErr('');
-            _context58.p = 2;
-            _context58.n = 3;
+            _context59.p = 2;
+            _context59.n = 3;
             return client.generateDailyExam(mastered, DAILY_EXAM_COUNT);
           case 3:
-            questionsOut = _context58.v;
+            questionsOut = _context59.v;
             if (questionsOut !== null && questionsOut !== void 0 && questionsOut.length) {
-              _context58.n = 4;
+              _context59.n = 4;
               break;
             }
             throw new Error('Generation returned no questions.');
@@ -18016,20 +18201,20 @@ function DailyExamCard(_ref108) {
               });
               api.postExamBank(contribution).catch(function () {});
             }
-            _context58.n = 6;
+            _context59.n = 6;
             break;
           case 5:
-            _context58.p = 5;
-            _t44 = _context58.v;
+            _context59.p = 5;
+            _t44 = _context59.v;
             setErr(_t44.message || String(_t44));
             setState('error');
           case 6:
-            return _context58.a(2);
+            return _context59.a(2);
         }
       }, _callee53, null, [[2, 5]]);
     }));
     return function generate() {
-      return _ref109.apply(this, arguments);
+      return _ref111.apply(this, arguments);
     };
   }();
   var launch = function launch() {
@@ -18116,11 +18301,11 @@ function DailyExamCard(_ref108) {
 // later wrong answer automatically un-masters (resurfaces) the section.
 function lessonLatestCorrect(attempts) {
   var best = {};
-  var _iterator85 = _createForOfIteratorHelper(attempts),
-    _step85;
+  var _iterator86 = _createForOfIteratorHelper(attempts),
+    _step86;
   try {
-    for (_iterator85.s(); !(_step85 = _iterator85.n()).done;) {
-      var a = _step85.value;
+    for (_iterator86.s(); !(_step86 = _iterator86.n()).done;) {
+      var a = _step86.value;
       var cur = best[a.question_id];
       if (!cur || a.ts > cur.ts) best[a.question_id] = {
         ts: a.ts,
@@ -18128,9 +18313,9 @@ function lessonLatestCorrect(attempts) {
       };
     }
   } catch (err) {
-    _iterator85.e(err);
+    _iterator86.e(err);
   } finally {
-    _iterator85.f();
+    _iterator86.f();
   }
   var out = {};
   for (var k in best) out[k] = best[k].correct;
@@ -18142,20 +18327,20 @@ function lessonSectionStatus(sec, latestCorrect) {
   var ids = Array.isArray(sec.check_ids) ? sec.check_ids : [];
   var correct = 0,
     attempted = 0;
-  var _iterator86 = _createForOfIteratorHelper(ids),
-    _step86;
+  var _iterator87 = _createForOfIteratorHelper(ids),
+    _step87;
   try {
-    for (_iterator86.s(); !(_step86 = _iterator86.n()).done;) {
-      var id = _step86.value;
+    for (_iterator87.s(); !(_step87 = _iterator87.n()).done;) {
+      var id = _step87.value;
       if (id in latestCorrect) {
         attempted++;
         if (latestCorrect[id]) correct++;
       }
     }
   } catch (err) {
-    _iterator86.e(err);
+    _iterator87.e(err);
   } finally {
-    _iterator86.f();
+    _iterator87.f();
   }
   var thr = typeof sec.mastery_threshold === 'number' ? sec.mastery_threshold : 1.0;
   var mastered = ids.length > 0 && correct / ids.length >= thr;
@@ -18452,9 +18637,9 @@ function builtInLessonPoolFor(chapterId) {
 }
 
 // Click-to-reveal flashcard for a definition drill.
-function LessonDrillCard(_ref110) {
-  var term = _ref110.term,
-    definition = _ref110.definition;
+function LessonDrillCard(_ref112) {
+  var term = _ref112.term,
+    definition = _ref112.definition;
   var _useState297 = useState(false),
     _useState298 = _slicedToArray(_useState297, 2),
     show = _useState298[0],
@@ -18478,11 +18663,11 @@ function LessonDrillCard(_ref110) {
 // One lesson section. Always starts collapsed; click the header to expand.
 // When `locked`, the section is gated behind an earlier checkpoint and cannot
 // be opened until that checkpoint is passed.
-function LessonSection(_ref111) {
-  var sec = _ref111.sec,
-    status = _ref111.status,
-    onQuiz = _ref111.onQuiz,
-    locked = _ref111.locked;
+function LessonSection(_ref113) {
+  var sec = _ref113.sec,
+    status = _ref113.status,
+    onQuiz = _ref113.onQuiz,
+    locked = _ref113.locked;
   var _useFigureViewer2 = useFigureViewer(),
     openFigure = _useFigureViewer2.open;
   var _useState299 = useState(false),
@@ -18598,12 +18783,12 @@ function LessonSection(_ref111) {
 // Inline cumulative MC quiz that gates lesson progress. Requires a perfect
 // score (100%) to pass; any miss means the whole quiz restarts with a fresh
 // shuffle. Used for both per-group checkpoints (15 Q) and the final exam (30 Q).
-function LessonGateQuiz(_ref112) {
-  var kind = _ref112.kind,
-    pool = _ref112.pool,
-    need = _ref112.need,
-    onPass = _ref112.onPass,
-    onCancel = _ref112.onCancel;
+function LessonGateQuiz(_ref114) {
+  var kind = _ref114.kind,
+    pool = _ref114.pool,
+    need = _ref114.need,
+    onPass = _ref114.onPass,
+    onCancel = _ref114.onCancel;
   var _useApp21 = useApp(),
     addAttempt = _useApp21.addAttempt,
     updateLastAttempt = _useApp21.updateLastAttempt;
@@ -18704,10 +18889,10 @@ function LessonGateQuiz(_ref112) {
       className: "px-4 py-2 rounded border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--bg-hover)]"
     }, "Back to lesson")));
   }
-  var handleAnswer = function handleAnswer(_ref113) {
-    var correct = _ref113.correct,
-      user_answer = _ref113.user_answer,
-      isInterim = _ref113.isInterim;
+  var handleAnswer = function handleAnswer(_ref115) {
+    var correct = _ref115.correct,
+      user_answer = _ref115.user_answer,
+      isInterim = _ref115.isInterim;
     if (isInterim || answered) return;
     setAnswered(true);
     setAnswers(function (prev) {
@@ -18731,8 +18916,8 @@ function LessonGateQuiz(_ref112) {
       user_answer
     });
   };
-  var handleAnswerOverride = function handleAnswerOverride(_ref114) {
-    var correct = _ref114.correct;
+  var handleAnswerOverride = function handleAnswerOverride(_ref116) {
+    var correct = _ref116.correct;
     if (!answered) return;
     var nextCorrect = !!correct;
     updateLastAttempt(item.id, {
@@ -18847,12 +19032,12 @@ function LessonGateQuiz(_ref112) {
 // Override path to "master" a lesson without passing its checkpoints/final exam.
 // Two gates on purpose: a confirm step ("are you sure?") then re-entry of the
 // account PIN (verified server-side via /login) so it can't be a stray tap.
-function ForceMasterModal(_ref115) {
-  var lessonTitle = _ref115.lessonTitle,
-    username = _ref115.username,
-    onVerifyPin = _ref115.onVerifyPin,
-    onConfirmMaster = _ref115.onConfirmMaster,
-    onClose = _ref115.onClose;
+function ForceMasterModal(_ref117) {
+  var lessonTitle = _ref117.lessonTitle,
+    username = _ref117.username,
+    onVerifyPin = _ref117.onVerifyPin,
+    onConfirmMaster = _ref117.onConfirmMaster,
+    onClose = _ref117.onClose;
   var _useState323 = useState('confirm'),
     _useState324 = _slicedToArray(_useState323, 2),
     step = _useState324[0],
@@ -18870,46 +19055,46 @@ function ForceMasterModal(_ref115) {
     busy = _useState330[0],
     setBusy = _useState330[1];
   var submitPin = /*#__PURE__*/function () {
-    var _ref116 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee54() {
+    var _ref118 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee54() {
       var _t45;
-      return _regenerator().w(function (_context59) {
-        while (1) switch (_context59.p = _context59.n) {
+      return _regenerator().w(function (_context60) {
+        while (1) switch (_context60.p = _context60.n) {
           case 0:
             if (!busy) {
-              _context59.n = 1;
+              _context60.n = 1;
               break;
             }
-            return _context59.a(2);
+            return _context60.a(2);
           case 1:
             if (/^\d{4}$/.test(pin)) {
-              _context59.n = 2;
+              _context60.n = 2;
               break;
             }
             setErr('Enter your 4-digit PIN.');
-            return _context59.a(2);
+            return _context60.a(2);
           case 2:
             setBusy(true);
             setErr('');
-            _context59.p = 3;
-            _context59.n = 4;
+            _context60.p = 3;
+            _context60.n = 4;
             return onVerifyPin(pin);
           case 4:
             onConfirmMaster();
             onClose();
-            _context59.n = 6;
+            _context60.n = 6;
             break;
           case 5:
-            _context59.p = 5;
-            _t45 = _context59.v;
+            _context60.p = 5;
+            _t45 = _context60.v;
             setErr('Incorrect PIN. Try again.');
             setBusy(false);
           case 6:
-            return _context59.a(2);
+            return _context60.a(2);
         }
       }, _callee54, null, [[3, 5]]);
     }));
     return function submitPin() {
-      return _ref116.apply(this, arguments);
+      return _ref118.apply(this, arguments);
     };
   }();
   return /*#__PURE__*/React.createElement("div", {
@@ -18992,19 +19177,19 @@ function lessonGateQuizEligible(item) {
   });
   return false;
 }
-function LessonReader(_ref117) {
-  var lesson = _ref117.lesson,
-    latestCorrect = _ref117.latestCorrect,
-    completed = _ref117.completed,
-    gate = _ref117.gate,
-    quizPool = _ref117.quizPool,
-    onBack = _ref117.onBack,
-    onQuizSection = _ref117.onQuizSection,
-    onMarkComplete = _ref117.onMarkComplete,
-    onPassCheckpoint = _ref117.onPassCheckpoint,
-    onMaster = _ref117.onMaster,
-    username = _ref117.username,
-    onVerifyPin = _ref117.onVerifyPin;
+function LessonReader(_ref119) {
+  var lesson = _ref119.lesson,
+    latestCorrect = _ref119.latestCorrect,
+    completed = _ref119.completed,
+    gate = _ref119.gate,
+    quizPool = _ref119.quizPool,
+    onBack = _ref119.onBack,
+    onQuizSection = _ref119.onQuizSection,
+    onMarkComplete = _ref119.onMarkComplete,
+    onPassCheckpoint = _ref119.onPassCheckpoint,
+    onMaster = _ref119.onMaster,
+    username = _ref119.username,
+    onVerifyPin = _ref119.onVerifyPin;
   var sections = _toConsumableArray(lesson.sections || []).sort(function (a, b) {
     return (a.order || 0) - (b.order || 0);
   });
@@ -19033,17 +19218,17 @@ function LessonReader(_ref117) {
   var poolThrough = function poolThrough(end) {
     var ids = new Set();
     for (var k = 0; k < end; k++) {
-      var _iterator87 = _createForOfIteratorHelper(sections[k].check_ids || []),
-        _step87;
+      var _iterator88 = _createForOfIteratorHelper(sections[k].check_ids || []),
+        _step88;
       try {
-        for (_iterator87.s(); !(_step87 = _iterator87.n()).done;) {
-          var id = _step87.value;
+        for (_iterator88.s(); !(_step88 = _iterator88.n()).done;) {
+          var id = _step88.value;
           ids.add(id);
         }
       } catch (err) {
-        _iterator87.e(err);
+        _iterator88.e(err);
       } finally {
-        _iterator87.f();
+        _iterator88.f();
       }
     }
     return quizPool.filter(function (x) {
@@ -19176,8 +19361,8 @@ function LessonReader(_ref117) {
     }
   }));
 }
-function LessonsView(_ref118) {
-  var onGoToStudy = _ref118.onGoToStudy;
+function LessonsView(_ref120) {
+  var onGoToStudy = _ref120.onGoToStudy;
   var _useApp22 = useApp(),
     api = _useApp22.api,
     session = _useApp22.session,
@@ -19241,33 +19426,33 @@ function LessonsView(_ref118) {
     setError = _useState354[1];
   var fileToChapter = useMemo(function () {
     var m = {};
-    var _iterator88 = _createForOfIteratorHelper(files),
-      _step88;
-    try {
-      for (_iterator88.s(); !(_step88 = _iterator88.n()).done;) {
-        var f = _step88.value;
-        if (f.chapter_id) m[f.file_id] = f.chapter_id;
-      }
-    } catch (err) {
-      _iterator88.e(err);
-    } finally {
-      _iterator88.f();
-    }
-    return m;
-  }, [files]);
-  var chapterToFile = useMemo(function () {
-    var m = {};
     var _iterator89 = _createForOfIteratorHelper(files),
       _step89;
     try {
       for (_iterator89.s(); !(_step89 = _iterator89.n()).done;) {
         var f = _step89.value;
-        if (f.chapter_id) m[f.chapter_id] = f.file_id;
+        if (f.chapter_id) m[f.file_id] = f.chapter_id;
       }
     } catch (err) {
       _iterator89.e(err);
     } finally {
       _iterator89.f();
+    }
+    return m;
+  }, [files]);
+  var chapterToFile = useMemo(function () {
+    var m = {};
+    var _iterator90 = _createForOfIteratorHelper(files),
+      _step90;
+    try {
+      for (_iterator90.s(); !(_step90 = _iterator90.n()).done;) {
+        var f = _step90.value;
+        if (f.chapter_id) m[f.chapter_id] = f.file_id;
+      }
+    } catch (err) {
+      _iterator90.e(err);
+    } finally {
+      _iterator90.f();
     }
     return m;
   }, [files]);
@@ -19277,41 +19462,41 @@ function LessonsView(_ref118) {
   useEffect(function () {
     var cancelled = false;
     _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee55() {
-      var data, m, _iterator90, _step90, _ch$stages2, ch, _t46;
-      return _regenerator().w(function (_context60) {
-        while (1) switch (_context60.p = _context60.n) {
+      var data, m, _iterator91, _step91, _ch$stages2, ch, _t46;
+      return _regenerator().w(function (_context61) {
+        while (1) switch (_context61.p = _context61.n) {
           case 0:
-            _context60.p = 0;
-            _context60.n = 1;
+            _context61.p = 0;
+            _context61.n = 1;
             return api.listChapters();
           case 1:
-            data = _context60.v;
+            data = _context61.v;
             if (!cancelled) {
-              _context60.n = 2;
+              _context61.n = 2;
               break;
             }
-            return _context60.a(2);
+            return _context61.a(2);
           case 2:
             m = {};
-            _iterator90 = _createForOfIteratorHelper((data === null || data === void 0 ? void 0 : data.chapters) || []);
+            _iterator91 = _createForOfIteratorHelper((data === null || data === void 0 ? void 0 : data.chapters) || []);
             try {
-              for (_iterator90.s(); !(_step90 = _iterator90.n()).done;) {
-                ch = _step90.value;
+              for (_iterator91.s(); !(_step91 = _iterator91.n()).done;) {
+                ch = _step91.value;
                 m[ch.id] = !!((_ch$stages2 = ch.stages) !== null && _ch$stages2 !== void 0 && (_ch$stages2 = _ch$stages2.lesson) !== null && _ch$stages2 !== void 0 && _ch$stages2.done);
               }
             } catch (err) {
-              _iterator90.e(err);
+              _iterator91.e(err);
             } finally {
-              _iterator90.f();
+              _iterator91.f();
             }
             setAvailMap(m);
-            _context60.n = 4;
+            _context61.n = 4;
             break;
           case 3:
-            _context60.p = 3;
-            _t46 = _context60.v;
+            _context61.p = 3;
+            _t46 = _context61.v;
           case 4:
-            return _context60.a(2);
+            return _context61.a(2);
         }
       }, _callee55, null, [[0, 3]]);
     }))();
@@ -19369,28 +19554,28 @@ function LessonsView(_ref118) {
   // Re-verify the signed-in account's PIN against the server. Rejects on a wrong
   // PIN (api.login throws on 401), which gates the "master without the exam" flow.
   var verifyPin = /*#__PURE__*/function () {
-    var _ref120 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee56(pin) {
-      return _regenerator().w(function (_context61) {
-        while (1) switch (_context61.n) {
+    var _ref122 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee56(pin) {
+      return _regenerator().w(function (_context62) {
+        while (1) switch (_context62.n) {
           case 0:
             if (session !== null && session !== void 0 && session.username) {
-              _context61.n = 1;
+              _context62.n = 1;
               break;
             }
             throw new Error('Not signed in');
           case 1:
-            _context61.n = 2;
+            _context62.n = 2;
             return api.login({
               username: session.username,
               pin
             });
           case 2:
-            return _context61.a(2);
+            return _context62.a(2);
         }
       }, _callee56);
     }));
     return function verifyPin(_x58) {
-      return _ref120.apply(this, arguments);
+      return _ref122.apply(this, arguments);
     };
   }();
 
@@ -19411,27 +19596,27 @@ function LessonsView(_ref118) {
     return [].concat(_toConsumableArray(buildPool(ctx, 'mc', scope)), _toConsumableArray(buildPool(ctx, 'short', scope)));
   };
   var downloadLesson = /*#__PURE__*/function () {
-    var _ref121 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee57(chapterId) {
+    var _ref123 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee57(chapterId) {
       var builtIn, full, lesson, _t47;
-      return _regenerator().w(function (_context62) {
-        while (1) switch (_context62.p = _context62.n) {
+      return _regenerator().w(function (_context63) {
+        while (1) switch (_context63.p = _context63.n) {
           case 0:
             if (chapterId) {
-              _context62.n = 1;
+              _context63.n = 1;
               break;
             }
-            return _context62.a(2);
+            return _context63.a(2);
           case 1:
             builtIn = builtInLessonFor(chapterId);
             if (!builtIn) {
-              _context62.n = 2;
+              _context63.n = 2;
               break;
             }
             persistCache(_objectSpread(_objectSpread({}, lessonsCache), {}, {
               [chapterId]: builtIn
             }));
             setOpenId(chapterId);
-            return _context62.a(2);
+            return _context63.a(2);
           case 2:
             setBusy(function (b) {
               return _objectSpread(_objectSpread({}, b), {}, {
@@ -19439,44 +19624,44 @@ function LessonsView(_ref118) {
               });
             });
             setError('');
-            _context62.p = 3;
-            _context62.n = 4;
+            _context63.p = 3;
+            _context63.n = 4;
             return api.getChapter(chapterId);
           case 4:
-            full = _context62.v;
+            full = _context63.v;
             lesson = full === null || full === void 0 ? void 0 : full.lesson;
             if (!(!lesson || !Array.isArray(lesson.sections))) {
-              _context62.n = 5;
+              _context63.n = 5;
               break;
             }
             setError('No lesson is available for that chapter yet.');
-            return _context62.a(2);
+            return _context63.a(2);
           case 5:
             persistCache(_objectSpread(_objectSpread({}, lessonsCache), {}, {
               [chapterId]: lesson
             }));
             setOpenId(chapterId);
-            _context62.n = 7;
+            _context63.n = 7;
             break;
           case 6:
-            _context62.p = 6;
-            _t47 = _context62.v;
+            _context63.p = 6;
+            _t47 = _context63.v;
             setError((_t47 === null || _t47 === void 0 ? void 0 : _t47.message) || 'Download failed.');
           case 7:
-            _context62.p = 7;
+            _context63.p = 7;
             setBusy(function (b) {
               var n = _objectSpread({}, b);
               delete n[chapterId];
               return n;
             });
-            return _context62.f(7);
+            return _context63.f(7);
           case 8:
-            return _context62.a(2);
+            return _context63.a(2);
         }
       }, _callee57, null, [[3, 6, 7, 8]]);
     }));
     return function downloadLesson(_x59) {
-      return _ref121.apply(this, arguments);
+      return _ref123.apply(this, arguments);
     };
   }();
   var removeLesson = function removeLesson(chapterId) {
@@ -19586,11 +19771,11 @@ function LessonsView(_ref118) {
     // Seed every processed chapter so ones you haven't answered questions for
     // yet still show up (with 0/0 stats) rather than only appearing after a
     // first attempt is recorded.
-    var _iterator91 = _createForOfIteratorHelper(files),
-      _step91;
+    var _iterator92 = _createForOfIteratorHelper(files),
+      _step92;
     try {
-      for (_iterator91.s(); !(_step91 = _iterator91.n()).done;) {
-        var f = _step91.value;
+      for (_iterator92.s(); !(_step92 = _iterator92.n()).done;) {
+        var f = _step92.value;
         if (!f.file_id) continue;
         var q = questions[f.file_id];
         if (!q || !q.mc) continue; // only fully processed chapters
@@ -19602,15 +19787,15 @@ function LessonsView(_ref118) {
         };
       }
     } catch (err) {
-      _iterator91.e(err);
+      _iterator92.e(err);
     } finally {
-      _iterator91.f();
+      _iterator92.f();
     }
-    var _iterator92 = _createForOfIteratorHelper(attempts),
-      _step92;
+    var _iterator93 = _createForOfIteratorHelper(attempts),
+      _step93;
     try {
-      for (_iterator92.s(); !(_step92 = _iterator92.n()).done;) {
-        var a = _step92.value;
+      for (_iterator93.s(); !(_step93 = _iterator93.n()).done;) {
+        var a = _step93.value;
         var key = a.file_id;
         if (!chapterFileIds.has(key)) continue;
         if (!byChapter[key]) byChapter[key] = {
@@ -19623,29 +19808,29 @@ function LessonsView(_ref118) {
         if (a.correct) byChapter[key].correct++;
       }
     } catch (err) {
-      _iterator92.e(err);
-    } finally {
-      _iterator92.f();
-    }
-    var wrongIds = new Set();
-    var seenIds = new Set();
-    var _iterator93 = _createForOfIteratorHelper(attempts),
-      _step93;
-    try {
-      for (_iterator93.s(); !(_step93 = _iterator93.n()).done;) {
-        var _a = _step93.value;
-        seenIds.add(_a.question_id);
-        if (!_a.correct) wrongIds.add(_a.question_id);
-      }
-    } catch (err) {
       _iterator93.e(err);
     } finally {
       _iterator93.f();
     }
-    var out = Object.entries(byChapter).map(function (_ref122) {
-      var _ref123 = _slicedToArray(_ref122, 2),
-        fid = _ref123[0],
-        s = _ref123[1];
+    var wrongIds = new Set();
+    var seenIds = new Set();
+    var _iterator94 = _createForOfIteratorHelper(attempts),
+      _step94;
+    try {
+      for (_iterator94.s(); !(_step94 = _iterator94.n()).done;) {
+        var _a = _step94.value;
+        seenIds.add(_a.question_id);
+        if (!_a.correct) wrongIds.add(_a.question_id);
+      }
+    } catch (err) {
+      _iterator94.e(err);
+    } finally {
+      _iterator94.f();
+    }
+    var out = Object.entries(byChapter).map(function (_ref124) {
+      var _ref125 = _slicedToArray(_ref124, 2),
+        fid = _ref125[0],
+        s = _ref125[1];
       var pool = buildPool({
         files,
         questions,
@@ -19722,18 +19907,18 @@ function LessonsView(_ref118) {
     if (!pool.length) return;
     var wrongIds = new Set();
     var seenIds = new Set();
-    var _iterator94 = _createForOfIteratorHelper(attempts),
-      _step94;
+    var _iterator95 = _createForOfIteratorHelper(attempts),
+      _step95;
     try {
-      for (_iterator94.s(); !(_step94 = _iterator94.n()).done;) {
-        var a = _step94.value;
+      for (_iterator95.s(); !(_step95 = _iterator95.n()).done;) {
+        var a = _step95.value;
         seenIds.add(a.question_id);
         if (!a.correct) wrongIds.add(a.question_id);
       }
     } catch (err) {
-      _iterator94.e(err);
+      _iterator95.e(err);
     } finally {
-      _iterator94.f();
+      _iterator95.f();
     }
     var misses = pool.filter(function (x) {
       return wrongIds.has(x.id);
@@ -19944,11 +20129,11 @@ function LessonsView(_ref118) {
   var subjectGroups = function () {
     var order = [];
     var map = {};
-    var _iterator95 = _createForOfIteratorHelper(lessonRows),
-      _step95;
+    var _iterator96 = _createForOfIteratorHelper(lessonRows),
+      _step96;
     try {
-      for (_iterator95.s(); !(_step95 = _iterator95.n()).done;) {
-        var r = _step95.value;
+      for (_iterator96.s(); !(_step96 = _iterator96.n()).done;) {
+        var r = _step96.value;
         var s = r.subject || 'Other';
         if (!map[s]) {
           map[s] = [];
@@ -19957,9 +20142,9 @@ function LessonsView(_ref118) {
         map[s].push(r);
       }
     } catch (err) {
-      _iterator95.e(err);
+      _iterator96.e(err);
     } finally {
-      _iterator95.f();
+      _iterator96.f();
     }
     return order.map(function (s) {
       return [s, map[s]];
@@ -20023,10 +20208,10 @@ function LessonsView(_ref118) {
     className: "px-2 py-1 rounded border ".concat(sortBy === 'subject' ? 'bg-[var(--accent)] text-white border-[var(--accent-border)]' : 'border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--bg-hover)]')
   }, "Subject"))), sortBy === 'subject' ? /*#__PURE__*/React.createElement("div", {
     className: "space-y-2"
-  }, subjectGroups.map(function (_ref124) {
-    var _ref125 = _slicedToArray(_ref124, 2),
-      subject = _ref125[0],
-      items = _ref125[1];
+  }, subjectGroups.map(function (_ref126) {
+    var _ref127 = _slicedToArray(_ref126, 2),
+      subject = _ref127[0],
+      items = _ref127[1];
     var open = !!openSubjects[subject];
     var need = items.reduce(function (n, r) {
       return n + r.need;
@@ -20225,10 +20410,10 @@ function SyncPanel() {
 }
 
 // ---------- stats ----------
-function StatBar(_ref126) {
-  var correct = _ref126.correct,
-    total = _ref126.total,
-    label = _ref126.label;
+function StatBar(_ref128) {
+  var correct = _ref128.correct,
+    total = _ref128.total,
+    label = _ref128.label;
   var pct = total ? Math.round(correct / total * 100) : 0;
   return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     className: "flex items-baseline justify-between text-sm mb-1"
@@ -20324,42 +20509,42 @@ function predictMcatScores(attempts) {
     return (b.ts || 0) - (a.ts || 0);
   });
   var bySubject = new Map();
-  var _iterator96 = _createForOfIteratorHelper(sorted),
-    _step96;
+  var _iterator97 = _createForOfIteratorHelper(sorted),
+    _step97;
   try {
-    for (_iterator96.s(); !(_step96 = _iterator96.n()).done;) {
-      var a = _step96.value;
+    for (_iterator97.s(); !(_step97 = _iterator97.n()).done;) {
+      var a = _step97.value;
       if (!a.subject) continue;
       var subj = normalizeSubject(a.subject);
       if (!bySubject.has(subj)) bySubject.set(subj, []);
       bySubject.get(subj).push(a);
     }
   } catch (err) {
-    _iterator96.e(err);
-  } finally {
-    _iterator96.f();
-  }
-  var posteriors = new Map();
-  var _iterator97 = _createForOfIteratorHelper(bySubject),
-    _step97;
-  try {
-    for (_iterator97.s(); !(_step97 = _iterator97.n()).done;) {
-      var _step97$value = _slicedToArray(_step97.value, 2),
-        _subj = _step97$value[0],
-        list = _step97$value[1];
-      var p = subjectPosterior(list);
-      if (p) posteriors.set(_subj, p);
-    }
-  } catch (err) {
     _iterator97.e(err);
   } finally {
     _iterator97.f();
   }
+  var posteriors = new Map();
+  var _iterator98 = _createForOfIteratorHelper(bySubject),
+    _step98;
+  try {
+    for (_iterator98.s(); !(_step98 = _iterator98.n()).done;) {
+      var _step98$value = _slicedToArray(_step98.value, 2),
+        _subj = _step98$value[0],
+        list = _step98$value[1];
+      var p = subjectPosterior(list);
+      if (p) posteriors.set(_subj, p);
+    }
+  } catch (err) {
+    _iterator98.e(err);
+  } finally {
+    _iterator98.f();
+  }
   var sections = MCAT_SECTIONS.map(function (sec) {
-    var present = Object.entries(sec.weights).map(function (_ref127) {
-      var _ref128 = _slicedToArray(_ref127, 2),
-        subj = _ref128[0],
-        weight = _ref128[1];
+    var present = Object.entries(sec.weights).map(function (_ref129) {
+      var _ref130 = _slicedToArray(_ref129, 2),
+        subj = _ref130[0],
+        weight = _ref130[1];
       var post = posteriors.get(subj);
       return post ? {
         subj,
@@ -20377,21 +20562,21 @@ function predictMcatScores(attempts) {
     }, 0);
     var mean = 0,
       variance = 0;
-    var _iterator98 = _createForOfIteratorHelper(present),
-      _step98;
+    var _iterator99 = _createForOfIteratorHelper(present),
+      _step99;
     try {
-      for (_iterator98.s(); !(_step98 = _iterator98.n()).done;) {
-        var _step98$value = _step98.value,
-          weight = _step98$value.weight,
-          post = _step98$value.post;
+      for (_iterator99.s(); !(_step99 = _iterator99.n()).done;) {
+        var _step99$value = _step99.value,
+          weight = _step99$value.weight,
+          post = _step99$value.post;
         var w = weight / wSum;
         mean += w * post.mean;
         variance += w * w * post.variance;
       }
     } catch (err) {
-      _iterator98.e(err);
+      _iterator99.e(err);
     } finally {
-      _iterator98.f();
+      _iterator99.f();
     }
     var score = SECTION_MIN + SECTION_RANGE * mean;
     var stdev = SECTION_RANGE * Math.sqrt(variance);
@@ -20400,10 +20585,10 @@ function predictMcatScores(attempts) {
       n: present.reduce(function (s, x) {
         return s + x.post.n;
       }, 0),
-      subjects: present.map(function (_ref129) {
-        var subj = _ref129.subj,
-          weight = _ref129.weight,
-          post = _ref129.post;
+      subjects: present.map(function (_ref131) {
+        var subj = _ref131.subj,
+          weight = _ref131.weight,
+          post = _ref131.post;
         return {
           subject: subj,
           weight: weight / wSum,
@@ -20427,20 +20612,20 @@ function predictMcatScores(attempts) {
       return s + Math.pow(x.stdev, 2);
     }, 0) / done.length;
     var imputedStdev = Math.max(Math.sqrt(meanVar) * 2, 2.5);
-    var _iterator99 = _createForOfIteratorHelper(sections),
-      _step99;
+    var _iterator100 = _createForOfIteratorHelper(sections),
+      _step100;
     try {
-      for (_iterator99.s(); !(_step99 = _iterator99.n()).done;) {
-        var s = _step99.value;
+      for (_iterator100.s(); !(_step100 = _iterator100.n()).done;) {
+        var s = _step100.value;
         if (s.completed) continue;
         s.imputed = true;
         s.score = meanScore;
         s.stdev = imputedStdev;
       }
     } catch (err) {
-      _iterator99.e(err);
+      _iterator100.e(err);
     } finally {
-      _iterator99.f();
+      _iterator100.f();
     }
   }
   var contributing = sections.filter(function (s) {
@@ -20489,18 +20674,18 @@ function predictPassageMcatScores(attempts) {
   var bySection = new Map(PASSAGE_MCAT_SECTIONS.map(function (s) {
     return [s.key, []];
   }));
-  var _iterator100 = _createForOfIteratorHelper(sorted),
-    _step100;
+  var _iterator101 = _createForOfIteratorHelper(sorted),
+    _step101;
   try {
-    for (_iterator100.s(); !(_step100 = _iterator100.n()).done;) {
-      var a = _step100.value;
+    for (_iterator101.s(); !(_step101 = _iterator101.n()).done;) {
+      var a = _step101.value;
       var section = passageSectionForAttempt(a);
       if (section) bySection.get(section).push(a);
     }
   } catch (err) {
-    _iterator100.e(err);
+    _iterator101.e(err);
   } finally {
-    _iterator100.f();
+    _iterator101.f();
   }
   var sections = PASSAGE_MCAT_SECTIONS.map(function (sec) {
     var post = subjectPosterior(bySection.get(sec.key) || []);
@@ -20527,20 +20712,20 @@ function predictPassageMcatScores(attempts) {
       return s + Math.pow(x.stdev, 2);
     }, 0) / done.length;
     var imputedStdev = Math.max(Math.sqrt(meanVar) * 2, 2.5);
-    var _iterator101 = _createForOfIteratorHelper(sections),
-      _step101;
+    var _iterator102 = _createForOfIteratorHelper(sections),
+      _step102;
     try {
-      for (_iterator101.s(); !(_step101 = _iterator101.n()).done;) {
-        var s = _step101.value;
+      for (_iterator102.s(); !(_step102 = _iterator102.n()).done;) {
+        var s = _step102.value;
         if (s.completed) continue;
         s.imputed = true;
         s.score = meanScore;
         s.stdev = imputedStdev;
       }
     } catch (err) {
-      _iterator101.e(err);
+      _iterator102.e(err);
     } finally {
-      _iterator101.f();
+      _iterator102.f();
     }
   }
   var contributing = sections.filter(function (s) {
@@ -20564,8 +20749,8 @@ function predictPassageMcatScores(attempts) {
     total
   };
 }
-function PassageMcatPredictionCard(_ref130) {
-  var attempts = _ref130.attempts;
+function PassageMcatPredictionCard(_ref132) {
+  var attempts = _ref132.attempts;
   var _useMemo2 = useMemo(function () {
       return predictPassageMcatScores(attempts || []);
     }, [attempts]),
@@ -20736,12 +20921,12 @@ function StatsView() {
     var bySubject = {};
     var missByQid = {};
     var seenByQid = {};
-    var _iterator102 = _createForOfIteratorHelper(attempts),
-      _step102;
+    var _iterator103 = _createForOfIteratorHelper(attempts),
+      _step103;
     try {
-      for (_iterator102.s(); !(_step102 = _iterator102.n()).done;) {
+      for (_iterator103.s(); !(_step103 = _iterator103.n()).done;) {
         var _a$mode, _a$subject;
-        var a = _step102.value;
+        var a = _step103.value;
         overall.total++;
         if (a.correct) overall.correct++;
         var m = byMode[_a$mode = a.mode] || (byMode[_a$mode] = {
@@ -20771,36 +20956,21 @@ function StatsView() {
 
       // Build a question lookup so missed questions can show their text.
     } catch (err) {
-      _iterator102.e(err);
+      _iterator103.e(err);
     } finally {
-      _iterator102.f();
+      _iterator103.f();
     }
     var qLookup = {};
     for (var _i26 = 0, _Object$keys3 = Object.keys(questions); _i26 < _Object$keys3.length; _i26++) {
       var fid = _Object$keys3[_i26];
       var qb = questions[fid] || {};
-      var _iterator103 = _createForOfIteratorHelper(qb.mc || []),
-        _step103;
-      try {
-        for (_iterator103.s(); !(_step103 = _iterator103.n()).done;) {
-          var q = _step103.value;
-          qLookup[q.id] = _objectSpread(_objectSpread({}, q), {}, {
-            mode: 'mc',
-            file_id: fid
-          });
-        }
-      } catch (err) {
-        _iterator103.e(err);
-      } finally {
-        _iterator103.f();
-      }
-      var _iterator104 = _createForOfIteratorHelper(qb.short || []),
+      var _iterator104 = _createForOfIteratorHelper(qb.mc || []),
         _step104;
       try {
         for (_iterator104.s(); !(_step104 = _iterator104.n()).done;) {
-          var _q3 = _step104.value;
-          qLookup[_q3.id] = _objectSpread(_objectSpread({}, _q3), {}, {
-            mode: 'short',
+          var q = _step104.value;
+          qLookup[q.id] = _objectSpread(_objectSpread({}, q), {}, {
+            mode: 'mc',
             file_id: fid
           });
         }
@@ -20809,24 +20979,39 @@ function StatsView() {
       } finally {
         _iterator104.f();
       }
+      var _iterator105 = _createForOfIteratorHelper(qb.short || []),
+        _step105;
+      try {
+        for (_iterator105.s(); !(_step105 = _iterator105.n()).done;) {
+          var _q3 = _step105.value;
+          qLookup[_q3.id] = _objectSpread(_objectSpread({}, _q3), {}, {
+            mode: 'short',
+            file_id: fid
+          });
+        }
+      } catch (err) {
+        _iterator105.e(err);
+      } finally {
+        _iterator105.f();
+      }
     }
     var fileLookup = {};
-    var _iterator105 = _createForOfIteratorHelper(files),
-      _step105;
+    var _iterator106 = _createForOfIteratorHelper(files),
+      _step106;
     try {
-      for (_iterator105.s(); !(_step105 = _iterator105.n()).done;) {
-        var f = _step105.value;
+      for (_iterator106.s(); !(_step106 = _iterator106.n()).done;) {
+        var f = _step106.value;
         fileLookup[f.file_id] = f;
       }
     } catch (err) {
-      _iterator105.e(err);
+      _iterator106.e(err);
     } finally {
-      _iterator105.f();
+      _iterator106.f();
     }
-    var topMisses = Object.entries(missByQid).map(function (_ref131) {
-      var _ref132 = _slicedToArray(_ref131, 2),
-        qid = _ref132[0],
-        misses = _ref132[1];
+    var topMisses = Object.entries(missByQid).map(function (_ref133) {
+      var _ref134 = _slicedToArray(_ref133, 2),
+        qid = _ref134[0],
+        misses = _ref134[1];
       var q = qLookup[qid];
       var text = q ? q.mode === 'mc' ? q.question : q.prompt : qid;
       var chapter = q && fileLookup[q.file_id] ? fileLookup[q.file_id].chapter : '—';
@@ -20868,10 +21053,10 @@ function StatsView() {
     className: "font-semibold mb-3 text-[var(--text-strong)]"
   }, "By subject"), /*#__PURE__*/React.createElement("div", {
     className: "space-y-3"
-  }, Object.entries(stats.bySubject).map(function (_ref133) {
-    var _ref134 = _slicedToArray(_ref133, 2),
-      subject = _ref134[0],
-      s = _ref134[1];
+  }, Object.entries(stats.bySubject).map(function (_ref135) {
+    var _ref136 = _slicedToArray(_ref135, 2),
+      subject = _ref136[0],
+      s = _ref136[1];
     return /*#__PURE__*/React.createElement(StatBar, {
       key: subject,
       label: subject,
@@ -20884,16 +21069,16 @@ function StatsView() {
     className: "font-semibold mb-3 text-[var(--text-strong)]"
   }, "By chapter"), /*#__PURE__*/React.createElement("div", {
     className: "space-y-3"
-  }, Object.entries(stats.byChapter).sort(function (_ref135, _ref136) {
-    var _ref137 = _slicedToArray(_ref135, 2),
-      a = _ref137[1];
-    var _ref138 = _slicedToArray(_ref136, 2),
-      b = _ref138[1];
+  }, Object.entries(stats.byChapter).sort(function (_ref137, _ref138) {
+    var _ref139 = _slicedToArray(_ref137, 2),
+      a = _ref139[1];
+    var _ref140 = _slicedToArray(_ref138, 2),
+      b = _ref140[1];
     return a.correct / a.total - b.correct / b.total;
-  }).map(function (_ref139) {
-    var _ref140 = _slicedToArray(_ref139, 2),
-      fid = _ref140[0],
-      s = _ref140[1];
+  }).map(function (_ref141) {
+    var _ref142 = _slicedToArray(_ref141, 2),
+      fid = _ref142[0],
+      s = _ref142[1];
     return /*#__PURE__*/React.createElement(StatBar, {
       key: fid,
       label: "".concat(s.subject, " \u2014 ").concat(s.chapter),
@@ -20933,8 +21118,8 @@ function StatsView() {
 }
 
 // ---------- settings ----------
-function SettingsPanel(_ref141) {
-  var onClose = _ref141.onClose;
+function SettingsPanel(_ref143) {
+  var onClose = _ref143.onClose;
   var _useApp26 = useApp(),
     palette = _useApp26.palette,
     mode = _useApp26.mode,
@@ -20985,52 +21170,52 @@ function SettingsPanel(_ref141) {
     keyBusy = _useState368[0],
     setKeyBusy = _useState368[1];
   var saveKey = /*#__PURE__*/function () {
-    var _ref142 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee58() {
+    var _ref144 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee58() {
       var trimmed, _t48;
-      return _regenerator().w(function (_context63) {
-        while (1) switch (_context63.p = _context63.n) {
+      return _regenerator().w(function (_context64) {
+        while (1) switch (_context64.p = _context64.n) {
           case 0:
             trimmed = keyVal.trim();
             if (trimmed) {
-              _context63.n = 1;
+              _context64.n = 1;
               break;
             }
             setApiKey('');
-            return _context63.a(2);
+            return _context64.a(2);
           case 1:
             if (trimmed.startsWith('AIza')) {
-              _context63.n = 2;
+              _context64.n = 2;
               break;
             }
             setKeyErr('Google AI keys start with AIza.');
-            return _context63.a(2);
+            return _context64.a(2);
           case 2:
             setKeyBusy(true);
             setKeyErr('');
             storage.set(KEYS.apiKey, trimmed);
-            _context63.p = 3;
-            _context63.n = 4;
+            _context64.p = 3;
+            _context64.n = 4;
             return client.ping();
           case 4:
             setApiKey(trimmed);
-            _context63.n = 6;
+            _context64.n = 6;
             break;
           case 5:
-            _context63.p = 5;
-            _t48 = _context63.v;
+            _context64.p = 5;
+            _t48 = _context64.v;
             storage.remove(KEYS.apiKey);
             setKeyErr("Key rejected: ".concat(_t48.message));
           case 6:
-            _context63.p = 6;
+            _context64.p = 6;
             setKeyBusy(false);
-            return _context63.f(6);
+            return _context64.f(6);
           case 7:
-            return _context63.a(2);
+            return _context64.a(2);
         }
       }, _callee58, null, [[3, 5, 6, 7]]);
     }));
     return function saveKey() {
-      return _ref142.apply(this, arguments);
+      return _ref144.apply(this, arguments);
     };
   }();
   var paletteOpts = [['cold', '❄️', 'Cold'], ['warm', '🍂', 'Warm'], ['duo', '🗿', 'Rio'], ['tropical', '🌴', 'Tropical'], ['madison', '🏛️', 'Madison'], ['gambit', '🃏', 'Gambit']];
@@ -21048,11 +21233,11 @@ function SettingsPanel(_ref141) {
     className: "text-xs uppercase tracking-wide text-[var(--text-muted)] mb-2"
   }, "Colour"), /*#__PURE__*/React.createElement("div", {
     className: "grid grid-cols-4 gap-2"
-  }, paletteOpts.map(function (_ref143) {
-    var _ref144 = _slicedToArray(_ref143, 3),
-      k = _ref144[0],
-      emoji = _ref144[1],
-      label = _ref144[2];
+  }, paletteOpts.map(function (_ref145) {
+    var _ref146 = _slicedToArray(_ref145, 3),
+      k = _ref146[0],
+      emoji = _ref146[1],
+      label = _ref146[2];
     return /*#__PURE__*/React.createElement("button", {
       key: k,
       onClick: function onClick() {
@@ -21068,11 +21253,11 @@ function SettingsPanel(_ref141) {
     className: "text-xs uppercase tracking-wide text-[var(--text-muted)] mt-4 mb-2"
   }, "Mode"), /*#__PURE__*/React.createElement("div", {
     className: "grid grid-cols-3 gap-2"
-  }, modeOpts.map(function (_ref145) {
-    var _ref146 = _slicedToArray(_ref145, 3),
-      k = _ref146[0],
-      emoji = _ref146[1],
-      label = _ref146[2];
+  }, modeOpts.map(function (_ref147) {
+    var _ref148 = _slicedToArray(_ref147, 3),
+      k = _ref148[0],
+      emoji = _ref148[1],
+      label = _ref148[2];
     return /*#__PURE__*/React.createElement("button", {
       key: k,
       onClick: function onClick() {
@@ -21469,11 +21654,11 @@ function EraseQuizStatsSection() {
   // before confirming a delete.
   var days = useMemo(function () {
     var dayMap = new Map();
-    var _iterator106 = _createForOfIteratorHelper(attempts),
-      _step106;
+    var _iterator107 = _createForOfIteratorHelper(attempts),
+      _step107;
     try {
-      for (_iterator106.s(); !(_step106 = _iterator106.n()).done;) {
-        var a = _step106.value;
+      for (_iterator107.s(); !(_step107 = _iterator107.n()).done;) {
+        var a = _step107.value;
         var ts = a.ts || 0;
         var d = new Date(ts);
         // Local-day key: YYYY-MM-DD in the user's tz.
@@ -21514,9 +21699,9 @@ function EraseQuizStatsSection() {
         if (a.correct) q.correct++;
       }
     } catch (err) {
-      _iterator106.e(err);
+      _iterator107.e(err);
     } finally {
-      _iterator106.f();
+      _iterator107.f();
     }
     return Array.from(dayMap.values()).map(function (b) {
       return _objectSpread(_objectSpread({}, b), {}, {
@@ -21544,27 +21729,27 @@ function EraseQuizStatsSection() {
     }) + " \xB7 ".concat(key);
   };
   var eraseDay = /*#__PURE__*/function () {
-    var _ref147 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee59(b) {
+    var _ref149 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee59(b) {
       var label, res, _res$serverDeleted;
-      return _regenerator().w(function (_context64) {
-        while (1) switch (_context64.n) {
+      return _regenerator().w(function (_context65) {
+        while (1) switch (_context65.n) {
           case 0:
             label = fmtDay(b.key, b.startOfDay);
             if (confirm("Erase ALL ".concat(b.total, " attempt").concat(b.total === 1 ? '' : 's', " from ").concat(label, "?\n\nThis removes the question history for that day from this device AND from your account on the server. It can't be undone."))) {
-              _context64.n = 1;
+              _context65.n = 1;
               break;
             }
-            return _context64.a(2);
+            return _context65.a(2);
           case 1:
             setBusy(b.key);
             setMsg(null);
-            _context64.n = 2;
+            _context65.n = 2;
             return eraseStatsFor({
               ts_gte: b.startOfDay,
               ts_lt: b.endOfDay
             });
           case 2:
-            res = _context64.v;
+            res = _context65.v;
             setBusy(null);
             if (res.ok) {
               setMsg({
@@ -21578,12 +21763,12 @@ function EraseQuizStatsSection() {
               });
             }
           case 3:
-            return _context64.a(2);
+            return _context65.a(2);
         }
       }, _callee59);
     }));
     return function eraseDay(_x60) {
-      return _ref147.apply(this, arguments);
+      return _ref149.apply(this, arguments);
     };
   }();
   return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
@@ -21674,16 +21859,16 @@ function PublishAllPanel() {
     return f.chapter_id;
   });
   var publishAll = /*#__PURE__*/function () {
-    var _ref148 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee60() {
-      var okCount, errCount, lastErr, _iterator107, _step107, _loop7, _t50;
-      return _regenerator().w(function (_context66) {
-        while (1) switch (_context66.p = _context66.n) {
+    var _ref150 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee60() {
+      var okCount, errCount, lastErr, _iterator108, _step108, _loop9, _t50;
+      return _regenerator().w(function (_context67) {
+        while (1) switch (_context67.p = _context67.n) {
           case 0:
             if (!busy) {
-              _context66.n = 1;
+              _context67.n = 1;
               break;
             }
-            return _context66.a(2);
+            return _context67.a(2);
           case 1:
             setBusy(true);
             setStatus({
@@ -21695,21 +21880,21 @@ function PublishAllPanel() {
             lastErr = {
               msg: ''
             };
-            _iterator107 = _createForOfIteratorHelper(publishable);
-            _context66.p = 2;
-            _loop7 = /*#__PURE__*/_regenerator().m(function _loop7() {
+            _iterator108 = _createForOfIteratorHelper(publishable);
+            _context67.p = 2;
+            _loop9 = /*#__PURE__*/_regenerator().m(function _loop9() {
               var f, _qb$mc, _qb$twoPart, _qb$short, chapterId, created, ext, qb, pushes, _i28, _pushes2, _pushes2$_i, stage, payload, _t49;
-              return _regenerator().w(function (_context65) {
-                while (1) switch (_context65.p = _context65.n) {
+              return _regenerator().w(function (_context66) {
+                while (1) switch (_context66.p = _context66.n) {
                   case 0:
-                    f = _step107.value;
-                    _context65.p = 1;
+                    f = _step108.value;
+                    _context66.p = 1;
                     chapterId = f.chapter_id;
                     if (chapterId) {
-                      _context65.n = 3;
+                      _context66.n = 3;
                       break;
                     }
-                    _context65.n = 2;
+                    _context66.n = 2;
                     return api.createChapter({
                       subject: f.subject,
                       title: f.chapter,
@@ -21717,7 +21902,7 @@ function PublishAllPanel() {
                       size_bytes: f.size_bytes
                     });
                   case 2:
-                    created = _context65.v;
+                    created = _context66.v;
                     chapterId = created.id;
                     // eslint-disable-next-line no-loop-func
                     setFiles(function (prev) {
@@ -21738,51 +21923,51 @@ function PublishAllPanel() {
                     _i28 = 0, _pushes2 = pushes;
                   case 4:
                     if (!(_i28 < _pushes2.length)) {
-                      _context65.n = 6;
+                      _context66.n = 6;
                       break;
                     }
                     _pushes2$_i = _slicedToArray(_pushes2[_i28], 2), stage = _pushes2$_i[0], payload = _pushes2$_i[1];
-                    _context65.n = 5;
+                    _context66.n = 5;
                     return api.putChapterStage(chapterId, stage, payload);
                   case 5:
                     _i28++;
-                    _context65.n = 4;
+                    _context66.n = 4;
                     break;
                   case 6:
                     okCount++;
-                    _context65.n = 8;
+                    _context66.n = 8;
                     break;
                   case 7:
-                    _context65.p = 7;
-                    _t49 = _context65.v;
+                    _context66.p = 7;
+                    _t49 = _context66.v;
                     errCount++;
                     lastErr.msg = _t49.message;
                   case 8:
-                    return _context65.a(2);
+                    return _context66.a(2);
                 }
-              }, _loop7, null, [[1, 7]]);
+              }, _loop9, null, [[1, 7]]);
             });
-            _iterator107.s();
+            _iterator108.s();
           case 3:
-            if ((_step107 = _iterator107.n()).done) {
-              _context66.n = 5;
+            if ((_step108 = _iterator108.n()).done) {
+              _context67.n = 5;
               break;
             }
-            return _context66.d(_regeneratorValues(_loop7()), 4);
+            return _context67.d(_regeneratorValues(_loop9()), 4);
           case 4:
-            _context66.n = 3;
+            _context67.n = 3;
             break;
           case 5:
-            _context66.n = 7;
+            _context67.n = 7;
             break;
           case 6:
-            _context66.p = 6;
-            _t50 = _context66.v;
-            _iterator107.e(_t50);
+            _context67.p = 6;
+            _t50 = _context67.v;
+            _iterator108.e(_t50);
           case 7:
-            _context66.p = 7;
-            _iterator107.f();
-            return _context66.f(7);
+            _context67.p = 7;
+            _iterator108.f();
+            return _context67.f(7);
           case 8:
             setBusy(false);
             if (errCount === 0) {
@@ -21797,12 +21982,12 @@ function PublishAllPanel() {
               });
             }
           case 9:
-            return _context66.a(2);
+            return _context67.a(2);
         }
       }, _callee60, null, [[2, 6, 7, 8]]);
     }));
     return function publishAll() {
-      return _ref148.apply(this, arguments);
+      return _ref150.apply(this, arguments);
     };
   }();
   return /*#__PURE__*/React.createElement("div", {
@@ -21910,26 +22095,26 @@ function FlagFixesPanel() {
     return (err === null || err === void 0 ? void 0 : err.status) === 429 || /quota|rate.?limit|exceeded/i.test((err === null || err === void 0 ? void 0 : err.message) || '');
   };
   var runPipeline = /*#__PURE__*/function () {
-    var _ref149 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee61() {
-      var current, processedCount, _iterator108, _step108, _loop8, _ret3, _t54;
-      return _regenerator().w(function (_context68) {
-        while (1) switch (_context68.p = _context68.n) {
+    var _ref151 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee61() {
+      var current, processedCount, _iterator109, _step109, _loop0, _ret5, _t54;
+      return _regenerator().w(function (_context69) {
+        while (1) switch (_context69.p = _context69.n) {
           case 0:
             if (apiKey) {
-              _context68.n = 1;
+              _context69.n = 1;
               break;
             }
             setStatus({
               kind: 'err',
               msg: 'Add a Gemini API key in Settings first.'
             });
-            return _context68.a(2);
+            return _context69.a(2);
           case 1:
             if (pending.length) {
-              _context68.n = 2;
+              _context69.n = 2;
               break;
             }
-            return _context68.a(2);
+            return _context69.a(2);
           case 2:
             setBusy(true);
             setStatus({
@@ -21939,36 +22124,36 @@ function FlagFixesPanel() {
             setProcessedLog([]);
             current = _toConsumableArray(queue);
             processedCount = 0;
-            _iterator108 = _createForOfIteratorHelper(pending);
-            _context68.p = 3;
-            _loop8 = /*#__PURE__*/_regenerator().m(function _loop8() {
+            _iterator109 = _createForOfIteratorHelper(pending);
+            _context69.p = 3;
+            _loop0 = /*#__PURE__*/_regenerator().m(function _loop0() {
               var flag, fix, fileId, qbank, cleanParts, nextTp, nextMc, updated, _fix$choices3, _updated, _t51, _t52, _t53;
-              return _regenerator().w(function (_context67) {
-                while (1) switch (_context67.p = _context67.n) {
+              return _regenerator().w(function (_context68) {
+                while (1) switch (_context68.p = _context68.n) {
                   case 0:
-                    flag = _step108.value;
-                    _context67.p = 1;
+                    flag = _step109.value;
+                    _context68.p = 1;
                     setStatus({
                       kind: 'info',
                       msg: "Fixing \"".concat((flag.question_snapshot.question || flag.question_snapshot.prompt || flag.question_snapshot.theme || flag.question_id).slice(0, 60), "\u2026\"")
                     });
-                    _context67.n = 2;
+                    _context68.n = 2;
                     return client.fixFlaggedQuestion({
                       question: flag.question_snapshot,
                       flagDescription: flag.description,
                       chapterContext: flag.chapter_label
                     });
                   case 2:
-                    fix = _context67.v;
+                    fix = _context68.v;
                     // Apply the fix locally and to the server (if logged in + chapter exists on bank).
                     fileId = flag.file_id;
                     qbank = questions[fileId];
                     if (!fix.two_part) {
-                      _context67.n = 7;
+                      _context68.n = 7;
                       break;
                     }
                     if (!(qbank !== null && qbank !== void 0 && qbank.twoPart && fix.action === 'edit' && Array.isArray(fix.parts) && fix.parts.length === 2)) {
-                      _context67.n = 6;
+                      _context68.n = 6;
                       break;
                     }
                     cleanParts = fix.parts.map(function (p) {
@@ -21988,31 +22173,31 @@ function FlagFixesPanel() {
                       }) : it;
                     });
                     if (!(nextTp !== qbank.twoPart)) {
-                      _context67.n = 6;
+                      _context68.n = 6;
                       break;
                     }
                     setQuestionsFor(fileId, _objectSpread(_objectSpread({}, qbank), {}, {
                       twoPart: nextTp
                     }));
                     if (!(flag.chapter_id && session)) {
-                      _context67.n = 6;
+                      _context68.n = 6;
                       break;
                     }
-                    _context67.p = 3;
-                    _context67.n = 4;
+                    _context68.p = 3;
+                    _context68.n = 4;
                     return api.putChapterStage(flag.chapter_id, 'two_part', nextTp);
                   case 4:
-                    _context67.n = 6;
+                    _context68.n = 6;
                     break;
                   case 5:
-                    _context67.p = 5;
-                    _t51 = _context67.v;
+                    _context68.p = 5;
+                    _t51 = _context68.v;
                   case 6:
-                    _context67.n = 11;
+                    _context68.n = 11;
                     break;
                   case 7:
                     if (!(qbank !== null && qbank !== void 0 && qbank.mc)) {
-                      _context67.n = 11;
+                      _context68.n = 11;
                       break;
                     }
                     // ---- single MC question fix: update qbank.mc ----
@@ -22033,25 +22218,25 @@ function FlagFixesPanel() {
                     }
                     // No delete branch — every question (especially term-coverage) must be preserved.
                     if (!(nextMc !== qbank.mc)) {
-                      _context67.n = 11;
+                      _context68.n = 11;
                       break;
                     }
                     setQuestionsFor(fileId, _objectSpread(_objectSpread({}, qbank), {}, {
                       mc: nextMc
                     }));
                     if (!(flag.chapter_id && session)) {
-                      _context67.n = 11;
+                      _context68.n = 11;
                       break;
                     }
-                    _context67.p = 8;
-                    _context67.n = 9;
+                    _context68.p = 8;
+                    _context68.n = 9;
                     return api.putChapterStage(flag.chapter_id, 'mc', nextMc);
                   case 9:
-                    _context67.n = 11;
+                    _context68.n = 11;
                     break;
                   case 10:
-                    _context67.p = 10;
-                    _t52 = _context67.v;
+                    _context68.p = 10;
+                    _t52 = _context68.v;
                   case 11:
                     updated = current.find(function (f) {
                       return f.id === flag.id;
@@ -22080,13 +22265,13 @@ function FlagFixesPanel() {
                       }]);
                     });
                     processedCount++;
-                    _context67.n = 14;
+                    _context68.n = 14;
                     break;
                   case 12:
-                    _context67.p = 12;
-                    _t53 = _context67.v;
+                    _context68.p = 12;
+                    _t53 = _context68.v;
                     if (!isRateLimit(_t53)) {
-                      _context67.n = 13;
+                      _context68.n = 13;
                       break;
                     }
                     setStatus({
@@ -22095,7 +22280,7 @@ function FlagFixesPanel() {
                     });
                     saveQueue(current);
                     setBusy(false);
-                    return _context67.a(2, {
+                    return _context68.a(2, {
                       v: void 0
                     });
                   case 13:
@@ -22107,38 +22292,38 @@ function FlagFixesPanel() {
                       _updated.error = _t53.message;
                     }
                   case 14:
-                    return _context67.a(2);
+                    return _context68.a(2);
                 }
-              }, _loop8, null, [[8, 10], [3, 5], [1, 12]]);
+              }, _loop0, null, [[8, 10], [3, 5], [1, 12]]);
             });
-            _iterator108.s();
+            _iterator109.s();
           case 4:
-            if ((_step108 = _iterator108.n()).done) {
-              _context68.n = 7;
+            if ((_step109 = _iterator109.n()).done) {
+              _context69.n = 7;
               break;
             }
-            return _context68.d(_regeneratorValues(_loop8()), 5);
+            return _context69.d(_regeneratorValues(_loop0()), 5);
           case 5:
-            _ret3 = _context68.v;
-            if (!_ret3) {
-              _context68.n = 6;
+            _ret5 = _context69.v;
+            if (!_ret5) {
+              _context69.n = 6;
               break;
             }
-            return _context68.a(2, _ret3.v);
+            return _context69.a(2, _ret5.v);
           case 6:
-            _context68.n = 4;
+            _context69.n = 4;
             break;
           case 7:
-            _context68.n = 9;
+            _context69.n = 9;
             break;
           case 8:
-            _context68.p = 8;
-            _t54 = _context68.v;
-            _iterator108.e(_t54);
+            _context69.p = 8;
+            _t54 = _context69.v;
+            _iterator109.e(_t54);
           case 9:
-            _context68.p = 9;
-            _iterator108.f();
-            return _context68.f(9);
+            _context69.p = 9;
+            _iterator109.f();
+            return _context69.f(9);
           case 10:
             saveQueue(current);
             setStatus({
@@ -22147,12 +22332,12 @@ function FlagFixesPanel() {
             });
             setBusy(false);
           case 11:
-            return _context68.a(2);
+            return _context69.a(2);
         }
       }, _callee61, null, [[3, 8, 9, 10]]);
     }));
     return function runPipeline() {
-      return _ref149.apply(this, arguments);
+      return _ref151.apply(this, arguments);
     };
   }();
   if (!queue.length) return null;
@@ -22197,11 +22382,11 @@ function FlagFixesPanel() {
     });
   })));
 }
-function FlagRow(_ref150) {
+function FlagRow(_ref152) {
   var _f$question_snapshot, _f$question_snapshot2, _f$question_snapshot3, _f$question_snapshot4;
-  var f = _ref150.flag,
-    onRemove = _ref150.onRemove,
-    onRequeue = _ref150.onRequeue;
+  var f = _ref152.flag,
+    onRemove = _ref152.onRemove,
+    onRequeue = _ref152.onRequeue;
   var _useState389 = useState(false),
     _useState390 = _slicedToArray(_useState389, 2),
     amending = _useState390[0],
@@ -22331,17 +22516,17 @@ function CloudBankPanel() {
     return extractions[f.file_id] && ((_questions$f$file_id9 = questions[f.file_id]) === null || _questions$f$file_id9 === void 0 ? void 0 : _questions$f$file_id9.mc);
   });
   var publish = /*#__PURE__*/function () {
-    var _ref151 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee62() {
+    var _ref153 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee62() {
       var bank, res, _t55;
-      return _regenerator().w(function (_context69) {
-        while (1) switch (_context69.p = _context69.n) {
+      return _regenerator().w(function (_context70) {
+        while (1) switch (_context70.p = _context70.n) {
           case 0:
             setBusy(true);
             setStatus({
               state: 'pushing',
               message: 'Uploading…'
             });
-            _context69.p = 1;
+            _context70.p = 1;
             bank = JSON.stringify({
               version: 1,
               exported_at: new Date().toISOString(),
@@ -22350,10 +22535,10 @@ function CloudBankPanel() {
               extractions,
               questions
             });
-            _context69.n = 2;
+            _context70.n = 2;
             return api.putBank(bank);
           case 2:
-            res = _context69.v;
+            res = _context70.v;
             setRemote({
               size_bytes: res.size_bytes,
               updated_at: res.updated_at,
@@ -22363,50 +22548,50 @@ function CloudBankPanel() {
               state: 'ok',
               message: "Published ".concat((res.size_bytes / 1024).toFixed(1), " KB")
             });
-            _context69.n = 4;
+            _context70.n = 4;
             break;
           case 3:
-            _context69.p = 3;
-            _t55 = _context69.v;
+            _context70.p = 3;
+            _t55 = _context70.v;
             setStatus({
               state: 'err',
               message: _t55.message
             });
           case 4:
-            _context69.p = 4;
+            _context70.p = 4;
             setBusy(false);
-            return _context69.f(4);
+            return _context70.f(4);
           case 5:
-            return _context69.a(2);
+            return _context70.a(2);
         }
       }, _callee62, null, [[1, 3, 4, 5]]);
     }));
     return function publish() {
-      return _ref151.apply(this, arguments);
+      return _ref153.apply(this, arguments);
     };
   }();
   var pull = /*#__PURE__*/function () {
-    var _ref152 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee63() {
+    var _ref154 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee63() {
       var bank, _i29, _Object$keys4, fid, _i30, _Object$keys5, _fid, n, _t56;
-      return _regenerator().w(function (_context70) {
-        while (1) switch (_context70.p = _context70.n) {
+      return _regenerator().w(function (_context71) {
+        while (1) switch (_context71.p = _context71.n) {
           case 0:
             if (confirm('Replace your local question bank with the cloud copy?')) {
-              _context70.n = 1;
+              _context71.n = 1;
               break;
             }
-            return _context70.a(2);
+            return _context71.a(2);
           case 1:
             setBusy(true);
             setStatus({
               state: 'pulling',
               message: 'Downloading…'
             });
-            _context70.p = 2;
-            _context70.n = 3;
+            _context71.p = 2;
+            _context71.n = 3;
             return api.getMyBank();
           case 3:
-            bank = _context70.v;
+            bank = _context71.v;
             setFiles(bank.files || []);
             // setExtraction / setQuestionsFor write per-key; bulk-replace via direct storage.
             storage.set(KEYS.extractions, bank.extractions || {});
@@ -22425,26 +22610,26 @@ function CloudBankPanel() {
               state: 'ok',
               message: "Pulled ".concat(n, " chapter").concat(n === 1 ? '' : 's')
             });
-            _context70.n = 5;
+            _context71.n = 5;
             break;
           case 4:
-            _context70.p = 4;
-            _t56 = _context70.v;
+            _context71.p = 4;
+            _t56 = _context71.v;
             setStatus({
               state: 'err',
               message: _t56.message
             });
           case 5:
-            _context70.p = 5;
+            _context71.p = 5;
             setBusy(false);
-            return _context70.f(5);
+            return _context71.f(5);
           case 6:
-            return _context70.a(2);
+            return _context71.a(2);
         }
       }, _callee63, null, [[2, 4, 5, 6]]);
     }));
     return function pull() {
-      return _ref152.apply(this, arguments);
+      return _ref154.apply(this, arguments);
     };
   }();
   var remoteAge = remote ? function () {
@@ -22486,10 +22671,10 @@ function CloudBankPanel() {
     className: "text-xs text-[var(--text-faint)]"
   }, "No locally processed chapters \u2014 process some in the Library, or pull from cloud if you have one."));
 }
-function exportBank(_ref153) {
-  var files = _ref153.files,
-    extractions = _ref153.extractions,
-    questions = _ref153.questions;
+function exportBank(_ref155) {
+  var files = _ref155.files,
+    extractions = _ref155.extractions,
+    questions = _ref155.questions;
   var data = {
     version: 1,
     exported_at: new Date().toISOString(),
@@ -22512,8 +22697,8 @@ function exportBank(_ref153) {
 }
 
 // ---------- account ----------
-function AccountPanel(_ref154) {
-  var onClose = _ref154.onClose;
+function AccountPanel(_ref156) {
+  var onClose = _ref156.onClose;
   var _useApp31 = useApp(),
     session = _useApp31.session,
     setSession = _useApp31.setSession,
@@ -22550,22 +22735,22 @@ function AccountPanel(_ref154) {
     }, "@", session.username)), /*#__PURE__*/React.createElement("button", {
       onClick: /*#__PURE__*/_asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee64() {
         var _t57;
-        return _regenerator().w(function (_context71) {
-          while (1) switch (_context71.p = _context71.n) {
+        return _regenerator().w(function (_context72) {
+          while (1) switch (_context72.p = _context72.n) {
             case 0:
-              _context71.p = 0;
-              _context71.n = 1;
+              _context72.p = 0;
+              _context72.n = 1;
               return api.logout();
             case 1:
-              _context71.n = 3;
+              _context72.n = 3;
               break;
             case 2:
-              _context71.p = 2;
-              _t57 = _context71.v;
+              _context72.p = 2;
+              _t57 = _context72.v;
             case 3:
               setSession(null);
             case 4:
-              return _context71.a(2);
+              return _context72.a(2);
           }
         }, _callee64, null, [[0, 2]]);
       })),
@@ -22573,49 +22758,49 @@ function AccountPanel(_ref154) {
     }, "Log out")));
   }
   var submit = /*#__PURE__*/function () {
-    var _ref156 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee65() {
+    var _ref158 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee65() {
       var res, _t58, _t59;
-      return _regenerator().w(function (_context72) {
-        while (1) switch (_context72.p = _context72.n) {
+      return _regenerator().w(function (_context73) {
+        while (1) switch (_context73.p = _context73.n) {
           case 0:
             setErr('');
             if (/^[a-zA-Z0-9_]{3,20}$/.test(username)) {
-              _context72.n = 1;
+              _context73.n = 1;
               break;
             }
             setErr('Username must be 3-20 chars (letters, digits, underscore).');
-            return _context72.a(2);
+            return _context73.a(2);
           case 1:
             if (/^\d{4}$/.test(pin)) {
-              _context72.n = 2;
+              _context73.n = 2;
               break;
             }
             setErr('PIN must be exactly 4 digits.');
-            return _context72.a(2);
+            return _context73.a(2);
           case 2:
             setBusy(true);
-            _context72.p = 3;
+            _context73.p = 3;
             if (!(mode === 'signup')) {
-              _context72.n = 5;
+              _context73.n = 5;
               break;
             }
-            _context72.n = 4;
+            _context73.n = 4;
             return api.signup({
               username,
               pin
             });
           case 4:
-            _t58 = _context72.v;
-            _context72.n = 7;
+            _t58 = _context73.v;
+            _context73.n = 7;
             break;
           case 5:
-            _context72.n = 6;
+            _context73.n = 6;
             return api.login({
               username,
               pin
             });
           case 6:
-            _t58 = _context72.v;
+            _t58 = _context73.v;
           case 7:
             res = _t58;
             setSession({
@@ -22624,33 +22809,33 @@ function AccountPanel(_ref154) {
             });
             setPin('');
             onClose === null || onClose === void 0 || onClose();
-            _context72.n = 9;
+            _context73.n = 9;
             break;
           case 8:
-            _context72.p = 8;
-            _t59 = _context72.v;
+            _context73.p = 8;
+            _t59 = _context73.v;
             setErr(_t59.message);
           case 9:
-            _context72.p = 9;
+            _context73.p = 9;
             setBusy(false);
-            return _context72.f(9);
+            return _context73.f(9);
           case 10:
-            return _context72.a(2);
+            return _context73.a(2);
         }
       }, _callee65, null, [[3, 8, 9, 10]]);
     }));
     return function submit() {
-      return _ref156.apply(this, arguments);
+      return _ref158.apply(this, arguments);
     };
   }();
   return /*#__PURE__*/React.createElement("div", {
     className: "bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-5 max-w-sm mx-auto"
   }, /*#__PURE__*/React.createElement("div", {
     className: "flex gap-1 mb-4"
-  }, [['login', 'Log in'], ['signup', 'Sign up']].map(function (_ref157) {
-    var _ref158 = _slicedToArray(_ref157, 2),
-      k = _ref158[0],
-      label = _ref158[1];
+  }, [['login', 'Log in'], ['signup', 'Sign up']].map(function (_ref159) {
+    var _ref160 = _slicedToArray(_ref159, 2),
+      k = _ref160[0],
+      label = _ref160[1];
     return /*#__PURE__*/React.createElement("button", {
       key: k,
       onClick: function onClick() {
@@ -22702,8 +22887,8 @@ function AccountPanel(_ref154) {
 function pct(c, t) {
   return t ? Math.round(c / t * 100) : 0;
 }
-function Leaderboard(_ref159) {
-  var onPickUser = _ref159.onPickUser;
+function Leaderboard(_ref161) {
+  var onPickUser = _ref161.onPickUser;
   var _useApp32 = useApp(),
     api = _useApp32.api;
   var _useState409 = useState(null),
@@ -22760,9 +22945,9 @@ function Leaderboard(_ref159) {
     }, pct(u.correct, u.total), "%")));
   })));
 }
-function ServerStatsPayload(_ref160) {
+function ServerStatsPayload(_ref162) {
   var _data$bySubject, _data$byChapter, _data$byMode;
-  var data = _ref160.data;
+  var data = _ref162.data;
   if (!data) return null;
   var overall = data.overall || {
     total: 0,
@@ -22785,17 +22970,17 @@ function ServerStatsPayload(_ref160) {
   var days = [];
   for (var i = 6; i >= 0; i--) days.push(today - i);
   var dailyByBucket = {};
-  var _iterator109 = _createForOfIteratorHelper(data.daily || []),
-    _step109;
+  var _iterator110 = _createForOfIteratorHelper(data.daily || []),
+    _step110;
   try {
-    for (_iterator109.s(); !(_step109 = _iterator109.n()).done;) {
-      var d = _step109.value;
+    for (_iterator110.s(); !(_step110 = _iterator110.n()).done;) {
+      var d = _step110.value;
       dailyByBucket[d.day_bucket] = d;
     }
   } catch (err) {
-    _iterator109.e(err);
+    _iterator110.e(err);
   } finally {
-    _iterator109.f();
+    _iterator110.f();
   }
   var dailySeries = days.map(function (b) {
     var r = dailyByBucket[b];
@@ -22917,9 +23102,9 @@ function ServerStatsPayload(_ref160) {
 }
 
 // ---------- audit modal: Gemini correctness check (no deletion) ----------
-function AuditModal(_ref161) {
-  var chapter = _ref161.chapter,
-    onClose = _ref161.onClose;
+function AuditModal(_ref163) {
+  var chapter = _ref163.chapter,
+    onClose = _ref163.onClose;
   var _useApp33 = useApp(),
     api = _useApp33.api,
     client = _useApp33.client,
@@ -22968,20 +23153,20 @@ function AuditModal(_ref161) {
     return f.chapter_id === chapter.id;
   });
   var runVerify = /*#__PURE__*/function () {
-    var _ref162 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee66() {
+    var _ref164 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee66() {
       var mcOnly, results, flagged, _t60, _t61;
-      return _regenerator().w(function (_context73) {
-        while (1) switch (_context73.p = _context73.n) {
+      return _regenerator().w(function (_context74) {
+        while (1) switch (_context74.p = _context74.n) {
           case 0:
             if (apiKey) {
-              _context73.n = 1;
+              _context74.n = 1;
               break;
             }
             setStatus({
               kind: 'err',
               msg: 'Add a Gemini API key in Settings first.'
             });
-            return _context73.a(2);
+            return _context74.a(2);
           case 1:
             setPhase('verifying');
             setFlags([]);
@@ -22989,15 +23174,15 @@ function AuditModal(_ref161) {
               kind: 'info',
               msg: "Checking ".concat(mc.length, " MC questions\u2026")
             });
-            _context73.p = 2;
+            _context74.p = 2;
             mcOnly = mc.filter(function (q) {
               var _q$choices;
               return q.mode === 'mc' && ((_q$choices = q.choices) === null || _q$choices === void 0 ? void 0 : _q$choices.length) === 4;
             });
-            _context73.n = 3;
+            _context74.n = 3;
             return client.auditQuestions(mcOnly);
           case 3:
-            results = _context73.v;
+            results = _context74.v;
             flagged = results.filter(function (r) {
               return !r.correct;
             }).map(function (r) {
@@ -23008,17 +23193,17 @@ function AuditModal(_ref161) {
             setFlags(flagged);
             setPhase('done');
             // Mark the chapter as audited even if no issues found.
-            _context73.p = 4;
-            _context73.n = 5;
+            _context74.p = 4;
+            _context74.n = 5;
             return api.putChapterStage(chapter.id, 'audited', {
               ts: Date.now()
             });
           case 5:
-            _context73.n = 7;
+            _context74.n = 7;
             break;
           case 6:
-            _context73.p = 6;
-            _t60 = _context73.v;
+            _context74.p = 6;
+            _t60 = _context74.v;
           case 7:
             if (!flagged.length) setStatus({
               kind: 'ok',
@@ -23027,30 +23212,30 @@ function AuditModal(_ref161) {
               kind: 'warn',
               msg: "".concat(flagged.length, " question(s) may have wrong correct_index.")
             });
-            _context73.n = 9;
+            _context74.n = 9;
             break;
           case 8:
-            _context73.p = 8;
-            _t61 = _context73.v;
+            _context74.p = 8;
+            _t61 = _context74.v;
             setStatus({
               kind: 'err',
               msg: _t61.message
             });
             setPhase('ready');
           case 9:
-            return _context73.a(2);
+            return _context74.a(2);
         }
       }, _callee66, null, [[4, 6], [2, 8]]);
     }));
     return function runVerify() {
-      return _ref162.apply(this, arguments);
+      return _ref164.apply(this, arguments);
     };
   }();
   var acceptFix = /*#__PURE__*/function () {
-    var _ref163 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee67(flag) {
+    var _ref165 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee67(flag) {
       var updated, qbank, localUpdated, _t62;
-      return _regenerator().w(function (_context74) {
-        while (1) switch (_context74.p = _context74.n) {
+      return _regenerator().w(function (_context75) {
+        while (1) switch (_context75.p = _context75.n) {
           case 0:
             updated = mc.map(function (q) {
               return q === flag.q ? _objectSpread(_objectSpread({}, q), {}, {
@@ -23058,8 +23243,8 @@ function AuditModal(_ref161) {
               }) : q;
             });
             setMc(updated);
-            _context74.p = 1;
-            _context74.n = 2;
+            _context75.p = 1;
+            _context75.n = 2;
             return api.putChapterStage(chapter.id, 'mc', updated);
           case 2:
             // Also patch the local library copy if the user has this chapter downloaded.
@@ -23083,22 +23268,22 @@ function AuditModal(_ref161) {
               kind: 'ok',
               msg: "Fixed correct_index for \"".concat(flag.q.question.slice(0, 50), "\u2026\"")
             });
-            _context74.n = 4;
+            _context75.n = 4;
             break;
           case 3:
-            _context74.p = 3;
-            _t62 = _context74.v;
+            _context75.p = 3;
+            _t62 = _context75.v;
             setStatus({
               kind: 'err',
               msg: _t62.message
             });
           case 4:
-            return _context74.a(2);
+            return _context75.a(2);
         }
       }, _callee67, null, [[1, 3]]);
     }));
     return function acceptFix(_x61) {
-      return _ref163.apply(this, arguments);
+      return _ref165.apply(this, arguments);
     };
   }();
   return /*#__PURE__*/React.createElement("div", {
@@ -23179,9 +23364,9 @@ function AuditModal(_ref161) {
 }
 
 // ---------- collaborative bank (chapters) ----------
-function StageDot(_ref164) {
-  var stage = _ref164.stage,
-    label = _ref164.label;
+function StageDot(_ref166) {
+  var stage = _ref166.stage,
+    label = _ref166.label;
   var done = stage === null || stage === void 0 ? void 0 : stage.done;
   var partial = (stage === null || stage === void 0 ? void 0 : stage.terms_missing) > 0;
   var cls = done && !partial ? 'bg-[var(--success-bg-strong)] text-[var(--success-text)] border-[var(--success-border)]' : done && partial ? 'bg-[var(--warning-bg)] text-[var(--warning-text)] border-[var(--warning-text-strong)]' : 'bg-[var(--bg-elev)] text-[var(--text-faint)] border-[var(--border)]';
@@ -23194,16 +23379,16 @@ function StageDot(_ref164) {
     className: "text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded border ".concat(cls)
   }, label, (stage === null || stage === void 0 ? void 0 : stage.count) != null ? " ".concat(stage.count) : '');
 }
-function ChapterRow(_ref165) {
+function ChapterRow(_ref167) {
   var _s$extraction, _chapter$stages, _chapter$stages2, _chapter$stages3, _chapter$stages4, _chapter$stages5;
-  var chapter = _ref165.chapter,
-    onDownload = _ref165.onDownload,
-    onContribute = _ref165.onContribute,
-    onAudit = _ref165.onAudit,
-    busy = _ref165.busy,
-    downloaded = _ref165.downloaded,
-    canContribute = _ref165.canContribute,
-    contributorMode = _ref165.contributorMode;
+  var chapter = _ref167.chapter,
+    onDownload = _ref167.onDownload,
+    onContribute = _ref167.onContribute,
+    onAudit = _ref167.onAudit,
+    busy = _ref167.busy,
+    downloaded = _ref167.downloaded,
+    canContribute = _ref167.canContribute,
+    contributorMode = _ref167.contributorMode;
   var ago = function () {
     var ms = Date.now() - chapter.updated_at;
     var m = Math.round(ms / 60000);
@@ -23383,15 +23568,15 @@ function BankTab() {
     }
   }, [data, seenAt]);
   var downloadOne = /*#__PURE__*/function () {
-    var _ref166 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee68(chapter) {
+    var _ref168 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee68(chapter) {
       var full, localFileId, fileRecord;
-      return _regenerator().w(function (_context75) {
-        while (1) switch (_context75.n) {
+      return _regenerator().w(function (_context76) {
+        while (1) switch (_context76.n) {
           case 0:
-            _context75.n = 1;
+            _context76.n = 1;
             return api.getChapter(chapter.id);
           case 1:
-            full = _context75.v;
+            full = _context76.v;
             localFileId = "chap_".concat(full.id);
             fileRecord = {
               file_id: localFileId,
@@ -23417,59 +23602,59 @@ function BankTab() {
               short: full.short || [],
               generated_at: new Date(full.updated_at).toISOString()
             });
-            return _context75.a(2, full);
+            return _context76.a(2, full);
         }
       }, _callee68);
     }));
     return function downloadOne(_x62) {
-      return _ref166.apply(this, arguments);
+      return _ref168.apply(this, arguments);
     };
   }();
   var downloadChapter = /*#__PURE__*/function () {
-    var _ref167 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee69(chapter) {
+    var _ref169 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee69(chapter) {
       var full, _t63;
-      return _regenerator().w(function (_context76) {
-        while (1) switch (_context76.p = _context76.n) {
+      return _regenerator().w(function (_context77) {
+        while (1) switch (_context77.p = _context77.n) {
           case 0:
             if (!busyId) {
-              _context76.n = 1;
+              _context77.n = 1;
               break;
             }
-            return _context76.a(2);
+            return _context77.a(2);
           case 1:
             setBusyId(chapter.id);
             setBusyKind('downloading');
             setStatus(null);
-            _context76.p = 2;
-            _context76.n = 3;
+            _context77.p = 2;
+            _context77.n = 3;
             return downloadOne(chapter);
           case 3:
-            full = _context76.v;
+            full = _context77.v;
             setStatus({
               kind: 'ok',
               msg: "Downloaded \"".concat(full.title, "\"")
             });
-            _context76.n = 5;
+            _context77.n = 5;
             break;
           case 4:
-            _context76.p = 4;
-            _t63 = _context76.v;
+            _context77.p = 4;
+            _t63 = _context77.v;
             setStatus({
               kind: 'err',
               msg: _t63.message
             });
           case 5:
-            _context76.p = 5;
+            _context77.p = 5;
             setBusyId(null);
             setBusyKind(null);
-            return _context76.f(5);
+            return _context77.f(5);
           case 6:
-            return _context76.a(2);
+            return _context77.a(2);
         }
       }, _callee69, null, [[2, 4, 5, 6]]);
     }));
     return function downloadChapter(_x63) {
-      return _ref167.apply(this, arguments);
+      return _ref169.apply(this, arguments);
     };
   }();
 
@@ -23477,26 +23662,26 @@ function BankTab() {
   // to fill in missing stages. PDF is not required for mc/two_part/short, so anyone
   // signed in with a key can advance a chapter.
   var contributeChapter = /*#__PURE__*/function () {
-    var _ref168 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee70(chapter, stages) {
-      var full, _iterator110, _step110, _loop9, localFile, refreshed, localFileId, fileRecord, _t64, _t65, _t66;
-      return _regenerator().w(function (_context78) {
-        while (1) switch (_context78.p = _context78.n) {
+    var _ref170 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee70(chapter, stages) {
+      var full, _iterator111, _step111, _loop1, localFile, refreshed, localFileId, fileRecord, _t64, _t65, _t66;
+      return _regenerator().w(function (_context79) {
+        while (1) switch (_context79.p = _context79.n) {
           case 0:
             if (!busyId) {
-              _context78.n = 1;
+              _context79.n = 1;
               break;
             }
-            return _context78.a(2);
+            return _context79.a(2);
           case 1:
             if (apiKey) {
-              _context78.n = 2;
+              _context79.n = 2;
               break;
             }
             setStatus({
               kind: 'err',
               msg: 'Add a Gemini API key in Settings to contribute.'
             });
-            return _context78.a(2);
+            return _context79.a(2);
           case 2:
             setBusyId(chapter.id);
             setBusyKind('contributing');
@@ -23504,27 +23689,27 @@ function BankTab() {
               kind: 'info',
               msg: "Loading \"".concat(chapter.title, "\"\u2026")
             });
-            _context78.p = 3;
-            _context78.n = 4;
+            _context79.p = 3;
+            _context79.n = 4;
             return api.getChapter(chapter.id);
           case 4:
-            full = _context78.v;
+            full = _context79.v;
             if (full.extraction) {
-              _context78.n = 5;
+              _context79.n = 5;
               break;
             }
             throw new Error('Chapter has no extraction yet — only the uploader can do that step.');
           case 5:
-            _iterator110 = _createForOfIteratorHelper(stages);
-            _context78.p = 6;
-            _loop9 = /*#__PURE__*/_regenerator().m(function _loop9() {
+            _iterator111 = _createForOfIteratorHelper(stages);
+            _context79.p = 6;
+            _loop1 = /*#__PURE__*/_regenerator().m(function _loop1() {
               var stage, newMc, hasBaseline, baseline, termCovered, missingTerms, termExtraction, termQs, twoPart, short;
-              return _regenerator().w(function (_context77) {
-                while (1) switch (_context77.n) {
+              return _regenerator().w(function (_context78) {
+                while (1) switch (_context78.n) {
                   case 0:
-                    stage = _step110.value;
+                    stage = _step111.value;
                     if (!(stage === 'mc')) {
-                      _context77.n = 6;
+                      _context78.n = 6;
                       break;
                     }
                     setStatus({
@@ -23536,13 +23721,13 @@ function BankTab() {
                       return (q === null || q === void 0 ? void 0 : q.from) !== 'term';
                     });
                     if (hasBaseline) {
-                      _context77.n = 2;
+                      _context78.n = 2;
                       break;
                     }
-                    _context77.n = 1;
+                    _context78.n = 1;
                     return client.generateMCQuestions(null, null, full.extraction, full.title);
                   case 1:
-                    baseline = _context77.v;
+                    baseline = _context78.v;
                     newMc = newMc.concat(baseline);
                   case 2:
                     // Fill in term-coverage for any uncovered terms.
@@ -23555,7 +23740,7 @@ function BankTab() {
                       return !termCovered.has(t.term);
                     });
                     if (!(missingTerms.length > 0)) {
-                      _context77.n = 4;
+                      _context78.n = 4;
                       break;
                     }
                     setStatus({
@@ -23565,88 +23750,88 @@ function BankTab() {
                     termExtraction = _objectSpread(_objectSpread({}, full.extraction), {}, {
                       key_terms: missingTerms
                     });
-                    _context77.n = 3;
+                    _context78.n = 3;
                     return client.generateTermQuestions(termExtraction, full.title);
                   case 3:
-                    termQs = _context77.v;
+                    termQs = _context78.v;
                     newMc = newMc.concat(termQs);
                   case 4:
-                    _context77.n = 5;
+                    _context78.n = 5;
                     return api.putChapterStage(chapter.id, 'mc', newMc);
                   case 5:
-                    _context77.n = 13;
+                    _context78.n = 13;
                     break;
                   case 6:
                     if (!(stage === 'two_part')) {
-                      _context77.n = 10;
+                      _context78.n = 10;
                       break;
                     }
                     setStatus({
                       kind: 'info',
                       msg: "Generating two-part for \"".concat(chapter.title, "\"\u2026")
                     });
-                    _context77.n = 7;
+                    _context78.n = 7;
                     return client.generateTwoPartQuestions(full.extraction, full.title);
                   case 7:
-                    twoPart = _context77.v;
+                    twoPart = _context78.v;
                     if (twoPart !== null && twoPart !== void 0 && twoPart.length) {
-                      _context77.n = 8;
+                      _context78.n = 8;
                       break;
                     }
                     throw new Error('Two-part generation returned no items — try again.');
                   case 8:
-                    _context77.n = 9;
+                    _context78.n = 9;
                     return api.putChapterStage(chapter.id, 'two_part', twoPart);
                   case 9:
-                    _context77.n = 13;
+                    _context78.n = 13;
                     break;
                   case 10:
                     if (!(stage === 'short')) {
-                      _context77.n = 13;
+                      _context78.n = 13;
                       break;
                     }
                     setStatus({
                       kind: 'info',
                       msg: "Generating short answer for \"".concat(chapter.title, "\"\u2026")
                     });
-                    _context77.n = 11;
+                    _context78.n = 11;
                     return client.generateShortAnswers(null, null, full.extraction, full.title);
                   case 11:
-                    short = _context77.v;
+                    short = _context78.v;
                     if (short !== null && short !== void 0 && short.length) {
-                      _context77.n = 12;
+                      _context78.n = 12;
                       break;
                     }
                     throw new Error('Short-answer generation returned no items — try again.');
                   case 12:
-                    _context77.n = 13;
+                    _context78.n = 13;
                     return api.putChapterStage(chapter.id, 'short', short);
                   case 13:
-                    return _context77.a(2);
+                    return _context78.a(2);
                 }
-              }, _loop9);
+              }, _loop1);
             });
-            _iterator110.s();
+            _iterator111.s();
           case 7:
-            if ((_step110 = _iterator110.n()).done) {
-              _context78.n = 9;
+            if ((_step111 = _iterator111.n()).done) {
+              _context79.n = 9;
               break;
             }
-            return _context78.d(_regeneratorValues(_loop9()), 8);
+            return _context79.d(_regeneratorValues(_loop1()), 8);
           case 8:
-            _context78.n = 7;
+            _context79.n = 7;
             break;
           case 9:
-            _context78.n = 11;
+            _context79.n = 11;
             break;
           case 10:
-            _context78.p = 10;
-            _t64 = _context78.v;
-            _iterator110.e(_t64);
+            _context79.p = 10;
+            _t64 = _context79.v;
+            _iterator111.e(_t64);
           case 11:
-            _context78.p = 11;
-            _iterator110.f();
-            return _context78.f(11);
+            _context79.p = 11;
+            _iterator111.f();
+            return _context79.f(11);
           case 12:
             // If the user already has this chapter in their local library, refresh it
             // so they get the newly contributed stages without a manual re-download.
@@ -23654,18 +23839,18 @@ function BankTab() {
               return f.chapter_id === chapter.id;
             });
             if (!localFile) {
-              _context78.n = 16;
+              _context79.n = 16;
               break;
             }
             setStatus({
               kind: 'info',
               msg: "Refreshing local copy of \"".concat(chapter.title, "\"\u2026")
             });
-            _context78.p = 13;
-            _context78.n = 14;
+            _context79.p = 13;
+            _context79.n = 14;
             return api.getChapter(chapter.id);
           case 14:
-            refreshed = _context78.v;
+            refreshed = _context79.v;
             localFileId = "chap_".concat(refreshed.id);
             fileRecord = {
               file_id: localFileId,
@@ -23690,11 +23875,11 @@ function BankTab() {
               short: refreshed.short || [],
               generated_at: new Date(refreshed.updated_at).toISOString()
             });
-            _context78.n = 16;
+            _context79.n = 16;
             break;
           case 15:
-            _context78.p = 15;
-            _t65 = _context78.v;
+            _context79.p = 15;
+            _t65 = _context79.v;
           case 16:
             setStatus({
               kind: 'ok',
@@ -23703,27 +23888,27 @@ function BankTab() {
             setTick(function (t) {
               return t + 1;
             });
-            _context78.n = 18;
+            _context79.n = 18;
             break;
           case 17:
-            _context78.p = 17;
-            _t66 = _context78.v;
+            _context79.p = 17;
+            _t66 = _context79.v;
             setStatus({
               kind: 'err',
               msg: _t66.message
             });
           case 18:
-            _context78.p = 18;
+            _context79.p = 18;
             setBusyId(null);
             setBusyKind(null);
-            return _context78.f(18);
+            return _context79.f(18);
           case 19:
-            return _context78.a(2);
+            return _context79.a(2);
         }
       }, _callee70, null, [[13, 15], [6, 10, 11, 12], [3, 17, 18, 19]]);
     }));
     return function contributeChapter(_x64, _x65) {
-      return _ref168.apply(this, arguments);
+      return _ref170.apply(this, arguments);
     };
   }();
   if (err) {
@@ -23759,19 +23944,19 @@ function BankTab() {
 
   // Group by subject, then sort each group by chapter number.
   var bySubject = {};
-  var _iterator111 = _createForOfIteratorHelper(data.chapters),
-    _step111;
+  var _iterator112 = _createForOfIteratorHelper(data.chapters),
+    _step112;
   try {
-    for (_iterator111.s(); !(_step111 = _iterator111.n()).done;) {
-      var ch = _step111.value;
+    for (_iterator112.s(); !(_step112 = _iterator112.n()).done;) {
+      var ch = _step112.value;
       var subj = ch.subject || 'Other';
       if (!bySubject[subj]) bySubject[subj] = [];
       bySubject[subj].push(ch);
     }
   } catch (err) {
-    _iterator111.e(err);
+    _iterator112.e(err);
   } finally {
-    _iterator111.f();
+    _iterator112.f();
   }
   var localChapterIds = new Set(files.map(function (f) {
     return f.chapter_id;
@@ -23787,11 +23972,11 @@ function BankTab() {
     if (bi !== -1) return 1;
     return a.localeCompare(b);
   });
-  var _iterator112 = _createForOfIteratorHelper(subjects),
-    _step112;
+  var _iterator113 = _createForOfIteratorHelper(subjects),
+    _step113;
   try {
-    for (_iterator112.s(); !(_step112 = _iterator112.n()).done;) {
-      var s = _step112.value;
+    for (_iterator113.s(); !(_step113 = _iterator113.n()).done;) {
+      var s = _step113.value;
       bySubject[s].sort(function (a, b) {
         var an = parseChapterNum(a),
           bn = parseChapterNum(b);
@@ -23800,9 +23985,9 @@ function BankTab() {
       });
     }
   } catch (err) {
-    _iterator112.e(err);
+    _iterator113.e(err);
   } finally {
-    _iterator112.f();
+    _iterator113.f();
   }
   var filterLc = filter.toLowerCase();
   var filtered = function filtered(chs) {
@@ -23970,32 +24155,32 @@ function BanksBrowser() {
     };
   }, [api, tick]);
   var download = /*#__PURE__*/function () {
-    var _ref169 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee71(username) {
+    var _ref171 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee71(username) {
       var localCount, msg, bank, _i31, _Object$keys6, fid, _i32, _Object$keys7, _fid2, n, _t67;
-      return _regenerator().w(function (_context79) {
-        while (1) switch (_context79.p = _context79.n) {
+      return _regenerator().w(function (_context80) {
+        while (1) switch (_context80.p = _context80.n) {
           case 0:
             if (!busy) {
-              _context79.n = 1;
+              _context80.n = 1;
               break;
             }
-            return _context79.a(2);
+            return _context80.a(2);
           case 1:
             localCount = files.length;
             msg = localCount > 0 ? "Replace your local bank (".concat(localCount, " chapter").concat(localCount === 1 ? '' : 's', ") with @").concat(username, "'s bank? Your local data will be lost.") : "Download @".concat(username, "'s bank to this device?");
             if (confirm(msg)) {
-              _context79.n = 2;
+              _context80.n = 2;
               break;
             }
-            return _context79.a(2);
+            return _context80.a(2);
           case 2:
             setBusy(username);
             setStatus(null);
-            _context79.p = 3;
-            _context79.n = 4;
+            _context80.p = 3;
+            _context80.n = 4;
             return api.getUserBank(username);
           case 4:
-            bank = _context79.v;
+            bank = _context80.v;
             setFiles(bank.files || []);
             storage.set(KEYS.extractions, bank.extractions || {});
             storage.set(KEYS.questions, bank.questions || {});
@@ -24013,27 +24198,27 @@ function BanksBrowser() {
               msg: "Downloaded ".concat(n, " chapter").concat(n === 1 ? '' : 's', " from @").concat(username),
               kind: 'ok'
             });
-            _context79.n = 6;
+            _context80.n = 6;
             break;
           case 5:
-            _context79.p = 5;
-            _t67 = _context79.v;
+            _context80.p = 5;
+            _t67 = _context80.v;
             setStatus({
               username,
               msg: _t67.message,
               kind: 'err'
             });
           case 6:
-            _context79.p = 6;
+            _context80.p = 6;
             setBusy(null);
-            return _context79.f(6);
+            return _context80.f(6);
           case 7:
-            return _context79.a(2);
+            return _context80.a(2);
         }
       }, _callee71, null, [[3, 5, 6, 7]]);
     }));
     return function download(_x66) {
-      return _ref169.apply(this, arguments);
+      return _ref171.apply(this, arguments);
     };
   }();
   if (err) {
@@ -24096,9 +24281,9 @@ function BanksBrowser() {
     }, busy === b.username ? 'Downloading…' : session ? 'Download' : 'Sign in'));
   }))));
 }
-function UserProfile(_ref170) {
-  var username = _ref170.username,
-    onBack = _ref170.onBack;
+function UserProfile(_ref172) {
+  var username = _ref172.username,
+    onBack = _ref172.onBack;
   var _useApp36 = useApp(),
     api = _useApp36.api;
   var _useState455 = useState(null),
@@ -24450,9 +24635,9 @@ function Shell() {
   useEffect(function () {
     tabRef.current = tab;
   }, [tab]);
-  var tabKeys = tabs.map(function (_ref171) {
-    var _ref172 = _slicedToArray(_ref171, 1),
-      k = _ref172[0];
+  var tabKeys = tabs.map(function (_ref173) {
+    var _ref174 = _slicedToArray(_ref173, 1),
+      k = _ref174[0];
     return k;
   });
 
@@ -24536,10 +24721,10 @@ function Shell() {
     className: "hidden sm:inline text-xs text-[var(--text-faint)] font-mono"
   }, MODEL)), /*#__PURE__*/React.createElement("nav", {
     className: "flex items-center justify-center gap-1 overflow-x-auto order-3 sm:order-2 w-full sm:w-auto"
-  }, tabs.map(function (_ref173) {
-    var _ref174 = _slicedToArray(_ref173, 2),
-      k = _ref174[0],
-      label = _ref174[1];
+  }, tabs.map(function (_ref175) {
+    var _ref176 = _slicedToArray(_ref175, 2),
+      k = _ref176[0],
+      label = _ref176[1];
     return /*#__PURE__*/React.createElement("button", {
       key: k,
       onClick: function onClick() {

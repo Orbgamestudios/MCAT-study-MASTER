@@ -3002,6 +3002,69 @@ function randomizeMCChoiceOrder(q, targetCorrectIndex = null) {
       : q.choice_explanations,
   };
 }
+function parseMarkdownTable(text) {
+  if (typeof text !== 'string' || !text.includes('|')) return null;
+  const lines = text.split('\n').map((line) => line.trim()).filter((line) => line.includes('|'));
+  for (let i = 0; i < lines.length - 1; i++) {
+    const header = lines[i].replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => sanitizeText(c));
+    const divider = lines[i + 1].replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => c.trim());
+    if (header.length < 2 || divider.length !== header.length || !divider.every((c) => /^:?-{2,}:?$/.test(c))) continue;
+    const rows = [];
+    for (let j = i + 2; j < lines.length; j++) {
+      const cells = lines[j].replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => sanitizeText(c));
+      if (cells.length !== header.length) break;
+      rows.push(cells);
+    }
+    if (rows.length) return { columns: header, rows };
+  }
+  return null;
+}
+function normalizePracticePassageTable(table, passage = '') {
+  const parsed = typeof table === 'string' ? parseMarkdownTable(table) : null;
+  const source = parsed || (table && typeof table === 'object' ? table : null) || parseMarkdownTable(passage);
+  if (!source) return null;
+  const columns = (source.columns || source.headers || source.headings || source.header || []).map((c) => sanitizeText(String(c || ''))).filter(Boolean);
+  let rows = source.rows || source.data || source.values || [];
+  if (!Array.isArray(rows) || columns.length < 2) return null;
+  rows = rows.map((row) => {
+    if (Array.isArray(row)) return columns.map((_, i) => sanitizeText(String(row[i] ?? '')));
+    if (row && typeof row === 'object') {
+      return columns.map((c) => sanitizeText(String(row[c] ?? row[c.toLowerCase()] ?? row[c.replace(/\s+/g, '_')] ?? '')));
+    }
+    return null;
+  }).filter((row) => Array.isArray(row) && row.some(Boolean));
+  if (!rows.length) return null;
+  return {
+    title: sanitizeText(source.title || source.caption || ''),
+    columns,
+    rows,
+    note: sanitizeText(source.note || source.notes || ''),
+  };
+}
+function hasPracticePassageTable(table) {
+  return !!(table && Array.isArray(table.columns) && table.columns.length >= 2 && Array.isArray(table.rows) && table.rows.length > 0);
+}
+function passageTokenSet(text) {
+  return new Set(String(text || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter((w) => w.length > 4));
+}
+function practicePassageLooksRepeated(data, avoid = []) {
+  const title = sanitizeText(data?.title || '').toLowerCase();
+  const passage = String(data?.passage || '');
+  const tokens = passageTokenSet(passage);
+  if (!tokens.size) return false;
+  for (const old of avoid || []) {
+    const oldTitle = sanitizeText(old?.title || '').toLowerCase();
+    if (title && oldTitle && title === oldTitle) return true;
+    const oldPassage = String(old?.passage || '');
+    if (oldPassage && passage.slice(0, 240) === oldPassage.slice(0, 240)) return true;
+    const oldTokens = passageTokenSet(oldPassage);
+    if (!oldTokens.size) continue;
+    let shared = 0;
+    tokens.forEach((t) => { if (oldTokens.has(t)) shared++; });
+    if (shared / Math.min(tokens.size, oldTokens.size) > 0.82) return true;
+  }
+  return false;
+}
 
 // Local cache of downloaded CARS payloads so a day opens instantly / offline.
 function getCarsCache() { try { return JSON.parse(localStorage.getItem('mcat:carsCache')) || {}; } catch { return {}; } }
@@ -4087,35 +4150,55 @@ function makeClient(getKey) {
     return res.text();
   }
 
-  async function generatePracticePassage({ section, focus }) {
+  async function generatePracticePassage({ section, focus, avoid = [] }) {
     const guide = await loadPassageGuide();
-    const resp = await generate({
-      maxOutputTokens: 32768,
-      disableThinking: true,
-      systemInstruction:
-        'You generate original MCAT practice passage sets for a private study app. ' +
-        'Follow the markdown guide exactly. Return strict JSON only.\n\n' +
-        guide,
-      contents: [{
-        role: 'user',
-        parts: [{ text:
-          `Generate one complete MCAT practice passage set for section: ${section}.\n` +
-          `Optional focus from the student: ${focus || 'Choose a high-yield topic for this section.'}\n\n` +
-          'Write one passage and exactly six questions. Make it AAMC-style, passage-driven, and slightly harder than a normal single passage block.',
+    const science = !/cars|critical/i.test(section || '');
+    const recent = (avoid || []).slice(0, 8).map((p, i) =>
+      `${i + 1}. ${p.title || 'Untitled'}${p.discipline ? ` (${p.discipline})` : ''}: ${String(p.passage || '').slice(0, 360).replace(/\s+/g, ' ')}`
+    ).join('\n');
+    let lastError = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const resp = await generate({
+        maxOutputTokens: 32768,
+        disableThinking: true,
+        systemInstruction:
+          'You generate original MCAT practice passage sets for a private study app. ' +
+          'Follow the markdown guide exactly. Return strict JSON only.\n\n' +
+          guide,
+        contents: [{
+          role: 'user',
+          parts: [{ text:
+            `Generate one complete MCAT practice passage set for section: ${section}.\n` +
+            `Optional focus from the student: ${focus || 'Choose a high-yield topic for this section.'}\n\n` +
+            (science ? 'This is a science passage, so you MUST include a structured `table` object with columns and rows. At least one question must require interpreting that table.\n' : '') +
+            (recent ? `Do not repeat or closely paraphrase any of these recent generated passages for this section:\n${recent}\n\n` : '') +
+            (attempt ? 'The previous attempt was rejected because it was too similar to a recent passage or was missing a usable table. Generate a clearly different passage now.\n\n' : '') +
+            'Write one passage and exactly six questions. Make it AAMC-style, passage-driven, and slightly harder than a normal single passage block.',
+          }],
         }],
-      }],
-      responseSchema: PRACTICE_PASSAGE_SCHEMA,
-    });
-    const data = extractJson(resp);
-    const { questions } = validateMCQuestions(data.questions);
-    if (questions.length !== 6) throw new GeminiError(0, `Generated ${questions.length}/6 valid questions. Retry for a clean set.`);
-    const answerSlots = [0, 1, 2, 3, 0, 1].sort(() => Math.random() - 0.5);
-    data.questions = questions.map((q, i) => ({
-      id: `passage_${Date.now()}_${i}`,
-      mode: 'mc',
-      ...randomizeMCChoiceOrder(q, answerSlots[i]),
-    }));
-    return data;
+        responseSchema: PRACTICE_PASSAGE_SCHEMA,
+      });
+      const data = extractJson(resp);
+      data.table = normalizePracticePassageTable(data.table, data.passage);
+      if (science && !hasPracticePassageTable(data.table)) {
+        lastError = new GeminiError(0, 'Generated passage did not include a usable table. Retry for a clean set.');
+        continue;
+      }
+      if (practicePassageLooksRepeated(data, avoid)) {
+        lastError = new GeminiError(0, 'Generated passage was too similar to one already in your bank. Retry for a fresh set.');
+        continue;
+      }
+      const { questions } = validateMCQuestions(data.questions);
+      if (questions.length !== 6) throw new GeminiError(0, `Generated ${questions.length}/6 valid questions. Retry for a clean set.`);
+      const answerSlots = [0, 1, 2, 3, 0, 1].sort(() => Math.random() - 0.5);
+      data.questions = questions.map((q, i) => ({
+        id: `passage_${Date.now()}_${i}`,
+        mode: 'mc',
+        ...randomizeMCChoiceOrder(q, answerSlots[i]),
+      }));
+      return data;
+    }
+    throw lastError || new GeminiError(0, 'Could not generate a fresh passage. Retry for a clean set.');
   }
 
   // ---- short answer generation ----
@@ -9515,7 +9598,15 @@ function PracticePassagesView() {
     setErr('');
     setOpen(false);
     try {
-      const out = await client.generatePracticePassage({ section: selected.label, focus: focus.trim() });
+      const avoid = getPracticePassageBank()
+        .filter((entry) => entry.sectionKey === selected.key)
+        .slice(0, 8)
+        .map((entry) => ({
+          title: entry.payload?.title || entry.title || '',
+          discipline: entry.payload?.discipline || entry.discipline || '',
+          passage: entry.payload?.passage || '',
+        }));
+      const out = await client.generatePracticePassage({ section: selected.label, focus: focus.trim(), avoid });
       const id = String(Date.now());
       savePracticePassage({
         id,
@@ -9881,6 +9972,7 @@ function CarsQuestion({ q, index, picked, onPick, reveal }) {
 }
 
 function PassageTable({ table }) {
+  table = normalizePracticePassageTable(table);
   if (!table || !Array.isArray(table.columns) || !Array.isArray(table.rows) || !table.columns.length || !table.rows.length) return null;
   return (
     <div className="my-4 overflow-x-auto rounded-lg border border-[var(--border-soft)]">
