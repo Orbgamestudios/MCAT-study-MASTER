@@ -2984,6 +2984,24 @@ function validateMCQuestions(arr) {
   }
   return { questions, dropped };
 }
+function randomizeMCChoiceOrder(q, targetCorrectIndex = null) {
+  if (!q || !Array.isArray(q.choices) || q.choices.length !== 4 || !Number.isInteger(q.correct_index)) return q;
+  const correctIndex = Math.max(0, Math.min(3, q.correct_index));
+  const target = Number.isInteger(targetCorrectIndex)
+    ? Math.max(0, Math.min(3, targetCorrectIndex))
+    : Math.floor(Math.random() * 4);
+  const wrong = [0, 1, 2, 3].filter((i) => i !== correctIndex).sort(() => Math.random() - 0.5);
+  const order = [];
+  for (let i = 0; i < 4; i++) order[i] = i === target ? correctIndex : wrong.shift();
+  return {
+    ...q,
+    choices: order.map((i) => q.choices[i]),
+    correct_index: target,
+    choice_explanations: Array.isArray(q.choice_explanations) && q.choice_explanations.length === 4
+      ? order.map((i) => q.choice_explanations[i])
+      : q.choice_explanations,
+  };
+}
 
 // Local cache of downloaded CARS payloads so a day opens instantly / offline.
 function getCarsCache() { try { return JSON.parse(localStorage.getItem('mcat:carsCache')) || {}; } catch { return {}; } }
@@ -4091,10 +4109,11 @@ function makeClient(getKey) {
     const data = extractJson(resp);
     const { questions } = validateMCQuestions(data.questions);
     if (questions.length !== 6) throw new GeminiError(0, `Generated ${questions.length}/6 valid questions. Retry for a clean set.`);
+    const answerSlots = [0, 1, 2, 3, 0, 1].sort(() => Math.random() - 0.5);
     data.questions = questions.map((q, i) => ({
       id: `passage_${Date.now()}_${i}`,
       mode: 'mc',
-      ...q,
+      ...randomizeMCChoiceOrder(q, answerSlots[i]),
     }));
     return data;
   }
@@ -4551,10 +4570,11 @@ function makeClient(getKey) {
     });
     const data = extractJson(resp);
     // Tag questions with ids + a stable mode for the quiz runner.
+    const answerSlots = [0, 1, 2, 3, 0, 1].sort(() => Math.random() - 0.5);
     data.questions = (data.questions || []).map((q, i) => ({
       id: `cars_${Date.now()}_${i}`,
       mode: 'mc',
-      ...q,
+      ...randomizeMCChoiceOrder(q, answerSlots[i]),
     }));
     return data;
   }
@@ -4612,10 +4632,11 @@ function makeClient(getKey) {
       responseSchema: CARS_QUESTIONS_SCHEMA,
     });
     const data = extractJson(resp);
+    const answerSlots = [0, 1, 2, 3, 0, 1].sort(() => Math.random() - 0.5);
     return (data.questions || []).map((q, i) => ({
       id: `cars_${Date.now()}_${i}`,
       mode: 'mc',
-      ...q,
+      ...randomizeMCChoiceOrder(q, answerSlots[i]),
     }));
   }
 
@@ -10045,6 +10066,7 @@ function CarsRunner({ date, payload, onClose, alreadyDone, label = 'Daily CARS',
     return idx >= 0 ? idx : 0;
   });
   const [passageSeen, setPassageSeen] = useState(alreadyDone);
+  const [readerChromeHidden, setReaderChromeHidden] = useState(false);
   const [panelH, setPanelH] = useState(190);
   // Elapsed-time timer. Ticks only during the 'attempt' phase, freezes
   // the moment the user submits, and resets back to 0 if they retry.
@@ -10150,14 +10172,17 @@ function CarsRunner({ date, payload, onClose, alreadyDone, label = 'Daily CARS',
   }, [phase, currentIdx, currentPicked, passageSeen]);
 
   useEffect(() => {
-    if (phase !== 'attempt' || passageSeen) return;
+    if (phase !== 'attempt') {
+      setPassageSeen(alreadyDone);
+      return;
+    }
     const scroller = scrollRef.current;
     const passageEl = passageBlockRef.current;
     if (!scroller || !passageEl) return;
     const check = () => {
       const bottom = passageEl.getBoundingClientRect().bottom;
       const unlockLine = window.innerHeight - panelH - 12;
-      if (bottom <= unlockLine) setPassageSeen(true);
+      setPassageSeen(bottom <= unlockLine);
     };
     check();
     scroller.addEventListener('scroll', check);
@@ -10166,7 +10191,24 @@ function CarsRunner({ date, payload, onClose, alreadyDone, label = 'Daily CARS',
       scroller.removeEventListener('scroll', check);
       window.removeEventListener('resize', check);
     };
-  }, [phase, passageSeen, panelH]);
+  }, [phase, panelH, alreadyDone]);
+
+  useEffect(() => {
+    if (phase !== 'attempt') {
+      setReaderChromeHidden(false);
+      return;
+    }
+    const scroller = scrollRef.current;
+    if (!scroller) return;
+    const check = () => {
+      const y = scroller.scrollTop || 0;
+      if (y <= 4) setReaderChromeHidden(false);
+      else if (y > 72) setReaderChromeHidden(true);
+    };
+    check();
+    scroller.addEventListener('scroll', check);
+    return () => scroller.removeEventListener('scroll', check);
+  }, [phase]);
 
   // While the runner is open, lock the underlying page scroll so flick-scrolling
   // doesn't drift the BankTab content behind it (iOS Safari is especially loose
@@ -10183,37 +10225,43 @@ function CarsRunner({ date, payload, onClose, alreadyDone, label = 'Daily CARS',
   }, []);
 
   return (
-    <div ref={scrollRef} className="fixed inset-x-0 bottom-0 z-50 bg-[var(--bg)] overflow-y-auto" style={{ top: 'var(--mcat-header-h, 56px)', marginTop: 0 }}>
+    <div
+      ref={scrollRef}
+      className="fixed inset-x-0 bottom-0 z-50 bg-[var(--bg)] overflow-y-auto transition-[top] duration-200"
+      style={{ top: readerChromeHidden ? 0 : 'var(--mcat-header-h, 56px)', marginTop: 0 }}
+    >
       {/* Banner is the FIRST child of the scroll container, with no padding
           above it, so it sits flush against the tabs bar and the sticky
           behavior keeps it there as the passage scrolls.
           marginTop:0 defeats an inherited Tailwind `space-y` margin when this
           fixed overlay is launched as a sibling inside a space-y container
           (the Home tab) — without it the banner sits a row's gap too low. */}
-      <div className="sticky top-0 z-10 bg-[var(--bg)] border-b border-[var(--border-soft)] px-3 sm:px-6 py-2">
-        <div className="max-w-3xl mx-auto flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            <div className="text-xs uppercase tracking-wide text-[var(--text-muted)]">{label} · {date}</div>
-            <h2 className="font-semibold text-[var(--text-strong)] truncate">{payload.title || payload.discipline || 'CARS passage'}</h2>
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            {phase === 'attempt' && (
-              <>
-                <span
-                  className="text-xs font-mono text-[var(--text-muted)] tabular-nums"
-                  title="Time spent on this passage"
-                >⏱ {timerDisplay}</span>
-                <span className="text-xs font-mono text-[var(--text-muted)]">{answeredCount}/{questions.length}</span>
-              </>
-            )}
-            {phase === 'graded' && (
-              <span className="text-xs font-mono text-[var(--text-muted)] tabular-nums" title="Time spent">⏱ {timerDisplay}</span>
-            )}
-            {phase === 'review' && <span className="text-xs font-mono text-[var(--text-muted)]">{score}/{questions.length}</span>}
-            <button onClick={onClose} className="text-xs px-3 py-1.5 border border-[var(--border)] rounded hover:bg-[var(--bg-hover)]">Close</button>
+      {!readerChromeHidden && (
+        <div className="sticky top-0 z-10 bg-[var(--bg)] border-b border-[var(--border-soft)] px-3 sm:px-6 py-2">
+          <div className="max-w-3xl mx-auto flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-xs uppercase tracking-wide text-[var(--text-muted)]">{label} · {date}</div>
+              <h2 className="font-semibold text-[var(--text-strong)] truncate">{payload.title || payload.discipline || 'CARS passage'}</h2>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              {phase === 'attempt' && (
+                <>
+                  <span
+                    className="text-xs font-mono text-[var(--text-muted)] tabular-nums"
+                    title="Time spent on this passage"
+                  >⏱ {timerDisplay}</span>
+                  <span className="text-xs font-mono text-[var(--text-muted)]">{answeredCount}/{questions.length}</span>
+                </>
+              )}
+              {phase === 'graded' && (
+                <span className="text-xs font-mono text-[var(--text-muted)] tabular-nums" title="Time spent">⏱ {timerDisplay}</span>
+              )}
+              {phase === 'review' && <span className="text-xs font-mono text-[var(--text-muted)]">{score}/{questions.length}</span>}
+              <button onClick={onClose} className="text-xs px-3 py-1.5 border border-[var(--border)] rounded hover:bg-[var(--bg-hover)]">Close</button>
+            </div>
           </div>
         </div>
-      </div>
+      )}
       <div className="max-w-3xl mx-auto p-3 sm:p-6 space-y-4">
         {/* Graded screen — score only, no answers revealed */}
         {phase === 'graded' ? (
@@ -10303,11 +10351,7 @@ function CarsRunner({ date, payload, onClose, alreadyDone, label = 'Daily CARS',
                 <p className="text-sm sm:text-base leading-relaxed text-[var(--text-strong)] mt-0.5">{currentQ.question}</p>
               </div>
             </div>
-            {!passageSeen ? (
-              <div className="text-xs text-[var(--text-muted)] bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg px-3 py-2">
-                Scroll to the end of the passage to unlock the answer choices.
-              </div>
-            ) : (
+            {passageSeen && (
               <>
                 <div className="grid gap-2 sm:grid-cols-2">
                   {(currentQ.choices || []).map((choice, i) => {

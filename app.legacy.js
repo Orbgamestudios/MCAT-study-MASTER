@@ -3726,6 +3726,28 @@ function validateMCQuestions(arr) {
     dropped
   };
 }
+function randomizeMCChoiceOrder(q) {
+  var targetCorrectIndex = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : null;
+  if (!q || !Array.isArray(q.choices) || q.choices.length !== 4 || !Number.isInteger(q.correct_index)) return q;
+  var correctIndex = Math.max(0, Math.min(3, q.correct_index));
+  var target = Number.isInteger(targetCorrectIndex) ? Math.max(0, Math.min(3, targetCorrectIndex)) : Math.floor(Math.random() * 4);
+  var wrong = [0, 1, 2, 3].filter(function (i) {
+    return i !== correctIndex;
+  }).sort(function () {
+    return Math.random() - 0.5;
+  });
+  var order = [];
+  for (var i = 0; i < 4; i++) order[i] = i === target ? correctIndex : wrong.shift();
+  return _objectSpread(_objectSpread({}, q), {}, {
+    choices: order.map(function (i) {
+      return q.choices[i];
+    }),
+    correct_index: target,
+    choice_explanations: Array.isArray(q.choice_explanations) && q.choice_explanations.length === 4 ? order.map(function (i) {
+      return q.choice_explanations[i];
+    }) : q.choice_explanations
+  });
+}
 
 // Local cache of downloaded CARS payloads so a day opens instantly / offline.
 function getCarsCache() {
@@ -5494,7 +5516,7 @@ function makeClient(getKey) {
   } // ---- short answer generation ----
   function _generatePracticePassage() {
     _generatePracticePassage = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee0(_ref6) {
-      var section, focus, guide, resp, data, _validateMCQuestions3, questions;
+      var section, focus, guide, resp, data, _validateMCQuestions3, questions, answerSlots;
       return _regenerator().w(function (_context0) {
         while (1) switch (_context0.n) {
           case 0:
@@ -5526,11 +5548,14 @@ function makeClient(getKey) {
             }
             throw new GeminiError(0, "Generated ".concat(questions.length, "/6 valid questions. Retry for a clean set."));
           case 3:
+            answerSlots = [0, 1, 2, 3, 0, 1].sort(function () {
+              return Math.random() - 0.5;
+            });
             data.questions = questions.map(function (q, i) {
               return _objectSpread({
                 id: "passage_".concat(Date.now(), "_").concat(i),
                 mode: 'mc'
-              }, q);
+              }, randomizeMCChoiceOrder(q, answerSlots[i]));
             });
             return _context0.a(2, data);
         }
@@ -6151,7 +6176,7 @@ function makeClient(getKey) {
   } // ---- CARS questions from a supplied (real, public-domain) passage ----
   function _generateDailyCars() {
     _generateDailyCars = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee15(discipline) {
-      var resp, data;
+      var resp, data, answerSlots;
       return _regenerator().w(function (_context17) {
         while (1) switch (_context17.n) {
           case 0:
@@ -6171,11 +6196,14 @@ function makeClient(getKey) {
           case 1:
             resp = _context17.v;
             data = extractJson(resp); // Tag questions with ids + a stable mode for the quiz runner.
+            answerSlots = [0, 1, 2, 3, 0, 1].sort(function () {
+              return Math.random() - 0.5;
+            });
             data.questions = (data.questions || []).map(function (q, i) {
               return _objectSpread({
                 id: "cars_".concat(Date.now(), "_").concat(i),
                 mode: 'mc'
-              }, q);
+              }, randomizeMCChoiceOrder(q, answerSlots[i]));
             });
             return _context17.a(2, data);
         }
@@ -6232,7 +6260,7 @@ function makeClient(getKey) {
   // green (easiest), yellow, blue, purple (hardest) — matches NYT Connections.
   function _generateCarsQuestions() {
     _generateCarsQuestions = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee16(passage, discipline) {
-      var resp, data;
+      var resp, data, answerSlots;
       return _regenerator().w(function (_context18) {
         while (1) switch (_context18.n) {
           case 0:
@@ -6252,11 +6280,14 @@ function makeClient(getKey) {
           case 1:
             resp = _context18.v;
             data = extractJson(resp);
+            answerSlots = [0, 1, 2, 3, 0, 1].sort(function () {
+              return Math.random() - 0.5;
+            });
             return _context18.a(2, (data.questions || []).map(function (q, i) {
               return _objectSpread({
                 id: "cars_".concat(Date.now(), "_").concat(i),
                 mode: 'mc'
-              }, q);
+              }, randomizeMCChoiceOrder(q, answerSlots[i]));
             }));
         }
       }, _callee16);
@@ -15245,16 +15276,20 @@ function CarsRunner(_ref83) {
     _useState210 = _slicedToArray(_useState209, 2),
     passageSeen = _useState210[0],
     setPassageSeen = _useState210[1];
-  var _useState211 = useState(190),
+  var _useState211 = useState(false),
     _useState212 = _slicedToArray(_useState211, 2),
-    panelH = _useState212[0],
-    setPanelH = _useState212[1];
+    readerChromeHidden = _useState212[0],
+    setReaderChromeHidden = _useState212[1];
+  var _useState213 = useState(190),
+    _useState214 = _slicedToArray(_useState213, 2),
+    panelH = _useState214[0],
+    setPanelH = _useState214[1];
   // Elapsed-time timer. Ticks only during the 'attempt' phase, freezes
   // the moment the user submits, and resets back to 0 if they retry.
-  var _useState213 = useState(0),
-    _useState214 = _slicedToArray(_useState213, 2),
-    elapsedMs = _useState214[0],
-    setElapsedMs = _useState214[1];
+  var _useState215 = useState(0),
+    _useState216 = _slicedToArray(_useState215, 2),
+    elapsedMs = _useState216[0],
+    setElapsedMs = _useState216[1];
   var startRef = useRef(null);
   useEffect(function () {
     if (phase !== 'attempt') {
@@ -15388,14 +15423,17 @@ function CarsRunner(_ref83) {
     };
   }, [phase, currentIdx, currentPicked, passageSeen]);
   useEffect(function () {
-    if (phase !== 'attempt' || passageSeen) return;
+    if (phase !== 'attempt') {
+      setPassageSeen(alreadyDone);
+      return;
+    }
     var scroller = scrollRef.current;
     var passageEl = passageBlockRef.current;
     if (!scroller || !passageEl) return;
     var check = function check() {
       var bottom = passageEl.getBoundingClientRect().bottom;
       var unlockLine = window.innerHeight - panelH - 12;
-      if (bottom <= unlockLine) setPassageSeen(true);
+      setPassageSeen(bottom <= unlockLine);
     };
     check();
     scroller.addEventListener('scroll', check);
@@ -15404,7 +15442,24 @@ function CarsRunner(_ref83) {
       scroller.removeEventListener('scroll', check);
       window.removeEventListener('resize', check);
     };
-  }, [phase, passageSeen, panelH]);
+  }, [phase, panelH, alreadyDone]);
+  useEffect(function () {
+    if (phase !== 'attempt') {
+      setReaderChromeHidden(false);
+      return;
+    }
+    var scroller = scrollRef.current;
+    if (!scroller) return;
+    var check = function check() {
+      var y = scroller.scrollTop || 0;
+      if (y <= 4) setReaderChromeHidden(false);else if (y > 72) setReaderChromeHidden(true);
+    };
+    check();
+    scroller.addEventListener('scroll', check);
+    return function () {
+      return scroller.removeEventListener('scroll', check);
+    };
+  }, [phase]);
 
   // While the runner is open, lock the underlying page scroll so flick-scrolling
   // doesn't drift the BankTab content behind it (iOS Safari is especially loose
@@ -15421,12 +15476,12 @@ function CarsRunner(_ref83) {
   }, []);
   return /*#__PURE__*/React.createElement("div", {
     ref: scrollRef,
-    className: "fixed inset-x-0 bottom-0 z-50 bg-[var(--bg)] overflow-y-auto",
+    className: "fixed inset-x-0 bottom-0 z-50 bg-[var(--bg)] overflow-y-auto transition-[top] duration-200",
     style: {
-      top: 'var(--mcat-header-h, 56px)',
+      top: readerChromeHidden ? 0 : 'var(--mcat-header-h, 56px)',
       marginTop: 0
     }
-  }, /*#__PURE__*/React.createElement("div", {
+  }, !readerChromeHidden && /*#__PURE__*/React.createElement("div", {
     className: "sticky top-0 z-10 bg-[var(--bg)] border-b border-[var(--border-soft)] px-3 sm:px-6 py-2"
   }, /*#__PURE__*/React.createElement("div", {
     className: "max-w-3xl mx-auto flex items-center justify-between gap-3"
@@ -15539,9 +15594,7 @@ function CarsRunner(_ref83) {
     className: "text-[10px] uppercase tracking-wide text-[var(--accent-text)]"
   }, currentQ.category, currentQ.subtype ? " \xB7 ".concat(currentQ.subtype) : ''), /*#__PURE__*/React.createElement("p", {
     className: "text-sm sm:text-base leading-relaxed text-[var(--text-strong)] mt-0.5"
-  }, currentQ.question))), !passageSeen ? /*#__PURE__*/React.createElement("div", {
-    className: "text-xs text-[var(--text-muted)] bg-[var(--bg-elev-soft)] border border-[var(--border-soft)] rounded-lg px-3 py-2"
-  }, "Scroll to the end of the passage to unlock the answer choices.") : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+  }, currentQ.question))), passageSeen && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     className: "grid gap-2 sm:grid-cols-2"
   }, (currentQ.choices || []).map(function (choice, i) {
     var picked = currentPicked === i;
@@ -15606,26 +15659,26 @@ function DailyCarsSlotCard(_ref84) {
   var localOnly = carsSlotFor(date) > 1;
   // Seed from the local cache so the card shows instantly if today was already downloaded.
   var cached = getCarsCachePayload(date);
-  var _useState215 = useState(cached ? 'ready' : 'loading'),
-    _useState216 = _slicedToArray(_useState215, 2),
-    state = _useState216[0],
-    setState = _useState216[1]; // loading | ready | generating | unavailable | error
-  var _useState217 = useState(cached),
+  var _useState217 = useState(cached ? 'ready' : 'loading'),
     _useState218 = _slicedToArray(_useState217, 2),
-    payload = _useState218[0],
-    setPayload = _useState218[1];
-  var _useState219 = useState(''),
+    state = _useState218[0],
+    setState = _useState218[1]; // loading | ready | generating | unavailable | error
+  var _useState219 = useState(cached),
     _useState220 = _slicedToArray(_useState219, 2),
-    err = _useState220[0],
-    setErr = _useState220[1];
-  var _useState221 = useState(false),
+    payload = _useState220[0],
+    setPayload = _useState220[1];
+  var _useState221 = useState(''),
     _useState222 = _slicedToArray(_useState221, 2),
-    running = _useState222[0],
-    setRunning = _useState222[1];
-  var _useState223 = useState(0),
+    err = _useState222[0],
+    setErr = _useState222[1];
+  var _useState223 = useState(false),
     _useState224 = _slicedToArray(_useState223, 2),
-    tick = _useState224[0],
-    setTick = _useState224[1];
+    running = _useState224[0],
+    setRunning = _useState224[1];
+  var _useState225 = useState(0),
+    _useState226 = _slicedToArray(_useState225, 2),
+    tick = _useState226[0],
+    setTick = _useState226[1];
   var result = getCarsResult(date);
   useEffect(function () {
     var cancelled = false;
@@ -15891,26 +15944,26 @@ function DailyCarsCard() {
 function CarsArchive() {
   var _useApp13 = useApp(),
     api = _useApp13.api;
-  var _useState225 = useState(null),
-    _useState226 = _slicedToArray(_useState225, 2),
-    days = _useState226[0],
-    setDays = _useState226[1];
-  var _useState227 = useState(''),
+  var _useState227 = useState(null),
     _useState228 = _slicedToArray(_useState227, 2),
-    err = _useState228[0],
-    setErr = _useState228[1];
-  var _useState229 = useState(null),
+    days = _useState228[0],
+    setDays = _useState228[1];
+  var _useState229 = useState(''),
     _useState230 = _slicedToArray(_useState229, 2),
-    open = _useState230[0],
-    setOpen = _useState230[1]; // { date, payload }
+    err = _useState230[0],
+    setErr = _useState230[1];
   var _useState231 = useState(null),
     _useState232 = _slicedToArray(_useState231, 2),
-    loadingDate = _useState232[0],
-    setLoadingDate = _useState232[1];
-  var _useState233 = useState(false),
+    open = _useState232[0],
+    setOpen = _useState232[1]; // { date, payload }
+  var _useState233 = useState(null),
     _useState234 = _slicedToArray(_useState233, 2),
-    expanded = _useState234[0],
-    setExpanded = _useState234[1];
+    loadingDate = _useState234[0],
+    setLoadingDate = _useState234[1];
+  var _useState235 = useState(false),
+    _useState236 = _slicedToArray(_useState235, 2),
+    expanded = _useState236[0],
+    setExpanded = _useState236[1];
   var today = todayStr();
   useEffect(function () {
     var cancelled = false;
@@ -16114,29 +16167,29 @@ function SolvedConnectionGroup(_ref87) {
     apiKey = _useApp14.apiKey,
     extractions = _useApp14.extractions;
   var c = CONNECTIONS_COLORS[group.difficulty];
-  var _useState235 = useState(false),
-    _useState236 = _slicedToArray(_useState235, 2),
-    open = _useState236[0],
-    setOpen = _useState236[1];
-  var _useState237 = useState(null),
+  var _useState237 = useState(false),
     _useState238 = _slicedToArray(_useState237, 2),
-    flippedTerm = _useState238[0],
-    setFlippedTerm = _useState238[1];
-  var _useState239 = useState(function () {
+    open = _useState238[0],
+    setOpen = _useState238[1];
+  var _useState239 = useState(null),
+    _useState240 = _slicedToArray(_useState239, 2),
+    flippedTerm = _useState240[0],
+    setFlippedTerm = _useState240[1];
+  var _useState241 = useState(function () {
       return getConnExplain(date, group.category);
     }),
-    _useState240 = _slicedToArray(_useState239, 2),
-    explain = _useState240[0],
-    setExplain = _useState240[1];
-  var _useState241 = useState(false),
     _useState242 = _slicedToArray(_useState241, 2),
-    explainBusy = _useState242[0],
-    setExplainBusy = _useState242[1];
-  var _useState243 = useState(''),
+    explain = _useState242[0],
+    setExplain = _useState242[1];
+  var _useState243 = useState(false),
     _useState244 = _slicedToArray(_useState243, 2),
-    explainErr = _useState244[0],
-    setExplainErr = _useState244[1];
-  var _useState245 = useState(function () {
+    explainBusy = _useState244[0],
+    setExplainBusy = _useState244[1];
+  var _useState245 = useState(''),
+    _useState246 = _slicedToArray(_useState245, 2),
+    explainErr = _useState246[0],
+    setExplainErr = _useState246[1];
+  var _useState247 = useState(function () {
       var seed = {};
       var _iterator69 = _createForOfIteratorHelper(group.terms),
         _step69;
@@ -16152,13 +16205,13 @@ function SolvedConnectionGroup(_ref87) {
       }
       return seed;
     }),
-    _useState246 = _slicedToArray(_useState245, 2),
-    termDefs = _useState246[0],
-    setTermDefs = _useState246[1];
-  var _useState247 = useState({}),
     _useState248 = _slicedToArray(_useState247, 2),
-    termBusy = _useState248[0],
-    setTermBusy = _useState248[1];
+    termDefs = _useState248[0],
+    setTermDefs = _useState248[1];
+  var _useState249 = useState({}),
+    _useState250 = _slicedToArray(_useState249, 2),
+    termBusy = _useState250[0],
+    setTermBusy = _useState250[1];
   var fetchExplain = useCallback(/*#__PURE__*/_asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee47() {
     var text, _t35;
     return _regenerator().w(function (_context52) {
@@ -16432,13 +16485,13 @@ function ConnectionsRunner(_ref91) {
   }, [groups]);
   var savedResult = alreadyDone ? getConnectionsResults()[date] || null : null;
   var startSolved = (savedResult === null || savedResult === void 0 ? void 0 : savedResult.solvedCategories) || [];
-  var _useState249 = useState(function () {
+  var _useState251 = useState(function () {
       return startSolved;
     }),
-    _useState250 = _slicedToArray(_useState249, 2),
-    solved = _useState250[0],
-    setSolved = _useState250[1]; // [categoryName...] in solve order
-  var _useState251 = useState(function () {
+    _useState252 = _slicedToArray(_useState251, 2),
+    solved = _useState252[0],
+    setSolved = _useState252[1]; // [categoryName...] in solve order
+  var _useState253 = useState(function () {
       var remaining = allTerms.filter(function (t) {
         return !startSolved.some(function (cat) {
           var _groups$find;
@@ -16449,32 +16502,32 @@ function ConnectionsRunner(_ref91) {
       });
       return seededShuffle(remaining, "connections:".concat(date));
     }),
-    _useState252 = _slicedToArray(_useState251, 2),
-    order = _useState252[0],
-    setOrder = _useState252[1];
-  var _useState253 = useState([]),
     _useState254 = _slicedToArray(_useState253, 2),
-    selected = _useState254[0],
-    setSelected = _useState254[1];
-  var _useState255 = useState((savedResult === null || savedResult === void 0 ? void 0 : savedResult.mistakes) || 0),
+    order = _useState254[0],
+    setOrder = _useState254[1];
+  var _useState255 = useState([]),
     _useState256 = _slicedToArray(_useState255, 2),
-    mistakes = _useState256[0],
-    setMistakes = _useState256[1];
-  var _useState257 = useState(function () {
+    selected = _useState256[0],
+    setSelected = _useState256[1];
+  var _useState257 = useState((savedResult === null || savedResult === void 0 ? void 0 : savedResult.mistakes) || 0),
+    _useState258 = _slicedToArray(_useState257, 2),
+    mistakes = _useState258[0],
+    setMistakes = _useState258[1];
+  var _useState259 = useState(function () {
       if (!savedResult) return 'play';
       return savedResult.won ? 'won' : 'lost';
     }),
-    _useState258 = _slicedToArray(_useState257, 2),
-    phase = _useState258[0],
-    setPhase = _useState258[1];
-  var _useState259 = useState(''),
     _useState260 = _slicedToArray(_useState259, 2),
-    message = _useState260[0],
-    setMessage = _useState260[1];
-  var _useState261 = useState(false),
+    phase = _useState260[0],
+    setPhase = _useState260[1];
+  var _useState261 = useState(''),
     _useState262 = _slicedToArray(_useState261, 2),
-    shaking = _useState262[0],
-    setShaking = _useState262[1];
+    message = _useState262[0],
+    setMessage = _useState262[1];
+  var _useState263 = useState(false),
+    _useState264 = _slicedToArray(_useState263, 2),
+    shaking = _useState264[0],
+    setShaking = _useState264[1];
   var finalizedRef = useRef(!!savedResult);
   var solvedGroups = solved.map(function (cat) {
     return groups.find(function (g) {
@@ -16730,26 +16783,26 @@ function DailyConnectionsCard() {
     files = _useApp16.files;
   var today = todayStr();
   var cached = getConnectionsCachePayload(today);
-  var _useState263 = useState(cached ? 'ready' : 'loading'),
-    _useState264 = _slicedToArray(_useState263, 2),
-    state = _useState264[0],
-    setState = _useState264[1]; // loading | ready | generating | unavailable | needs-terms | error
-  var _useState265 = useState(cached),
+  var _useState265 = useState(cached ? 'ready' : 'loading'),
     _useState266 = _slicedToArray(_useState265, 2),
-    payload = _useState266[0],
-    setPayload = _useState266[1];
-  var _useState267 = useState(''),
+    state = _useState266[0],
+    setState = _useState266[1]; // loading | ready | generating | unavailable | needs-terms | error
+  var _useState267 = useState(cached),
     _useState268 = _slicedToArray(_useState267, 2),
-    err = _useState268[0],
-    setErr = _useState268[1];
-  var _useState269 = useState(false),
+    payload = _useState268[0],
+    setPayload = _useState268[1];
+  var _useState269 = useState(''),
     _useState270 = _slicedToArray(_useState269, 2),
-    running = _useState270[0],
-    setRunning = _useState270[1];
-  var _useState271 = useState(0),
+    err = _useState270[0],
+    setErr = _useState270[1];
+  var _useState271 = useState(false),
     _useState272 = _slicedToArray(_useState271, 2),
-    tick = _useState272[0],
-    setTick = _useState272[1];
+    running = _useState272[0],
+    setRunning = _useState272[1];
+  var _useState273 = useState(0),
+    _useState274 = _slicedToArray(_useState273, 2),
+    tick = _useState274[0],
+    setTick = _useState274[1];
   var result = getConnectionsResults()[today];
 
   // Build the term pool from every chapter's extracted key_terms.
@@ -17110,26 +17163,26 @@ function DailyConnectionsCard() {
 function ConnectionsArchive() {
   var _useApp17 = useApp(),
     api = _useApp17.api;
-  var _useState273 = useState(null),
-    _useState274 = _slicedToArray(_useState273, 2),
-    days = _useState274[0],
-    setDays = _useState274[1];
-  var _useState275 = useState(''),
+  var _useState275 = useState(null),
     _useState276 = _slicedToArray(_useState275, 2),
-    err = _useState276[0],
-    setErr = _useState276[1];
-  var _useState277 = useState(null),
+    days = _useState276[0],
+    setDays = _useState276[1];
+  var _useState277 = useState(''),
     _useState278 = _slicedToArray(_useState277, 2),
-    open = _useState278[0],
-    setOpen = _useState278[1]; // { date, payload }
+    err = _useState278[0],
+    setErr = _useState278[1];
   var _useState279 = useState(null),
     _useState280 = _slicedToArray(_useState279, 2),
-    loadingDate = _useState280[0],
-    setLoadingDate = _useState280[1];
-  var _useState281 = useState(false),
+    open = _useState280[0],
+    setOpen = _useState280[1]; // { date, payload }
+  var _useState281 = useState(null),
     _useState282 = _slicedToArray(_useState281, 2),
-    expanded = _useState282[0],
-    setExpanded = _useState282[1];
+    loadingDate = _useState282[0],
+    setLoadingDate = _useState282[1];
+  var _useState283 = useState(false),
+    _useState284 = _slicedToArray(_useState283, 2),
+    expanded = _useState284[0],
+    setExpanded = _useState284[1];
   var today = todayStr();
   var results = getConnectionsResults();
   useEffect(function () {
@@ -17659,18 +17712,18 @@ function assembleSection(section, available) {
 function MiniExamCard() {
   var _useApp19 = useApp(),
     api = _useApp19.api;
-  var _useState283 = useState(null),
-    _useState284 = _slicedToArray(_useState283, 2),
-    stats = _useState284[0],
-    setStats = _useState284[1];
-  var _useState285 = useState(false),
+  var _useState285 = useState(null),
     _useState286 = _slicedToArray(_useState285, 2),
-    loading = _useState286[0],
-    setLoading = _useState286[1];
-  var _useState287 = useState(''),
+    stats = _useState286[0],
+    setStats = _useState286[1];
+  var _useState287 = useState(false),
     _useState288 = _slicedToArray(_useState287, 2),
-    err = _useState288[0],
-    setErr = _useState288[1];
+    loading = _useState288[0],
+    setLoading = _useState288[1];
+  var _useState289 = useState(''),
+    _useState290 = _slicedToArray(_useState289, 2),
+    err = _useState290[0],
+    setErr = _useState290[1];
   useEffect(function () {
     var alive = true;
     api.examBankStats().then(function (s) {
@@ -17843,18 +17896,18 @@ function DailyExamCard(_ref108) {
     attempts = _useApp20.attempts;
   var today = todayStr();
   var cached = getDailyExamPayload(today);
-  var _useState289 = useState(cached),
-    _useState290 = _slicedToArray(_useState289, 2),
-    payload = _useState290[0],
-    setPayload = _useState290[1];
-  var _useState291 = useState(cached ? 'ready' : 'idle'),
+  var _useState291 = useState(cached),
     _useState292 = _slicedToArray(_useState291, 2),
-    state = _useState292[0],
-    setState = _useState292[1]; // idle | generating | ready | unavailable | error
-  var _useState293 = useState(''),
+    payload = _useState292[0],
+    setPayload = _useState292[1];
+  var _useState293 = useState(cached ? 'ready' : 'idle'),
     _useState294 = _slicedToArray(_useState293, 2),
-    err = _useState294[0],
-    setErr = _useState294[1];
+    state = _useState294[0],
+    setState = _useState294[1]; // idle | generating | ready | unavailable | error
+  var _useState295 = useState(''),
+    _useState296 = _slicedToArray(_useState295, 2),
+    err = _useState296[0],
+    setErr = _useState296[1];
 
   // Chapters the student has mastered in the Lessons tab — i.e. passed the lesson's
   // final exam 100% (the lessonGates store). The daily exam can only draw from these;
@@ -18422,10 +18475,10 @@ function builtInLessonPoolFor(chapterId) {
 function LessonDrillCard(_ref110) {
   var term = _ref110.term,
     definition = _ref110.definition;
-  var _useState295 = useState(false),
-    _useState296 = _slicedToArray(_useState295, 2),
-    show = _useState296[0],
-    setShow = _useState296[1];
+  var _useState297 = useState(false),
+    _useState298 = _slicedToArray(_useState297, 2),
+    show = _useState298[0],
+    setShow = _useState298[1];
   return /*#__PURE__*/React.createElement("button", {
     onClick: function onClick() {
       return setShow(function (s) {
@@ -18452,10 +18505,10 @@ function LessonSection(_ref111) {
     locked = _ref111.locked;
   var _useFigureViewer2 = useFigureViewer(),
     openFigure = _useFigureViewer2.open;
-  var _useState297 = useState(false),
-    _useState298 = _slicedToArray(_useState297, 2),
-    open = _useState298[0],
-    setOpen = _useState298[1];
+  var _useState299 = useState(false),
+    _useState300 = _slicedToArray(_useState299, 2),
+    open = _useState300[0],
+    setOpen = _useState300[1];
   var paras = (sec.teach || '').split(/\n\n+/).map(function (p) {
     return p.trim();
   }).filter(Boolean);
@@ -18574,53 +18627,53 @@ function LessonGateQuiz(_ref112) {
   var _useApp21 = useApp(),
     addAttempt = _useApp21.addAttempt,
     updateLastAttempt = _useApp21.updateLastAttempt;
-  var _useState299 = useState(0),
-    _useState300 = _slicedToArray(_useState299, 2),
-    round = _useState300[0],
-    setRound = _useState300[1];
+  var _useState301 = useState(0),
+    _useState302 = _slicedToArray(_useState301, 2),
+    round = _useState302[0],
+    setRound = _useState302[1];
   var items = useMemo(function () {
     return shuffle(pool).slice(0, need);
   }, [pool, need, round]);
-  var _useState301 = useState(0),
-    _useState302 = _slicedToArray(_useState301, 2),
-    index = _useState302[0],
-    setIndex = _useState302[1];
-  var _useState303 = useState(false),
+  var _useState303 = useState(0),
     _useState304 = _slicedToArray(_useState303, 2),
-    answered = _useState304[0],
-    setAnswered = _useState304[1];
-  var _useState305 = useState(0),
+    index = _useState304[0],
+    setIndex = _useState304[1];
+  var _useState305 = useState(false),
     _useState306 = _slicedToArray(_useState305, 2),
-    correctCount = _useState306[0],
-    setCorrectCount = _useState306[1];
+    answered = _useState306[0],
+    setAnswered = _useState306[1];
   var _useState307 = useState(0),
     _useState308 = _slicedToArray(_useState307, 2),
-    scoredCount = _useState308[0],
-    setScoredCount = _useState308[1];
-  var _useState309 = useState({}),
+    correctCount = _useState308[0],
+    setCorrectCount = _useState308[1];
+  var _useState309 = useState(0),
     _useState310 = _slicedToArray(_useState309, 2),
-    answers = _useState310[0],
-    setAnswers = _useState310[1];
-  var _useState311 = useState(false),
+    scoredCount = _useState310[0],
+    setScoredCount = _useState310[1];
+  var _useState311 = useState({}),
     _useState312 = _slicedToArray(_useState311, 2),
-    done = _useState312[0],
-    setDone = _useState312[1];
+    answers = _useState312[0],
+    setAnswers = _useState312[1];
   var _useState313 = useState(false),
     _useState314 = _slicedToArray(_useState313, 2),
-    showCalc = _useState314[0],
-    setShowCalc = _useState314[1];
+    done = _useState314[0],
+    setDone = _useState314[1];
   var _useState315 = useState(false),
     _useState316 = _slicedToArray(_useState315, 2),
-    calcMin = _useState316[0],
-    setCalcMin = _useState316[1];
-  var _useState317 = useState(''),
+    showCalc = _useState316[0],
+    setShowCalc = _useState316[1];
+  var _useState317 = useState(false),
     _useState318 = _slicedToArray(_useState317, 2),
-    calcExpr = _useState318[0],
-    setCalcExpr = _useState318[1];
-  var _useState319 = useState(false),
+    calcMin = _useState318[0],
+    setCalcMin = _useState318[1];
+  var _useState319 = useState(''),
     _useState320 = _slicedToArray(_useState319, 2),
-    showTable = _useState320[0],
-    setShowTable = _useState320[1];
+    calcExpr = _useState320[0],
+    setCalcExpr = _useState320[1];
+  var _useState321 = useState(false),
+    _useState322 = _slicedToArray(_useState321, 2),
+    showTable = _useState322[0],
+    setShowTable = _useState322[1];
   var total = items.length;
   var scoreTotal = items.length;
   var item = items[index];
@@ -18820,22 +18873,22 @@ function ForceMasterModal(_ref115) {
     onVerifyPin = _ref115.onVerifyPin,
     onConfirmMaster = _ref115.onConfirmMaster,
     onClose = _ref115.onClose;
-  var _useState321 = useState('confirm'),
-    _useState322 = _slicedToArray(_useState321, 2),
-    step = _useState322[0],
-    setStep = _useState322[1]; // 'confirm' | 'password'
-  var _useState323 = useState(''),
+  var _useState323 = useState('confirm'),
     _useState324 = _slicedToArray(_useState323, 2),
-    pin = _useState324[0],
-    setPin = _useState324[1];
+    step = _useState324[0],
+    setStep = _useState324[1]; // 'confirm' | 'password'
   var _useState325 = useState(''),
     _useState326 = _slicedToArray(_useState325, 2),
-    err = _useState326[0],
-    setErr = _useState326[1];
-  var _useState327 = useState(false),
+    pin = _useState326[0],
+    setPin = _useState326[1];
+  var _useState327 = useState(''),
     _useState328 = _slicedToArray(_useState327, 2),
-    busy = _useState328[0],
-    setBusy = _useState328[1];
+    err = _useState328[0],
+    setErr = _useState328[1];
+  var _useState329 = useState(false),
+    _useState330 = _slicedToArray(_useState329, 2),
+    busy = _useState330[0],
+    setBusy = _useState330[1];
   var submitPin = /*#__PURE__*/function () {
     var _ref116 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee54() {
       var _t45;
@@ -18988,14 +19041,14 @@ function LessonReader(_ref117) {
   // Number of sections currently accessible. Mastered chapters are fully open.
   var unlocked = mastered ? total : Math.min(total, Math.max(G, (gate === null || gate === void 0 ? void 0 : gate.unlocked) || G));
   var allUnlocked = unlocked >= total;
-  var _useState329 = useState(null),
-    _useState330 = _slicedToArray(_useState329, 2),
-    quiz = _useState330[0],
-    setQuiz = _useState330[1]; // { kind, pool, need, unlockTo }
-  var _useState331 = useState(false),
+  var _useState331 = useState(null),
     _useState332 = _slicedToArray(_useState331, 2),
-    forceMaster = _useState332[0],
-    setForceMaster = _useState332[1]; // PIN-gated "master anyway" modal
+    quiz = _useState332[0],
+    setQuiz = _useState332[1]; // { kind, pool, need, unlockTo }
+  var _useState333 = useState(false),
+    _useState334 = _slicedToArray(_useState333, 2),
+    forceMaster = _useState334[0],
+    setForceMaster = _useState334[1]; // PIN-gated "master anyway" modal
 
   var poolThrough = function poolThrough(end) {
     var ids = new Set();
@@ -19153,18 +19206,18 @@ function LessonsView(_ref118) {
     extractions = _useApp22.extractions,
     attempts = _useApp22.attempts,
     stateRev = _useApp22.stateRev;
-  var _useState333 = useState(false),
-    _useState334 = _slicedToArray(_useState333, 2),
-    showAll = _useState334[0],
-    setShowAll = _useState334[1];
-  var _useState335 = useState('subject'),
+  var _useState335 = useState(false),
     _useState336 = _slicedToArray(_useState335, 2),
-    sortBy = _useState336[0],
-    setSortBy = _useState336[1]; // 'weakest' | 'subject'
-  var _useState337 = useState({}),
+    showAll = _useState336[0],
+    setShowAll = _useState336[1];
+  var _useState337 = useState('subject'),
     _useState338 = _slicedToArray(_useState337, 2),
-    openSubjects = _useState338[0],
-    setOpenSubjects = _useState338[1]; // subject -> expanded (collapsed by default)
+    sortBy = _useState338[0],
+    setSortBy = _useState338[1]; // 'weakest' | 'subject'
+  var _useState339 = useState({}),
+    _useState340 = _slicedToArray(_useState339, 2),
+    openSubjects = _useState340[0],
+    setOpenSubjects = _useState340[1]; // subject -> expanded (collapsed by default)
   var toggleSubject = function toggleSubject(s) {
     return setOpenSubjects(function (m) {
       return _objectSpread(_objectSpread({}, m), {}, {
@@ -19172,40 +19225,40 @@ function LessonsView(_ref118) {
       });
     });
   };
-  var _useState339 = useState(function () {
+  var _useState341 = useState(function () {
       return storage.get(KEYS.lessonsCache, {}) || {};
     }),
-    _useState340 = _slicedToArray(_useState339, 2),
-    lessonsCache = _useState340[0],
-    setLessonsCache = _useState340[1];
-  var _useState341 = useState(function () {
+    _useState342 = _slicedToArray(_useState341, 2),
+    lessonsCache = _useState342[0],
+    setLessonsCache = _useState342[1];
+  var _useState343 = useState(function () {
       return storage.get(KEYS.lessonProgress, {}) || {};
     }),
-    _useState342 = _slicedToArray(_useState341, 2),
-    progress = _useState342[0],
-    setProgress = _useState342[1];
-  var _useState343 = useState(function () {
+    _useState344 = _slicedToArray(_useState343, 2),
+    progress = _useState344[0],
+    setProgress = _useState344[1];
+  var _useState345 = useState(function () {
       return storage.get(KEYS.lessonGates, {}) || {};
     }),
-    _useState344 = _slicedToArray(_useState343, 2),
-    gates = _useState344[0],
-    setGates = _useState344[1];
-  var _useState345 = useState({}),
     _useState346 = _slicedToArray(_useState345, 2),
-    availMap = _useState346[0],
-    setAvailMap = _useState346[1]; // chapter_id -> lesson exists on server
+    gates = _useState346[0],
+    setGates = _useState346[1];
   var _useState347 = useState({}),
     _useState348 = _slicedToArray(_useState347, 2),
-    busy = _useState348[0],
-    setBusy = _useState348[1]; // chapter_id -> true while downloading
-  var _useState349 = useState(null),
+    availMap = _useState348[0],
+    setAvailMap = _useState348[1]; // chapter_id -> lesson exists on server
+  var _useState349 = useState({}),
     _useState350 = _slicedToArray(_useState349, 2),
-    openId = _useState350[0],
-    setOpenId = _useState350[1]; // chapter_id whose reader is open
-  var _useState351 = useState(''),
+    busy = _useState350[0],
+    setBusy = _useState350[1]; // chapter_id -> true while downloading
+  var _useState351 = useState(null),
     _useState352 = _slicedToArray(_useState351, 2),
-    error = _useState352[0],
-    setError = _useState352[1];
+    openId = _useState352[0],
+    setOpenId = _useState352[1]; // chapter_id whose reader is open
+  var _useState353 = useState(''),
+    _useState354 = _slicedToArray(_useState353, 2),
+    error = _useState354[0],
+    setError = _useState354[1];
   var fileToChapter = useMemo(function () {
     var m = {};
     var _iterator88 = _createForOfIteratorHelper(files),
@@ -20058,14 +20111,14 @@ function SyncPanel() {
     files = _useApp23.files,
     extractions = _useApp23.extractions,
     questions = _useApp23.questions;
-  var _useState353 = useState(false),
-    _useState354 = _slicedToArray(_useState353, 2),
-    showToken = _useState354[0],
-    setShowToken = _useState354[1];
   var _useState355 = useState(false),
     _useState356 = _slicedToArray(_useState355, 2),
-    expanded = _useState356[0],
-    setExpanded = _useState356[1];
+    showToken = _useState356[0],
+    setShowToken = _useState356[1];
+  var _useState357 = useState(false),
+    _useState358 = _slicedToArray(_useState357, 2),
+    expanded = _useState358[0],
+    setExpanded = _useState358[1];
   var fullyProcessed = files.filter(function (f) {
     var _questions$f$file_id7, _questions$f$file_id8;
     return extractions[f.file_id] && ((_questions$f$file_id7 = questions[f.file_id]) === null || _questions$f$file_id7 === void 0 ? void 0 : _questions$f$file_id7.mc) && ((_questions$f$file_id8 = questions[f.file_id]) === null || _questions$f$file_id8 === void 0 ? void 0 : _questions$f$file_id8.short);
@@ -20580,10 +20633,10 @@ function McatPredictionCard() {
     }, [attempts]),
     sections = _useMemo3.sections,
     total = _useMemo3.total;
-  var _useState357 = useState(false),
-    _useState358 = _slicedToArray(_useState357, 2),
-    expanded = _useState358[0],
-    setExpanded = _useState358[1];
+  var _useState359 = useState(false),
+    _useState360 = _slicedToArray(_useState359, 2),
+    expanded = _useState360[0],
+    setExpanded = _useState360[1];
   var fmt = function fmt(n) {
     return n.toFixed(1).replace(/\.0$/, '');
   };
@@ -20935,22 +20988,22 @@ function SettingsPanel(_ref141) {
   var hasDownloadedChapters = files.some(function (f) {
     return f.chapter_id;
   });
-  var _useState359 = useState(apiKey || ''),
-    _useState360 = _slicedToArray(_useState359, 2),
-    keyVal = _useState360[0],
-    setKeyVal = _useState360[1];
-  var _useState361 = useState(false),
+  var _useState361 = useState(apiKey || ''),
     _useState362 = _slicedToArray(_useState361, 2),
-    keyShow = _useState362[0],
-    setKeyShow = _useState362[1];
-  var _useState363 = useState(''),
+    keyVal = _useState362[0],
+    setKeyVal = _useState362[1];
+  var _useState363 = useState(false),
     _useState364 = _slicedToArray(_useState363, 2),
-    keyErr = _useState364[0],
-    setKeyErr = _useState364[1];
-  var _useState365 = useState(false),
+    keyShow = _useState364[0],
+    setKeyShow = _useState364[1];
+  var _useState365 = useState(''),
     _useState366 = _slicedToArray(_useState365, 2),
-    keyBusy = _useState366[0],
-    setKeyBusy = _useState366[1];
+    keyErr = _useState366[0],
+    setKeyErr = _useState366[1];
+  var _useState367 = useState(false),
+    _useState368 = _slicedToArray(_useState367, 2),
+    keyBusy = _useState368[0],
+    setKeyBusy = _useState368[1];
   var saveKey = /*#__PURE__*/function () {
     var _ref142 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee58() {
       var trimmed, _t48;
@@ -21275,12 +21328,12 @@ function SettingsPanel(_ref141) {
 // LZ-compression we ship typically lands the chapter blob at ~25% of the
 // original JSON; this is also where the user can verify the migration ran.
 function StorageUsageSection() {
-  var _useState367 = useState(function () {
+  var _useState369 = useState(function () {
       return computeStorageSnapshot();
     }),
-    _useState368 = _slicedToArray(_useState367, 2),
-    snap = _useState368[0],
-    setSnap = _useState368[1];
+    _useState370 = _slicedToArray(_useState369, 2),
+    snap = _useState370[0],
+    setSnap = _useState370[1];
   var fmtBytes = function fmtBytes(n) {
     if (n < 1024) return "".concat(n, " B");
     if (n < 1024 * 1024) return "".concat((n / 1024).toFixed(1), " KB");
@@ -21418,18 +21471,18 @@ function EraseQuizStatsSection() {
     attempts = _useApp27.attempts,
     session = _useApp27.session,
     eraseStatsFor = _useApp27.eraseStatsFor;
-  var _useState369 = useState(null),
-    _useState370 = _slicedToArray(_useState369, 2),
-    busy = _useState370[0],
-    setBusy = _useState370[1]; // day key currently being erased
   var _useState371 = useState(null),
     _useState372 = _slicedToArray(_useState371, 2),
-    msg = _useState372[0],
-    setMsg = _useState372[1];
+    busy = _useState372[0],
+    setBusy = _useState372[1]; // day key currently being erased
   var _useState373 = useState(null),
     _useState374 = _slicedToArray(_useState373, 2),
-    openDay = _useState374[0],
-    setOpenDay = _useState374[1];
+    msg = _useState374[0],
+    setMsg = _useState374[1];
+  var _useState375 = useState(null),
+    _useState376 = _slicedToArray(_useState375, 2),
+    openDay = _useState376[0],
+    setOpenDay = _useState376[1];
 
   // Group by local calendar day. Each day's bucket also keeps a per-quiz
   // (chapter+subject) breakdown so the user can see what they actually did
@@ -21625,14 +21678,14 @@ function PublishAllPanel() {
     extractions = _useApp28.extractions,
     questions = _useApp28.questions,
     setFiles = _useApp28.setFiles;
-  var _useState375 = useState(false),
-    _useState376 = _slicedToArray(_useState375, 2),
-    busy = _useState376[0],
-    setBusy = _useState376[1];
-  var _useState377 = useState(null),
+  var _useState377 = useState(false),
     _useState378 = _slicedToArray(_useState377, 2),
-    status = _useState378[0],
-    setStatus = _useState378[1];
+    busy = _useState378[0],
+    setBusy = _useState378[1];
+  var _useState379 = useState(null),
+    _useState380 = _slicedToArray(_useState379, 2),
+    status = _useState380[0],
+    setStatus = _useState380[1];
   var publishable = files.filter(function (f) {
     return extractions[f.file_id];
   });
@@ -21806,24 +21859,24 @@ function FlagFixesPanel() {
     extractions = _useApp29.extractions,
     questions = _useApp29.questions,
     setQuestionsFor = _useApp29.setQuestionsFor;
-  var _useState379 = useState(function () {
+  var _useState381 = useState(function () {
       return storage.get(KEYS.flagQueue, []);
     }),
-    _useState380 = _slicedToArray(_useState379, 2),
-    queue = _useState380[0],
-    setQueue = _useState380[1];
-  var _useState381 = useState(false),
     _useState382 = _slicedToArray(_useState381, 2),
-    busy = _useState382[0],
-    setBusy = _useState382[1];
-  var _useState383 = useState(null),
+    queue = _useState382[0],
+    setQueue = _useState382[1];
+  var _useState383 = useState(false),
     _useState384 = _slicedToArray(_useState383, 2),
-    status = _useState384[0],
-    setStatus = _useState384[1];
-  var _useState385 = useState([]),
+    busy = _useState384[0],
+    setBusy = _useState384[1];
+  var _useState385 = useState(null),
     _useState386 = _slicedToArray(_useState385, 2),
-    processedLog = _useState386[0],
-    setProcessedLog = _useState386[1];
+    status = _useState386[0],
+    setStatus = _useState386[1];
+  var _useState387 = useState([]),
+    _useState388 = _slicedToArray(_useState387, 2),
+    processedLog = _useState388[0],
+    setProcessedLog = _useState388[1];
   var pending = queue.filter(function (f) {
     return f.status === 'pending';
   });
@@ -22169,14 +22222,14 @@ function FlagRow(_ref150) {
   var f = _ref150.flag,
     onRemove = _ref150.onRemove,
     onRequeue = _ref150.onRequeue;
-  var _useState387 = useState(false),
-    _useState388 = _slicedToArray(_useState387, 2),
-    amending = _useState388[0],
-    setAmending = _useState388[1];
-  var _useState389 = useState(''),
+  var _useState389 = useState(false),
     _useState390 = _slicedToArray(_useState389, 2),
-    amendText = _useState390[0],
-    setAmendText = _useState390[1];
+    amending = _useState390[0],
+    setAmending = _useState390[1];
+  var _useState391 = useState(''),
+    _useState392 = _slicedToArray(_useState391, 2),
+    amendText = _useState392[0],
+    setAmendText = _useState392[1];
   var letters = ['A', 'B', 'C', 'D'];
   var fixed = f.fixed_question;
   return /*#__PURE__*/React.createElement("li", {
@@ -22256,21 +22309,21 @@ function CloudBankPanel() {
     setFiles = _useApp30.setFiles,
     setExtraction = _useApp30.setExtraction,
     setQuestionsFor = _useApp30.setQuestionsFor;
-  var _useState391 = useState({
+  var _useState393 = useState({
       state: 'idle',
       message: ''
     }),
-    _useState392 = _slicedToArray(_useState391, 2),
-    status = _useState392[0],
-    setStatus = _useState392[1];
-  var _useState393 = useState(null),
     _useState394 = _slicedToArray(_useState393, 2),
-    remote = _useState394[0],
-    setRemote = _useState394[1]; // { size_bytes, updated_at } | null
-  var _useState395 = useState(false),
+    status = _useState394[0],
+    setStatus = _useState394[1];
+  var _useState395 = useState(null),
     _useState396 = _slicedToArray(_useState395, 2),
-    busy = _useState396[0],
-    setBusy = _useState396[1];
+    remote = _useState396[0],
+    setRemote = _useState396[1]; // { size_bytes, updated_at } | null
+  var _useState397 = useState(false),
+    _useState398 = _slicedToArray(_useState397, 2),
+    busy = _useState398[0],
+    setBusy = _useState398[1];
 
   // On mount / login: probe whether the user has a published bank already.
   useEffect(function () {
@@ -22485,26 +22538,26 @@ function AccountPanel(_ref154) {
     session = _useApp31.session,
     setSession = _useApp31.setSession,
     api = _useApp31.api;
-  var _useState397 = useState('login'),
-    _useState398 = _slicedToArray(_useState397, 2),
-    mode = _useState398[0],
-    setMode = _useState398[1]; // 'login' | 'signup'
-  var _useState399 = useState(''),
+  var _useState399 = useState('login'),
     _useState400 = _slicedToArray(_useState399, 2),
-    username = _useState400[0],
-    setUsername = _useState400[1];
+    mode = _useState400[0],
+    setMode = _useState400[1]; // 'login' | 'signup'
   var _useState401 = useState(''),
     _useState402 = _slicedToArray(_useState401, 2),
-    pin = _useState402[0],
-    setPin = _useState402[1];
+    username = _useState402[0],
+    setUsername = _useState402[1];
   var _useState403 = useState(''),
     _useState404 = _slicedToArray(_useState403, 2),
-    err = _useState404[0],
-    setErr = _useState404[1];
-  var _useState405 = useState(false),
+    pin = _useState404[0],
+    setPin = _useState404[1];
+  var _useState405 = useState(''),
     _useState406 = _slicedToArray(_useState405, 2),
-    busy = _useState406[0],
-    setBusy = _useState406[1];
+    err = _useState406[0],
+    setErr = _useState406[1];
+  var _useState407 = useState(false),
+    _useState408 = _slicedToArray(_useState407, 2),
+    busy = _useState408[0],
+    setBusy = _useState408[1];
   if (session) {
     return /*#__PURE__*/React.createElement("div", {
       className: "bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-5"
@@ -22673,14 +22726,14 @@ function Leaderboard(_ref159) {
   var onPickUser = _ref159.onPickUser;
   var _useApp32 = useApp(),
     api = _useApp32.api;
-  var _useState407 = useState(null),
-    _useState408 = _slicedToArray(_useState407, 2),
-    data = _useState408[0],
-    setData = _useState408[1];
-  var _useState409 = useState(''),
+  var _useState409 = useState(null),
     _useState410 = _slicedToArray(_useState409, 2),
-    err = _useState410[0],
-    setErr = _useState410[1];
+    data = _useState410[0],
+    setData = _useState410[1];
+  var _useState411 = useState(''),
+    _useState412 = _slicedToArray(_useState411, 2),
+    err = _useState412[0],
+    setErr = _useState412[1];
   useEffect(function () {
     var cancelled = false;
     api.leaderboard().then(function (d) {
@@ -22894,26 +22947,26 @@ function AuditModal(_ref161) {
     files = _useApp33.files,
     setQuestionsFor = _useApp33.setQuestionsFor,
     questions = _useApp33.questions;
-  var _useState411 = useState('loading'),
-    _useState412 = _slicedToArray(_useState411, 2),
-    phase = _useState412[0],
-    setPhase = _useState412[1]; // loading | ready | verifying | done
-  var _useState413 = useState([]),
+  var _useState413 = useState('loading'),
     _useState414 = _slicedToArray(_useState413, 2),
-    mc = _useState414[0],
-    setMc = _useState414[1];
+    phase = _useState414[0],
+    setPhase = _useState414[1]; // loading | ready | verifying | done
   var _useState415 = useState([]),
     _useState416 = _slicedToArray(_useState415, 2),
-    flags = _useState416[0],
-    setFlags = _useState416[1]; // [{index, suggested_index, reason, q}]
-  var _useState417 = useState(null),
+    mc = _useState416[0],
+    setMc = _useState416[1];
+  var _useState417 = useState([]),
     _useState418 = _slicedToArray(_useState417, 2),
-    status = _useState418[0],
-    setStatus = _useState418[1];
-  var _useState419 = useState(new Set()),
+    flags = _useState418[0],
+    setFlags = _useState418[1]; // [{index, suggested_index, reason, q}]
+  var _useState419 = useState(null),
     _useState420 = _slicedToArray(_useState419, 2),
-    applied = _useState420[0],
-    setApplied = _useState420[1];
+    status = _useState420[0],
+    setStatus = _useState420[1];
+  var _useState421 = useState(new Set()),
+    _useState422 = _slicedToArray(_useState421, 2),
+    applied = _useState422[0],
+    setApplied = _useState422[1];
   useEffect(function () {
     var cancelled = false;
     api.getChapter(chapter.id).then(function (full) {
@@ -23271,53 +23324,53 @@ function BankTab() {
     setQuestionsFor = _useApp34.setQuestionsFor,
     files = _useApp34.files,
     contributorMode = _useApp34.contributorMode;
-  var _useState421 = useState(null),
-    _useState422 = _slicedToArray(_useState421, 2),
-    data = _useState422[0],
-    setData = _useState422[1];
-  var _useState423 = useState(''),
+  var _useState423 = useState(null),
     _useState424 = _slicedToArray(_useState423, 2),
-    err = _useState424[0],
-    setErr = _useState424[1];
-  var _useState425 = useState(null),
+    data = _useState424[0],
+    setData = _useState424[1];
+  var _useState425 = useState(''),
     _useState426 = _slicedToArray(_useState425, 2),
-    auditChapter = _useState426[0],
-    setAuditChapter = _useState426[1];
-  var _useState427 = useState(0),
+    err = _useState426[0],
+    setErr = _useState426[1];
+  var _useState427 = useState(null),
     _useState428 = _slicedToArray(_useState427, 2),
-    tick = _useState428[0],
-    setTick = _useState428[1];
-  var _useState429 = useState(null),
+    auditChapter = _useState428[0],
+    setAuditChapter = _useState428[1];
+  var _useState429 = useState(0),
     _useState430 = _slicedToArray(_useState429, 2),
-    busyId = _useState430[0],
-    setBusyId = _useState430[1]; // chapter id currently working
+    tick = _useState430[0],
+    setTick = _useState430[1];
   var _useState431 = useState(null),
     _useState432 = _slicedToArray(_useState431, 2),
-    busyKind = _useState432[0],
-    setBusyKind = _useState432[1]; // 'downloading' | 'contributing'
+    busyId = _useState432[0],
+    setBusyId = _useState432[1]; // chapter id currently working
   var _useState433 = useState(null),
     _useState434 = _slicedToArray(_useState433, 2),
-    status = _useState434[0],
-    setStatus = _useState434[1];
-  var _useState435 = useState(''),
+    busyKind = _useState434[0],
+    setBusyKind = _useState434[1]; // 'downloading' | 'contributing'
+  var _useState435 = useState(null),
     _useState436 = _slicedToArray(_useState435, 2),
-    filter = _useState436[0],
-    setFilter = _useState436[1];
+    status = _useState436[0],
+    setStatus = _useState436[1];
+  var _useState437 = useState(''),
+    _useState438 = _slicedToArray(_useState437, 2),
+    filter = _useState438[0],
+    setFilter = _useState438[1];
   // Captured once at mount — the timestamp of the user's previous Bank visit.
-  var _useState437 = useState(function () {
+  var _useState439 = useState(function () {
       return storage.get(KEYS.bankSeen, 0);
     }),
-    _useState438 = _slicedToArray(_useState437, 1),
-    seenAt = _useState438[0];
-  var _useState439 = useState(false),
-    _useState440 = _slicedToArray(_useState439, 2),
-    summaryDismissed = _useState440[0],
-    setSummaryDismissed = _useState440[1];
-  // Subjects collapse by default; user opens what they need.
-  var _useState441 = useState({}),
+    _useState440 = _slicedToArray(_useState439, 1),
+    seenAt = _useState440[0];
+  var _useState441 = useState(false),
     _useState442 = _slicedToArray(_useState441, 2),
-    openSubjects = _useState442[0],
-    setOpenSubjects = _useState442[1];
+    summaryDismissed = _useState442[0],
+    setSummaryDismissed = _useState442[1];
+  // Subjects collapse by default; user opens what they need.
+  var _useState443 = useState({}),
+    _useState444 = _slicedToArray(_useState443, 2),
+    openSubjects = _useState444[0],
+    setOpenSubjects = _useState444[1];
   var toggleSubject = function toggleSubject(s) {
     return setOpenSubjects(function (p) {
       return _objectSpread(_objectSpread({}, p), {}, {
@@ -23902,26 +23955,26 @@ function BanksBrowser() {
     setExtraction = _useApp35.setExtraction,
     setQuestionsFor = _useApp35.setQuestionsFor,
     files = _useApp35.files;
-  var _useState443 = useState(null),
-    _useState444 = _slicedToArray(_useState443, 2),
-    data = _useState444[0],
-    setData = _useState444[1];
-  var _useState445 = useState(''),
+  var _useState445 = useState(null),
     _useState446 = _slicedToArray(_useState445, 2),
-    err = _useState446[0],
-    setErr = _useState446[1];
-  var _useState447 = useState(0),
+    data = _useState446[0],
+    setData = _useState446[1];
+  var _useState447 = useState(''),
     _useState448 = _slicedToArray(_useState447, 2),
-    tick = _useState448[0],
-    setTick = _useState448[1];
-  var _useState449 = useState(null),
+    err = _useState448[0],
+    setErr = _useState448[1];
+  var _useState449 = useState(0),
     _useState450 = _slicedToArray(_useState449, 2),
-    busy = _useState450[0],
-    setBusy = _useState450[1]; // username currently downloading
+    tick = _useState450[0],
+    setTick = _useState450[1];
   var _useState451 = useState(null),
     _useState452 = _slicedToArray(_useState451, 2),
-    status = _useState452[0],
-    setStatus = _useState452[1]; // { username, msg, kind }
+    busy = _useState452[0],
+    setBusy = _useState452[1]; // username currently downloading
+  var _useState453 = useState(null),
+    _useState454 = _slicedToArray(_useState453, 2),
+    status = _useState454[0],
+    setStatus = _useState454[1]; // { username, msg, kind }
 
   useEffect(function () {
     var cancelled = false;
@@ -24068,14 +24121,14 @@ function UserProfile(_ref170) {
     onBack = _ref170.onBack;
   var _useApp36 = useApp(),
     api = _useApp36.api;
-  var _useState453 = useState(null),
-    _useState454 = _slicedToArray(_useState453, 2),
-    data = _useState454[0],
-    setData = _useState454[1];
-  var _useState455 = useState(''),
+  var _useState455 = useState(null),
     _useState456 = _slicedToArray(_useState455, 2),
-    err = _useState456[0],
-    setErr = _useState456[1];
+    data = _useState456[0],
+    setData = _useState456[1];
+  var _useState457 = useState(''),
+    _useState458 = _slicedToArray(_useState457, 2),
+    err = _useState458[0],
+    setErr = _useState458[1];
   useEffect(function () {
     var cancelled = false;
     setData(null);
@@ -24140,18 +24193,18 @@ function ServerStatsView() {
     session = _useApp38.session,
     pendingSync = _useApp38.pendingSync,
     syncBusy = _useApp38.syncBusy;
-  var _useState457 = useState(null),
-    _useState458 = _slicedToArray(_useState457, 2),
-    data = _useState458[0],
-    setData = _useState458[1];
-  var _useState459 = useState(''),
+  var _useState459 = useState(null),
     _useState460 = _slicedToArray(_useState459, 2),
-    err = _useState460[0],
-    setErr = _useState460[1];
-  var _useState461 = useState(0),
+    data = _useState460[0],
+    setData = _useState460[1];
+  var _useState461 = useState(''),
     _useState462 = _slicedToArray(_useState461, 2),
-    tick = _useState462[0],
-    setTick = _useState462[1];
+    err = _useState462[0],
+    setErr = _useState462[1];
+  var _useState463 = useState(0),
+    _useState464 = _slicedToArray(_useState463, 2),
+    tick = _useState464[0],
+    setTick = _useState464[1];
   useEffect(function () {
     if (!session) return;
     var cancelled = false;
@@ -24196,14 +24249,14 @@ function ServerStatsView() {
 function StorageWarning() {
   var _useApp39 = useApp(),
     clearAttempts = _useApp39.clearAttempts;
-  var _useState463 = useState(null),
-    _useState464 = _slicedToArray(_useState463, 2),
-    fail = _useState464[0],
-    setFail = _useState464[1]; // { key, quota, message } | null
-  var _useState465 = useState(0),
+  var _useState465 = useState(null),
     _useState466 = _slicedToArray(_useState465, 2),
-    usage = _useState466[0],
-    setUsage = _useState466[1];
+    fail = _useState466[0],
+    setFail = _useState466[1]; // { key, quota, message } | null
+  var _useState467 = useState(0),
+    _useState468 = _slicedToArray(_useState467, 2),
+    usage = _useState468[0],
+    setUsage = _useState468[1];
   useEffect(function () {
     var handler = function handler(e) {
       setFail(e.detail || {
@@ -24281,26 +24334,26 @@ function Shell() {
     palette = _useApp40.palette,
     mode = _useApp40.mode,
     contributorMode = _useApp40.contributorMode;
-  var _useState467 = useState('home'),
-    _useState468 = _slicedToArray(_useState467, 2),
-    tab = _useState468[0],
-    setTab = _useState468[1];
-  var _useState469 = useState(false),
+  var _useState469 = useState('home'),
     _useState470 = _slicedToArray(_useState469, 2),
-    showAccount = _useState470[0],
-    setShowAccount = _useState470[1];
+    tab = _useState470[0],
+    setTab = _useState470[1];
   var _useState471 = useState(false),
     _useState472 = _slicedToArray(_useState471, 2),
-    showSettings = _useState472[0],
-    setShowSettings = _useState472[1];
-  var _useState473 = useState(null),
+    showAccount = _useState472[0],
+    setShowAccount = _useState472[1];
+  var _useState473 = useState(false),
     _useState474 = _slicedToArray(_useState473, 2),
-    profileUser = _useState474[0],
-    setProfileUser = _useState474[1];
-  var _useState475 = useState(false),
+    showSettings = _useState474[0],
+    setShowSettings = _useState474[1];
+  var _useState475 = useState(null),
     _useState476 = _slicedToArray(_useState475, 2),
-    bankHasUpdates = _useState476[0],
-    setBankHasUpdates = _useState476[1];
+    profileUser = _useState476[0],
+    setProfileUser = _useState476[1];
+  var _useState477 = useState(false),
+    _useState478 = _slicedToArray(_useState477, 2),
+    bankHasUpdates = _useState478[0],
+    setBankHasUpdates = _useState478[1];
 
   // Bank update indicator: compare the newest chapter's updated_at against the
   // last time the user reviewed the Bank tab.
@@ -24332,10 +24385,10 @@ function Shell() {
 
   // Home dot: today's CARS is ready but the user hasn't done it yet.
   // Also downloads (caches) today's set on app entry so it opens instantly / offline.
-  var _useState477 = useState(false),
-    _useState478 = _slicedToArray(_useState477, 2),
-    carsReady = _useState478[0],
-    setCarsReady = _useState478[1];
+  var _useState479 = useState(false),
+    _useState480 = _slicedToArray(_useState479, 2),
+    carsReady = _useState480[0],
+    setCarsReady = _useState480[1];
   var recheckCars = useCallback(function () {
     var d = todayStr();
     var keys = Array.from({
@@ -24453,10 +24506,10 @@ function Shell() {
     return extractions[f.file_id] && ((_questions$f$file_id0 = questions[f.file_id]) === null || _questions$f$file_id0 === void 0 ? void 0 : _questions$f$file_id0.mc) && ((_questions$f$file_id1 = questions[f.file_id]) === null || _questions$f$file_id1 === void 0 ? void 0 : _questions$f$file_id1.short);
   }).length;
   var headerRef = useRef(null);
-  var _useState479 = useState(56),
-    _useState480 = _slicedToArray(_useState479, 2),
-    headerH = _useState480[0],
-    setHeaderH = _useState480[1];
+  var _useState481 = useState(56),
+    _useState482 = _slicedToArray(_useState481, 2),
+    headerH = _useState482[0],
+    setHeaderH = _useState482[1];
   useLayoutEffect(function () {
     var measure = function measure() {
       if (!headerRef.current) return;
