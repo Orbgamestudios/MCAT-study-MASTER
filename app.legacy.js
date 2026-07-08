@@ -15578,8 +15578,11 @@ function CarsRunner(_ref83) {
     className: "flex-1 text-sm py-3 bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] rounded-lg font-medium"
   }, "Done"))))), phase === 'attempt' && currentQ && /*#__PURE__*/React.createElement("div", {
     ref: questionPanelRef,
-    className: "fixed inset-x-0 bottom-0 z-50 bg-[var(--bg)] border-t border-[var(--border-soft)] px-3 py-3 sm:px-6",
+    className: "fixed inset-x-0 bottom-0 z-50 bg-[var(--bg)] border-t border-[var(--border-soft)] px-3 py-3 sm:px-6 overflow-y-auto",
     style: {
+      maxHeight: 'min(72vh, calc(100vh - 5rem))',
+      WebkitOverflowScrolling: 'touch',
+      overscrollBehavior: 'contain',
       paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))'
     }
   }, /*#__PURE__*/React.createElement("div", {
