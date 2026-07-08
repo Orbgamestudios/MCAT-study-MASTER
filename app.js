@@ -10377,7 +10377,18 @@ function DailyCarsSlotCard({ date, slot }) {
   const [err, setErr] = useState('');
   const [running, setRunning] = useState(false);
   const [tick, setTick] = useState(0);
+  const [resultRev, setResultRev] = useState(0);
   const result = getCarsResult(date);
+
+  useEffect(() => {
+    const sync = () => setResultRev((n) => n + 1);
+    window.addEventListener('mcat:carsDone', sync);
+    window.addEventListener('storage', sync);
+    return () => {
+      window.removeEventListener('mcat:carsDone', sync);
+      window.removeEventListener('storage', sync);
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -10442,7 +10453,7 @@ function DailyCarsSlotCard({ date, slot }) {
         }
       });
     return () => { cancelled = true; };
-  }, [api, date, slot, tick, apiKey, session]);
+  }, [api, date, slot, tick, resultRev, apiKey, session]);
 
   const card = (inner) => (
     <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-5">{inner}</div>
@@ -10537,7 +10548,18 @@ function CarsArchive() {
   const [open, setOpen] = useState(null); // { date, payload }
   const [loadingDate, setLoadingDate] = useState(null);
   const [expanded, setExpanded] = useState(false);
+  const [resultRev, setResultRev] = useState(0);
   const today = todayStr();
+
+  useEffect(() => {
+    const sync = () => setResultRev((n) => n + 1);
+    window.addEventListener('mcat:carsDone', sync);
+    window.addEventListener('storage', sync);
+    return () => {
+      window.removeEventListener('mcat:carsDone', sync);
+      window.removeEventListener('storage', sync);
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -10633,8 +10655,8 @@ function CarsArchive() {
         <CarsRunner
           date={open.date}
           payload={open.payload}
-          alreadyDone={!!results[open.date]}
-          onClose={() => setOpen(null)}
+          alreadyDone={!!getCarsResult(open.date)}
+          onClose={() => { setOpen(null); setResultRev((n) => n + 1); }}
         />
       )}
     </div>
@@ -15950,10 +15972,10 @@ function Shell() {
   }, [api]);
   useEffect(() => { recheckCars(); }, [recheckCars]);
   useEffect(() => {
-    const onDone = () => setCarsReady(false);
+    const onDone = () => recheckCars();
     window.addEventListener('mcat:carsDone', onDone);
     return () => window.removeEventListener('mcat:carsDone', onDone);
-  }, []);
+  }, [recheckCars]);
 
   // Online-status heartbeat: ping on mount, when the tab becomes visible, and on a
   // slow interval while open. Each authenticated hit bumps users.last_seen on the
