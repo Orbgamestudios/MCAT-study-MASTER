@@ -10058,16 +10058,12 @@ function CarsRunner({ date, payload, onClose, alreadyDone, label = 'Daily CARS',
   const [phase, setPhase] = useState(alreadyDone ? 'review' : 'attempt');
   const finalizedRef = useRef(false);
   const scrollRef = useRef(null);
-  const passageBlockRef = useRef(null);
-  const questionPanelRef = useRef(null);
   const [currentIdx, setCurrentIdx] = useState(() => {
     if (alreadyDone) return 0;
     const idx = questions.findIndex((q) => initialPicks[q.id] == null);
     return idx >= 0 ? idx : 0;
   });
-  const [passageSeen, setPassageSeen] = useState(alreadyDone);
   const [readerChromeHidden, setReaderChromeHidden] = useState(false);
-  const [panelH, setPanelH] = useState(190);
   // Elapsed-time timer. Ticks only during the 'attempt' phase, freezes
   // the moment the user submits, and resets back to 0 if they retry.
   const [elapsedMs, setElapsedMs] = useState(0);
@@ -10098,7 +10094,7 @@ function CarsRunner({ date, payload, onClose, alreadyDone, label = 'Daily CARS',
   const missed = questions.length - score;
 
   const pick = (q, i) => {
-    if (phase !== 'attempt' || !passageSeen || picks[q.id] != null) return;
+    if (phase !== 'attempt' || picks[q.id] != null) return;
     sfxTap(); vibrateTap();
     const correct = i === q.correct_index;
     playSfx(correct ? 'correct' : 'wrong');
@@ -10146,7 +10142,6 @@ function CarsRunner({ date, payload, onClose, alreadyDone, label = 'Daily CARS',
     startRef.current = null;
     setPicks({});
     setCurrentIdx(0);
-    setPassageSeen(false);
     setPhase('attempt');
     scrollTop();
   };
@@ -10154,44 +10149,6 @@ function CarsRunner({ date, payload, onClose, alreadyDone, label = 'Daily CARS',
   const goReview = () => { setPhase('review'); scrollTop(); };
 
   const exportPdf = () => downloadCarsPdf({ date, payload, questions, picks, score, elapsedMs });
-
-  useLayoutEffect(() => {
-    const measure = () => {
-      if (questionPanelRef.current) setPanelH(questionPanelRef.current.offsetHeight || 190);
-    };
-    measure();
-    const ro = typeof ResizeObserver !== 'undefined' && questionPanelRef.current
-      ? new ResizeObserver(measure)
-      : null;
-    if (ro) ro.observe(questionPanelRef.current);
-    window.addEventListener('resize', measure);
-    return () => {
-      if (ro) ro.disconnect();
-      window.removeEventListener('resize', measure);
-    };
-  }, [phase, currentIdx, currentPicked, passageSeen]);
-
-  useEffect(() => {
-    if (phase !== 'attempt') {
-      setPassageSeen(alreadyDone);
-      return;
-    }
-    const scroller = scrollRef.current;
-    const passageEl = passageBlockRef.current;
-    if (!scroller || !passageEl) return;
-    const check = () => {
-      const bottom = passageEl.getBoundingClientRect().bottom;
-      const unlockLine = window.innerHeight - panelH - 12;
-      setPassageSeen(bottom <= unlockLine);
-    };
-    check();
-    scroller.addEventListener('scroll', check);
-    window.addEventListener('resize', check);
-    return () => {
-      scroller.removeEventListener('scroll', check);
-      window.removeEventListener('resize', check);
-    };
-  }, [phase, panelH, alreadyDone]);
 
   useEffect(() => {
     if (phase !== 'attempt') {
@@ -10236,32 +10193,30 @@ function CarsRunner({ date, payload, onClose, alreadyDone, label = 'Daily CARS',
           marginTop:0 defeats an inherited Tailwind `space-y` margin when this
           fixed overlay is launched as a sibling inside a space-y container
           (the Home tab) — without it the banner sits a row's gap too low. */}
-      {!readerChromeHidden && (
-        <div className="sticky top-0 z-10 bg-[var(--bg)] border-b border-[var(--border-soft)] px-3 sm:px-6 py-2">
-          <div className="max-w-3xl mx-auto flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <div className="text-xs uppercase tracking-wide text-[var(--text-muted)]">{label} · {date}</div>
-              <h2 className="font-semibold text-[var(--text-strong)] truncate">{payload.title || payload.discipline || 'CARS passage'}</h2>
-            </div>
-            <div className="flex items-center gap-2 shrink-0">
-              {phase === 'attempt' && (
-                <>
-                  <span
-                    className="text-xs font-mono text-[var(--text-muted)] tabular-nums"
-                    title="Time spent on this passage"
-                  >⏱ {timerDisplay}</span>
-                  <span className="text-xs font-mono text-[var(--text-muted)]">{answeredCount}/{questions.length}</span>
-                </>
-              )}
-              {phase === 'graded' && (
-                <span className="text-xs font-mono text-[var(--text-muted)] tabular-nums" title="Time spent">⏱ {timerDisplay}</span>
-              )}
-              {phase === 'review' && <span className="text-xs font-mono text-[var(--text-muted)]">{score}/{questions.length}</span>}
-              <button onClick={onClose} className="text-xs px-3 py-1.5 border border-[var(--border)] rounded hover:bg-[var(--bg-hover)]">Close</button>
-            </div>
+      <div className="sticky top-0 z-10 bg-[var(--bg)] border-b border-[var(--border-soft)] px-3 sm:px-6 py-2">
+        <div className="max-w-3xl mx-auto flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-xs uppercase tracking-wide text-[var(--text-muted)]">{label} · {date}</div>
+            <h2 className="font-semibold text-[var(--text-strong)] truncate">{payload.title || payload.discipline || 'CARS passage'}</h2>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            {phase === 'attempt' && (
+              <>
+                <span
+                  className="text-xs font-mono text-[var(--text-muted)] tabular-nums"
+                  title="Time spent on this passage"
+                >⏱ {timerDisplay}</span>
+                <span className="text-xs font-mono text-[var(--text-muted)]">{answeredCount}/{questions.length}</span>
+              </>
+            )}
+            {phase === 'graded' && (
+              <span className="text-xs font-mono text-[var(--text-muted)] tabular-nums" title="Time spent">⏱ {timerDisplay}</span>
+            )}
+            {phase === 'review' && <span className="text-xs font-mono text-[var(--text-muted)]">{score}/{questions.length}</span>}
+            <button onClick={onClose} className="text-xs px-3 py-1.5 border border-[var(--border)] rounded hover:bg-[var(--bg-hover)]">Close</button>
           </div>
         </div>
-      )}
+      </div>
       <div className="max-w-3xl mx-auto p-3 sm:p-6 space-y-4">
         {/* Graded screen — score only, no answers revealed */}
         {phase === 'graded' ? (
@@ -10299,7 +10254,7 @@ function CarsRunner({ date, payload, onClose, alreadyDone, label = 'Daily CARS',
         ) : (
           <>
             {/* Passage */}
-            <div ref={passageBlockRef} className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-6">
+            <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-6">
               <div className="text-[10px] uppercase tracking-wide text-[var(--text-faint)] mb-2">
                 {payload.discipline}{payload.source ? ` · ${payload.source}` : ''}
               </div>
@@ -10309,59 +10264,17 @@ function CarsRunner({ date, payload, onClose, alreadyDone, label = 'Daily CARS',
               <PassageTable table={payload.table} />
             </div>
 
-            {phase === 'attempt' && <div aria-hidden="true" style={{ height: panelH + 24 }} />}
-            {phase === 'review' && (
-              <>
-                <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 text-center">
-                  <span className="text-sm text-[var(--text-muted)]">Score: </span>
-                  <span className="text-lg font-bold text-[var(--text-strong)]">{score}/{questions.length}</span>
+            {phase === 'attempt' && currentQ && (
+              <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-5 space-y-3">
+                <div className="flex items-start gap-2">
+                  <span className="text-[var(--text-faint)] font-mono text-sm shrink-0">{currentIdx + 1}/{questions.length}</span>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[10px] uppercase tracking-wide text-[var(--accent-text)]">
+                      {currentQ.category}{currentQ.subtype ? ` · ${currentQ.subtype}` : ''}
+                    </div>
+                    <p className="text-sm sm:text-base leading-relaxed text-[var(--text-strong)] mt-0.5">{currentQ.question}</p>
+                  </div>
                 </div>
-                {questions.map((q, i) => (
-                  <CarsQuestion
-                    key={q.id}
-                    q={q}
-                    index={i}
-                    picked={picks[q.id] != null ? picks[q.id] : null}
-                    onPick={(idx) => pick(q, idx)}
-                    reveal
-                  />
-                ))}
-                <div className="flex gap-2">
-                  <button onClick={exportPdf} className="flex-1 text-sm py-3 border border-[var(--border)] hover:bg-[var(--bg-hover)] rounded-lg font-medium">
-                    Download PDF
-                  </button>
-                  <button onClick={onClose} className="flex-1 text-sm py-3 bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] rounded-lg font-medium">
-                    Done
-                  </button>
-                </div>
-              </>
-            )}
-          </>
-        )}
-      </div>
-      {phase === 'attempt' && currentQ && (
-        <div
-          ref={questionPanelRef}
-          className="fixed inset-x-0 bottom-0 z-50 bg-[var(--bg)] border-t border-[var(--border-soft)] px-3 py-3 sm:px-6 overflow-y-auto"
-          style={{
-            maxHeight: 'min(72vh, calc(100vh - 5rem))',
-            WebkitOverflowScrolling: 'touch',
-            overscrollBehavior: 'contain',
-            paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))',
-          }}
-        >
-          <div className="max-w-3xl mx-auto space-y-3">
-            <div className="flex items-start gap-2">
-              <span className="text-[var(--text-faint)] font-mono text-sm shrink-0">{currentIdx + 1}/{questions.length}</span>
-              <div className="min-w-0 flex-1">
-                <div className="text-[10px] uppercase tracking-wide text-[var(--accent-text)]">
-                  {currentQ.category}{currentQ.subtype ? ` · ${currentQ.subtype}` : ''}
-                </div>
-                <p className="text-sm sm:text-base leading-relaxed text-[var(--text-strong)] mt-0.5">{currentQ.question}</p>
-              </div>
-            </div>
-            {passageSeen && (
-              <>
                 <div className="grid gap-2 sm:grid-cols-2">
                   {(currentQ.choices || []).map((choice, i) => {
                     const picked = currentPicked === i;
@@ -10416,11 +10329,37 @@ function CarsRunner({ date, payload, onClose, alreadyDone, label = 'Daily CARS',
                     </div>
                   </div>
                 )}
+              </div>
+            )}
+            {phase === 'review' && (
+              <>
+                <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 text-center">
+                  <span className="text-sm text-[var(--text-muted)]">Score: </span>
+                  <span className="text-lg font-bold text-[var(--text-strong)]">{score}/{questions.length}</span>
+                </div>
+                {questions.map((q, i) => (
+                  <CarsQuestion
+                    key={q.id}
+                    q={q}
+                    index={i}
+                    picked={picks[q.id] != null ? picks[q.id] : null}
+                    onPick={(idx) => pick(q, idx)}
+                    reveal
+                  />
+                ))}
+                <div className="flex gap-2">
+                  <button onClick={exportPdf} className="flex-1 text-sm py-3 border border-[var(--border)] hover:bg-[var(--bg-hover)] rounded-lg font-medium">
+                    Download PDF
+                  </button>
+                  <button onClick={onClose} className="flex-1 text-sm py-3 bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] rounded-lg font-medium">
+                    Done
+                  </button>
+                </div>
               </>
             )}
-          </div>
-        </div>
-      )}
+          </>
+        )}
+      </div>
     </div>
   );
 }
