@@ -4153,11 +4153,15 @@ function makeClient(getKey) {
   async function generatePracticePassage({ section, focus, avoid = [] }) {
     const guide = await loadPassageGuide();
     const science = !/cars|critical/i.test(section || '');
-    const recent = (avoid || []).slice(0, 8).map((p, i) =>
-      `${i + 1}. ${p.title || 'Untitled'}${p.discipline ? ` (${p.discipline})` : ''}: ${String(p.passage || '').slice(0, 360).replace(/\s+/g, ' ')}`
-    ).join('\n');
     let lastError = null;
-    for (let attempt = 0; attempt < 2; attempt++) {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const recent = (avoid || []).slice(0, attempt ? 4 : 6).map((p, i) =>
+        `${i + 1}. ${p.title || 'Untitled'}${p.discipline ? ` (${p.discipline})` : ''}: ${String(p.passage || '').slice(0, attempt ? 220 : 300).replace(/\s+/g, ' ')}`
+      ).join('\n');
+      const compactRules =
+        'HARD LENGTH LIMITS: passage 300-425 words for science or 450-550 words for CARS; ' +
+        'table cells under 12 words; question stems under 45 words; explanations 1-2 short sentences; ' +
+        'each choice_explanation under 14 words. Do not include markdown, citations, headings, or extra text.';
       const resp = await generate({
         maxOutputTokens: 32768,
         disableThinking: true,
@@ -4172,13 +4176,23 @@ function makeClient(getKey) {
             `Optional focus from the student: ${focus || 'Choose a high-yield topic for this section.'}\n\n` +
             (science ? 'This is a science passage, so you MUST include a structured `table` object with columns and rows. At least one question must require interpreting that table.\n' : '') +
             (recent ? `Do not repeat or closely paraphrase any of these recent generated passages for this section:\n${recent}\n\n` : '') +
-            (attempt ? 'The previous attempt was rejected because it was too similar to a recent passage or was missing a usable table. Generate a clearly different passage now.\n\n' : '') +
+            (attempt ? 'The previous attempt was rejected because it was too long, too similar to a recent passage, or missing a usable table. Generate a shorter and clearly different passage now.\n\n' : '') +
+            compactRules + '\n\n' +
             'Write one passage and exactly six questions. Make it AAMC-style, passage-driven, and slightly harder than a normal single passage block.',
           }],
         }],
         responseSchema: PRACTICE_PASSAGE_SCHEMA,
       });
-      const data = extractJson(resp);
+      let data;
+      try {
+        data = extractJson(resp);
+      } catch (e) {
+        if (resp?.candidates?.[0]?.finishReason === 'MAX_TOKENS' || /MAX_TOKENS|truncated/i.test(e.message || '')) {
+          lastError = new GeminiError(0, 'Gemini kept returning oversized passages. Try again or use a narrower focus.');
+          continue;
+        }
+        throw e;
+      }
       data.table = normalizePracticePassageTable(data.table, data.passage);
       if (science && !hasPracticePassageTable(data.table)) {
         lastError = new GeminiError(0, 'Generated passage did not include a usable table. Retry for a clean set.');
@@ -4198,7 +4212,7 @@ function makeClient(getKey) {
       }));
       return data;
     }
-    throw lastError || new GeminiError(0, 'Could not generate a fresh passage. Retry for a clean set.');
+    throw lastError || new GeminiError(0, 'Could not generate a compact fresh passage. Retry once more.');
   }
 
   // ---- short answer generation ----

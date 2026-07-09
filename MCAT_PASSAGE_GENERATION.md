@@ -119,7 +119,7 @@ Common reasoning moves:
 
 ### Science passage length and shape
 
-- Write 350-550 words.
+- Write 300-425 words.
 - Use 3-6 paragraphs.
 - Include a concrete study, model, patient/lab scenario, or data description.
 - Include one compact structured `table` object with 2-4 columns and 2-4 rows. At least one question must require interpreting it.
@@ -130,7 +130,7 @@ Common reasoning moves:
 
 ### CARS passage length and shape
 
-- Write 500-600 words.
+- Write 450-550 words.
 - Use 4-6 paragraphs.
 - No headings, tables, equations, or bullet lists.
 - Build around a single arguable thesis.
@@ -169,8 +169,8 @@ Every question:
 - Uses similar length and register across choices.
 - Avoids "all of the above" and "none of the above."
 - Avoids giveaway wording.
-- Includes a 2-4 sentence explanation.
-- Includes four `choice_explanations`, one for each choice.
+- Includes a 1-2 sentence explanation.
+- Includes four brief `choice_explanations`, one for each choice. Each should be under 14 words.
 
 ## Distractor rules
 
@@ -264,6 +264,7 @@ Before returning, verify:
 - At least four science questions require the passage.
 - CARS questions require no outside knowledge.
 - No answer choice is obviously wrong filler.
+- Output must stay compact enough to finish as valid JSON. Do not exceed the length limits.
 
 ## Research sources
 

@@ -4004,21 +4004,21 @@ function ghGetSha(_x5) {
 }
 function _ghGetSha() {
   _ghGetSha = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee73(_ref3) {
-    var token, repo, branch, path, url, res, j, _t68, _t69, _t70, _t71, _t72, _t73;
+    var token, repo, branch, path, url, res, j, _t69, _t70, _t71, _t72, _t73, _t74;
     return _regenerator().w(function (_context82) {
       while (1) switch (_context82.n) {
         case 0:
           token = _ref3.token, repo = _ref3.repo, branch = _ref3.branch, path = _ref3.path;
           url = "https://api.github.com/repos/".concat(repo, "/contents/").concat(encodeURIComponent(path), "?ref=").concat(encodeURIComponent(branch));
-          _t68 = fetch;
-          _t69 = url;
+          _t69 = fetch;
+          _t70 = url;
           _context82.n = 1;
           return ghHeaders(token);
         case 1:
-          _t70 = _context82.v;
+          _t71 = _context82.v;
           _context82.n = 2;
-          return _t68(_t69, {
-            headers: _t70
+          return _t69(_t70, {
+            headers: _t71
           });
         case 2:
           res = _context82.v;
@@ -4032,13 +4032,13 @@ function _ghGetSha() {
             _context82.n = 5;
             break;
           }
-          _t71 = Error;
-          _t72 = "GitHub GET ".concat(res.status, ": ");
+          _t72 = Error;
+          _t73 = "GitHub GET ".concat(res.status, ": ");
           _context82.n = 4;
           return res.text();
         case 4:
-          _t73 = _t72.concat.call(_t72, _context82.v.slice(0, 200));
-          throw new _t71(_t73);
+          _t74 = _t73.concat.call(_t73, _context82.v.slice(0, 200));
+          throw new _t72(_t74);
         case 5:
           _context82.n = 6;
           return res.json();
@@ -4055,7 +4055,7 @@ function ghPutFile(_x6, _x7, _x8, _x9) {
 }
 function _ghPutFile() {
   _ghPutFile = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee74(_ref4, content, sha, message) {
-    var token, repo, branch, path, url, body, res, _t74, _t75, _t76, _t77, _t78, _t79, _t80, _t81, _t82, _t83;
+    var token, repo, branch, path, url, body, res, _t75, _t76, _t77, _t78, _t79, _t80, _t81, _t82, _t83, _t84;
     return _regenerator().w(function (_context83) {
       while (1) switch (_context83.n) {
         case 0:
@@ -4067,23 +4067,23 @@ function _ghPutFile() {
             branch
           };
           if (sha) body.sha = sha;
-          _t74 = fetch;
-          _t75 = url;
-          _t76 = _objectSpread;
+          _t75 = fetch;
+          _t76 = url;
           _t77 = _objectSpread;
-          _t78 = {};
+          _t78 = _objectSpread;
+          _t79 = {};
           _context83.n = 1;
           return ghHeaders(token);
         case 1:
-          _t79 = _t76(_t77(_t78, _context83.v), {}, {
+          _t80 = _t77(_t78(_t79, _context83.v), {}, {
             'Content-Type': 'application/json'
           });
-          _t80 = JSON.stringify(body);
+          _t81 = JSON.stringify(body);
           _context83.n = 2;
-          return _t74(_t75, {
+          return _t75(_t76, {
             method: 'PUT',
-            headers: _t79,
-            body: _t80
+            headers: _t80,
+            body: _t81
           });
         case 2:
           res = _context83.v;
@@ -4091,13 +4091,13 @@ function _ghPutFile() {
             _context83.n = 4;
             break;
           }
-          _t81 = Error;
-          _t82 = "GitHub PUT ".concat(res.status, ": ");
+          _t82 = Error;
+          _t83 = "GitHub PUT ".concat(res.status, ": ");
           _context83.n = 3;
           return res.text();
         case 3:
-          _t83 = _t82.concat.call(_t82, _context83.v.slice(0, 200));
-          throw new _t81(_t83);
+          _t84 = _t83.concat.call(_t83, _context83.v.slice(0, 200));
+          throw new _t82(_t84);
         case 4:
           return _context83.a(2, res.json());
       }
@@ -5631,7 +5631,7 @@ function makeClient(getKey) {
   } // ---- short answer generation ----
   function _generatePracticePassage() {
     _generatePracticePassage = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee0(_ref8) {
-      var section, focus, _ref8$avoid, avoid, guide, science, recent, lastError, _loop2, _ret2, attempt;
+      var section, focus, _ref8$avoid, avoid, guide, science, lastError, _loop2, _ret2, attempt;
       return _regenerator().w(function (_context1) {
         while (1) switch (_context1.n) {
           case 0:
@@ -5641,15 +5641,16 @@ function makeClient(getKey) {
           case 1:
             guide = _context1.v;
             science = !/cars|critical/i.test(section || '');
-            recent = (avoid || []).slice(0, 8).map(function (p, i) {
-              return "".concat(i + 1, ". ").concat(p.title || 'Untitled').concat(p.discipline ? " (".concat(p.discipline, ")") : '', ": ").concat(String(p.passage || '').slice(0, 360).replace(/\s+/g, ' '));
-            }).join('\n');
             lastError = null;
-            _loop2 = /*#__PURE__*/_regenerator().m(function _loop2() {
-              var resp, data, _validateMCQuestions3, questions, answerSlots;
+            _loop2 = /*#__PURE__*/_regenerator().m(function _loop2(attempt) {
+              var recent, compactRules, resp, data, _resp$candidates3, _validateMCQuestions3, questions, answerSlots, _t2;
               return _regenerator().w(function (_context0) {
-                while (1) switch (_context0.n) {
+                while (1) switch (_context0.p = _context0.n) {
                   case 0:
+                    recent = (avoid || []).slice(0, attempt ? 4 : 6).map(function (p, i) {
+                      return "".concat(i + 1, ". ").concat(p.title || 'Untitled').concat(p.discipline ? " (".concat(p.discipline, ")") : '', ": ").concat(String(p.passage || '').slice(0, attempt ? 220 : 300).replace(/\s+/g, ' '));
+                    }).join('\n');
+                    compactRules = 'HARD LENGTH LIMITS: passage 300-425 words for science or 450-550 words for CARS; ' + 'table cells under 12 words; question stems under 45 words; explanations 1-2 short sentences; ' + 'each choice_explanation under 14 words. Do not include markdown, citations, headings, or extra text.';
                     _context0.n = 1;
                     return generate({
                       maxOutputTokens: 32768,
@@ -5658,36 +5659,51 @@ function makeClient(getKey) {
                       contents: [{
                         role: 'user',
                         parts: [{
-                          text: "Generate one complete MCAT practice passage set for section: ".concat(section, ".\n") + "Optional focus from the student: ".concat(focus || 'Choose a high-yield topic for this section.', "\n\n") + (science ? 'This is a science passage, so you MUST include a structured `table` object with columns and rows. At least one question must require interpreting that table.\n' : '') + (recent ? "Do not repeat or closely paraphrase any of these recent generated passages for this section:\n".concat(recent, "\n\n") : '') + (attempt ? 'The previous attempt was rejected because it was too similar to a recent passage or was missing a usable table. Generate a clearly different passage now.\n\n' : '') + 'Write one passage and exactly six questions. Make it AAMC-style, passage-driven, and slightly harder than a normal single passage block.'
+                          text: "Generate one complete MCAT practice passage set for section: ".concat(section, ".\n") + "Optional focus from the student: ".concat(focus || 'Choose a high-yield topic for this section.', "\n\n") + (science ? 'This is a science passage, so you MUST include a structured `table` object with columns and rows. At least one question must require interpreting that table.\n' : '') + (recent ? "Do not repeat or closely paraphrase any of these recent generated passages for this section:\n".concat(recent, "\n\n") : '') + (attempt ? 'The previous attempt was rejected because it was too long, too similar to a recent passage, or missing a usable table. Generate a shorter and clearly different passage now.\n\n' : '') + compactRules + '\n\n' + 'Write one passage and exactly six questions. Make it AAMC-style, passage-driven, and slightly harder than a normal single passage block.'
                         }]
                       }],
                       responseSchema: PRACTICE_PASSAGE_SCHEMA
                     });
                   case 1:
                     resp = _context0.v;
+                    _context0.p = 2;
                     data = extractJson(resp);
+                    _context0.n = 5;
+                    break;
+                  case 3:
+                    _context0.p = 3;
+                    _t2 = _context0.v;
+                    if (!((resp === null || resp === void 0 || (_resp$candidates3 = resp.candidates) === null || _resp$candidates3 === void 0 || (_resp$candidates3 = _resp$candidates3[0]) === null || _resp$candidates3 === void 0 ? void 0 : _resp$candidates3.finishReason) === 'MAX_TOKENS' || /MAX_TOKENS|truncated/i.test(_t2.message || ''))) {
+                      _context0.n = 4;
+                      break;
+                    }
+                    lastError = new GeminiError(0, 'Gemini kept returning oversized passages. Try again or use a narrower focus.');
+                    return _context0.a(2, 0);
+                  case 4:
+                    throw _t2;
+                  case 5:
                     data.table = normalizePracticePassageTable(data.table, data.passage);
                     if (!(science && !hasPracticePassageTable(data.table))) {
-                      _context0.n = 2;
+                      _context0.n = 6;
                       break;
                     }
                     lastError = new GeminiError(0, 'Generated passage did not include a usable table. Retry for a clean set.');
                     return _context0.a(2, 0);
-                  case 2:
+                  case 6:
                     if (!practicePassageLooksRepeated(data, avoid)) {
-                      _context0.n = 3;
+                      _context0.n = 7;
                       break;
                     }
                     lastError = new GeminiError(0, 'Generated passage was too similar to one already in your bank. Retry for a fresh set.');
                     return _context0.a(2, 0);
-                  case 3:
+                  case 7:
                     _validateMCQuestions3 = validateMCQuestions(data.questions), questions = _validateMCQuestions3.questions;
                     if (!(questions.length !== 6)) {
-                      _context0.n = 4;
+                      _context0.n = 8;
                       break;
                     }
                     throw new GeminiError(0, "Generated ".concat(questions.length, "/6 valid questions. Retry for a clean set."));
-                  case 4:
+                  case 8:
                     answerSlots = [0, 1, 2, 3, 0, 1].sort(function () {
                       return Math.random() - 0.5;
                     });
@@ -5701,15 +5717,15 @@ function makeClient(getKey) {
                       v: data
                     });
                 }
-              }, _loop2);
+              }, _loop2, null, [[2, 3]]);
             });
             attempt = 0;
           case 2:
-            if (!(attempt < 2)) {
+            if (!(attempt < 3)) {
               _context1.n = 6;
               break;
             }
-            return _context1.d(_regeneratorValues(_loop2()), 3);
+            return _context1.d(_regeneratorValues(_loop2(attempt)), 3);
           case 3:
             _ret2 = _context1.v;
             if (!(_ret2 === 0)) {
@@ -5728,7 +5744,7 @@ function makeClient(getKey) {
             _context1.n = 2;
             break;
           case 6:
-            throw lastError || new GeminiError(0, 'Could not generate a fresh passage. Retry for a clean set.');
+            throw lastError || new GeminiError(0, 'Could not generate a compact fresh passage. Retry once more.');
           case 7:
             return _context1.a(2);
         }
@@ -6642,7 +6658,7 @@ function makeApiClient(getToken) {
         res,
         data,
         _args26 = arguments,
-        _t2;
+        _t3;
       return _regenerator().w(function (_context26) {
         while (1) switch (_context26.p = _context26.n) {
           case 0:
@@ -6680,7 +6696,7 @@ function makeApiClient(getToken) {
             break;
           case 6:
             _context26.p = 6;
-            _t2 = _context26.v;
+            _t3 = _context26.v;
           case 7:
             if (res.ok) {
               _context26.n = 8;
@@ -7080,7 +7096,7 @@ function forceUpdateApp() {
 } // ---------- app context ----------
 function _forceUpdateApp() {
   _forceUpdateApp = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee76() {
-    var keys, regs, url, _t84;
+    var keys, regs, url, _t85;
     return _regenerator().w(function (_context85) {
       while (1) switch (_context85.p = _context85.n) {
         case 0:
@@ -7115,7 +7131,7 @@ function _forceUpdateApp() {
           break;
         case 5:
           _context85.p = 5;
-          _t84 = _context85.v;
+          _t85 = _context85.v;
         case 6:
           url = new URL(window.location.href);
           url.searchParams.set('_t', Date.now().toString());
@@ -7318,7 +7334,7 @@ function AppProvider(_ref18) {
     });
   }, []);
   var pushBank = useCallback(/*#__PURE__*/_asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee24() {
-    var cur, _t3;
+    var cur, _t4;
     return _regenerator().w(function (_context27) {
       while (1) switch (_context27.p = _context27.n) {
         case 0:
@@ -7344,11 +7360,11 @@ function AppProvider(_ref18) {
           return _context27.a(2, true);
         case 3:
           _context27.p = 3;
-          _t3 = _context27.v;
+          _t4 = _context27.v;
           setPushStatus({
             state: 'error',
             lastAt: null,
-            error: _t3.message
+            error: _t4.message
           });
           return _context27.a(2, false);
       }
@@ -7422,7 +7438,7 @@ function AppProvider(_ref18) {
   useEffect(function () {
     var cancelled = false;
     _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee25() {
-      var res, ct, data, _t4;
+      var res, ct, data, _t5;
       return _regenerator().w(function (_context28) {
         while (1) switch (_context28.p = _context28.n) {
           case 0:
@@ -7467,7 +7483,7 @@ function AppProvider(_ref18) {
             break;
           case 6:
             _context28.p = 6;
-            _t4 = _context28.v;
+            _t5 = _context28.v;
           case 7:
             return _context28.a(2);
         }
@@ -7606,7 +7622,7 @@ function AppProvider(_ref18) {
   // what caused duplicate final-score rows in your account.
   var syncLockRef = useRef(false);
   var flushSync = useCallback(/*#__PURE__*/_asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee26() {
-    var s, queue, CHUNK, remaining, inserted, chunk, resp, idOf, queuedIds, _t5;
+    var s, queue, CHUNK, remaining, inserted, chunk, resp, idOf, queuedIds, _t6;
     return _regenerator().w(function (_context29) {
       while (1) switch (_context29.p = _context29.n) {
         case 0:
@@ -7686,15 +7702,15 @@ function AppProvider(_ref18) {
           });
         case 8:
           _context29.p = 8;
-          _t5 = _context29.v;
-          setSyncError(_t5.message || 'sync failed');
-          if (_t5.status === 401) {
+          _t6 = _context29.v;
+          setSyncError(_t6.message || 'sync failed');
+          if (_t6.status === 401) {
             storage.remove(KEYS.session);
             setSessionState(null);
           }
           return _context29.a(2, {
             ok: false,
-            reason: _t5.message
+            reason: _t6.message
           });
         case 9:
           _context29.p = 9;
@@ -7713,7 +7729,7 @@ function AppProvider(_ref18) {
   // question_id identity to avoid double-counting when the same attempt
   // exists locally and remotely.
   var pullAttempts = useCallback(/*#__PURE__*/_asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee27() {
-    var s, resp, remote, _t6;
+    var s, resp, remote, _t7;
     return _regenerator().w(function (_context30) {
       while (1) switch (_context30.p = _context30.n) {
         case 0:
@@ -7804,10 +7820,10 @@ function AppProvider(_ref18) {
           });
         case 4:
           _context30.p = 4;
-          _t6 = _context30.v;
+          _t7 = _context30.v;
           return _context30.a(2, {
             ok: false,
-            reason: _t6.message
+            reason: _t7.message
           });
       }
     }, _callee27, null, [[1, 4]]);
@@ -7827,7 +7843,7 @@ function AppProvider(_ref18) {
       s,
       serverResult,
       _args31 = arguments,
-      _t7;
+      _t8;
     return _regenerator().w(function (_context31) {
       while (1) switch (_context31.p = _context31.n) {
         case 0:
@@ -7853,10 +7869,10 @@ function AppProvider(_ref18) {
           break;
         case 3:
           _context31.p = 3;
-          _t7 = _context31.v;
+          _t8 = _context31.v;
           return _context31.a(2, {
             ok: false,
-            reason: _t7.message
+            reason: _t8.message
           });
         case 4:
           setAttemptsState(function (prev) {
@@ -7888,7 +7904,7 @@ function AppProvider(_ref18) {
   useEffect(function () {
     if (!(session !== null && session !== void 0 && session.token)) return;
     _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee29() {
-      var _t8, _t9;
+      var _t9, _t0;
       return _regenerator().w(function (_context32) {
         while (1) switch (_context32.p = _context32.n) {
           case 0:
@@ -7900,7 +7916,7 @@ function AppProvider(_ref18) {
             break;
           case 2:
             _context32.p = 2;
-            _t8 = _context32.v;
+            _t9 = _context32.v;
           case 3:
             _context32.p = 3;
             _context32.n = 4;
@@ -7910,7 +7926,7 @@ function AppProvider(_ref18) {
             break;
           case 5:
             _context32.p = 5;
-            _t9 = _context32.v;
+            _t0 = _context32.v;
           case 6:
             return _context32.a(2);
         }
@@ -7931,7 +7947,7 @@ function AppProvider(_ref18) {
   var lastPushedStateRef = useRef(null);
   var statePushTimerRef = useRef(null);
   var pushState = useCallback(/*#__PURE__*/_asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee30() {
-    var s, blob, _t0;
+    var s, blob, _t1;
     return _regenerator().w(function (_context33) {
       while (1) switch (_context33.p = _context33.n) {
         case 0:
@@ -7959,7 +7975,7 @@ function AppProvider(_ref18) {
           break;
         case 4:
           _context33.p = 4;
-          _t0 = _context33.v;
+          _t1 = _context33.v;
         case 5:
           return _context33.a(2);
       }
@@ -7974,7 +7990,7 @@ function AppProvider(_ref18) {
   }, [pushState]);
   var pullState = useCallback(/*#__PURE__*/_asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee31() {
     var _resp2;
-    var s, resp, cloud, cloudUpdatedAt, localUpdatedAt, cloudNewer, merged, _iterator32, _step32, k, th, mergedStr, _t1, _t10;
+    var s, resp, cloud, cloudUpdatedAt, localUpdatedAt, cloudNewer, merged, _iterator32, _step32, k, th, mergedStr, _t10, _t11;
     return _regenerator().w(function (_context34) {
       while (1) switch (_context34.p = _context34.n) {
         case 0:
@@ -7994,7 +8010,7 @@ function AppProvider(_ref18) {
           break;
         case 3:
           _context34.p = 3;
-          _t1 = _context34.v;
+          _t10 = _context34.v;
           stateHydratedRef.current = true;
           return _context34.a(2);
         case 4:
@@ -8050,7 +8066,7 @@ function AppProvider(_ref18) {
           break;
         case 7:
           _context34.p = 7;
-          _t10 = _context34.v;
+          _t11 = _context34.v;
         case 8:
           storage.set(KEYS.stateUpdatedAt, Date.now());
         case 9:
@@ -8067,7 +8083,7 @@ function AppProvider(_ref18) {
       return;
     }
     _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee32() {
-      var _t11;
+      var _t12;
       return _regenerator().w(function (_context35) {
         while (1) switch (_context35.p = _context35.n) {
           case 0:
@@ -8079,7 +8095,7 @@ function AppProvider(_ref18) {
             break;
           case 2:
             _context35.p = 2;
-            _t11 = _context35.v;
+            _t12 = _context35.v;
           case 3:
             return _context35.a(2);
         }
@@ -8127,7 +8143,7 @@ function AppProvider(_ref18) {
     if (!localChapters.length) return;
     var cancelled = false;
     _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee33() {
-      var data, _iterator33, _step33, _loop5, _ret3, _t13, _t14;
+      var data, _iterator33, _step33, _loop5, _ret3, _t14, _t15;
       return _regenerator().w(function (_context37) {
         while (1) switch (_context37.p = _context37.n) {
           case 0:
@@ -8145,7 +8161,7 @@ function AppProvider(_ref18) {
             _iterator33 = _createForOfIteratorHelper(data.chapters || []);
             _context37.p = 3;
             _loop5 = /*#__PURE__*/_regenerator().m(function _loop5() {
-              var ch, localFile, localTs, full, localFileId, fileRecord, _t12;
+              var ch, localFile, localTs, full, localFileId, fileRecord, _t13;
               return _regenerator().w(function (_context36) {
                 while (1) switch (_context36.p = _context36.n) {
                   case 0:
@@ -8216,7 +8232,7 @@ function AppProvider(_ref18) {
                     break;
                   case 6:
                     _context36.p = 6;
-                    _t12 = _context36.v;
+                    _t13 = _context36.v;
                   case 7:
                     return _context36.a(2);
                 }
@@ -8250,8 +8266,8 @@ function AppProvider(_ref18) {
             break;
           case 9:
             _context37.p = 9;
-            _t13 = _context37.v;
-            _iterator33.e(_t13);
+            _t14 = _context37.v;
+            _iterator33.e(_t14);
           case 10:
             _context37.p = 10;
             _iterator33.f();
@@ -8261,7 +8277,7 @@ function AppProvider(_ref18) {
             break;
           case 12:
             _context37.p = 12;
-            _t14 = _context37.v;
+            _t15 = _context37.v;
           case 13:
             return _context37.a(2);
         }
@@ -8278,7 +8294,7 @@ function AppProvider(_ref18) {
     if (!autoDownloadAll) return;
     var cancelled = false;
     _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee34() {
-      var data, localIds, _iterator34, _step34, _loop6, _ret4, _t16, _t17;
+      var data, localIds, _iterator34, _step34, _loop6, _ret4, _t17, _t18;
       return _regenerator().w(function (_context39) {
         while (1) switch (_context39.p = _context39.n) {
           case 0:
@@ -8302,7 +8318,7 @@ function AppProvider(_ref18) {
             _context39.p = 3;
             _loop6 = /*#__PURE__*/_regenerator().m(function _loop6() {
               var _ch$stages;
-              var ch, full, localFileId, fileRecord, _t15;
+              var ch, full, localFileId, fileRecord, _t16;
               return _regenerator().w(function (_context38) {
                 while (1) switch (_context38.p = _context38.n) {
                   case 0:
@@ -8369,7 +8385,7 @@ function AppProvider(_ref18) {
                     break;
                   case 6:
                     _context38.p = 6;
-                    _t15 = _context38.v;
+                    _t16 = _context38.v;
                   case 7:
                     return _context38.a(2);
                 }
@@ -8403,8 +8419,8 @@ function AppProvider(_ref18) {
             break;
           case 9:
             _context39.p = 9;
-            _t16 = _context39.v;
-            _iterator34.e(_t16);
+            _t17 = _context39.v;
+            _iterator34.e(_t17);
           case 10:
             _context39.p = 10;
             _iterator34.f();
@@ -8414,7 +8430,7 @@ function AppProvider(_ref18) {
             break;
           case 12:
             _context39.p = 12;
-            _t17 = _context39.v;
+            _t18 = _context39.v;
           case 13:
             return _context39.a(2);
         }
@@ -8529,7 +8545,7 @@ function ApiKeyGate() {
     setShowAccount = _useState54[1];
   var save = /*#__PURE__*/function () {
     var _ref31 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee35() {
-      var trimmed, _t18;
+      var trimmed, _t19;
       return _regenerator().w(function (_context40) {
         while (1) switch (_context40.p = _context40.n) {
           case 0:
@@ -8553,9 +8569,9 @@ function ApiKeyGate() {
             break;
           case 4:
             _context40.p = 4;
-            _t18 = _context40.v;
+            _t19 = _context40.v;
             storage.remove(KEYS.apiKey);
-            setErr("Key rejected: ".concat(_t18.message));
+            setErr("Key rejected: ".concat(_t19.message));
           case 5:
             _context40.p = 5;
             setBusy(false);
@@ -8715,7 +8731,7 @@ function UploadPanel() {
         while (1) switch (_context42.n) {
           case 0:
             _loop7 = /*#__PURE__*/_regenerator().m(function _loop7(i) {
-              var meta, record, _t19;
+              var meta, record, _t20;
               return _regenerator().w(function (_context41) {
                 while (1) switch (_context41.p = _context41.n) {
                   case 0:
@@ -8764,12 +8780,12 @@ function UploadPanel() {
                     break;
                   case 4:
                     _context41.p = 4;
-                    _t19 = _context41.v;
+                    _t20 = _context41.v;
                     setPending(function (p) {
                       return p.map(function (entry, idx) {
                         return idx === i ? _objectSpread(_objectSpread({}, entry), {}, {
                           status: 'error',
-                          error: _t19.message
+                          error: _t20.message
                         }) : entry;
                       });
                     });
@@ -8989,7 +9005,7 @@ function PublishToBankButton(_ref36) {
   if (!extraction) return null;
   var publish = /*#__PURE__*/function () {
     var _ref37 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee37() {
-      var _qbank$mc, _qbank$twoPart, _qbank$short, chapterId, created, pushes, _i14, _pushes, _pushes$_i, stage, payload, _t20;
+      var _qbank$mc, _qbank$twoPart, _qbank$short, chapterId, created, pushes, _i14, _pushes, _pushes$_i, stage, payload, _t21;
       return _regenerator().w(function (_context43) {
         while (1) switch (_context43.p = _context43.n) {
           case 0:
@@ -9055,10 +9071,10 @@ function PublishToBankButton(_ref36) {
             break;
           case 8:
             _context43.p = 8;
-            _t20 = _context43.v;
+            _t21 = _context43.v;
             setStatus({
               kind: 'err',
-              msg: _t20.message
+              msg: _t21.message
             });
           case 9:
             _context43.p = 9;
@@ -9365,7 +9381,7 @@ function FileList() {
   }, [setFiles]);
   var processOne = useCallback(/*#__PURE__*/function () {
     var _ref40 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee38(file) {
-      var existingQ, ext, mc, haveTermFor, allTerms, missingTerms, termExtraction, termQs, short, twoPart, _t21;
+      var existingQ, ext, mc, haveTermFor, allTerms, missingTerms, termExtraction, termQs, short, twoPart, _t22;
       return _regenerator().w(function (_context44) {
         while (1) switch (_context44.p = _context44.n) {
           case 0:
@@ -9515,9 +9531,9 @@ function FileList() {
             break;
           case 13:
             _context44.p = 13;
-            _t21 = _context44.v;
+            _t22 = _context44.v;
             markFile(file.file_id, {
-              processError: _t21.message
+              processError: _t22.message
             });
           case 14:
             _context44.p = 14;
@@ -9538,7 +9554,7 @@ function FileList() {
   }(), [busy, client, extractions, questions, markFile, setExtraction, setQuestionsFor, github, pushBank]);
   var processAll = useCallback(/*#__PURE__*/function () {
     var _ref41 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee39(subject) {
-      var list, _iterator37, _step37, f, _t22;
+      var list, _iterator37, _step37, f, _t23;
       return _regenerator().w(function (_context45) {
         while (1) switch (_context45.p = _context45.n) {
           case 0:
@@ -9565,8 +9581,8 @@ function FileList() {
             break;
           case 5:
             _context45.p = 5;
-            _t22 = _context45.v;
-            _iterator37.e(_t22);
+            _t23 = _context45.v;
+            _iterator37.e(_t23);
           case 6:
             _context45.p = 6;
             _iterator37.f();
@@ -9582,7 +9598,7 @@ function FileList() {
   }(), [grouped, extractions, questions, processOne]);
   var removeFile = /*#__PURE__*/function () {
     var _ref42 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee40(record) {
-      var _t23;
+      var _t24;
       return _regenerator().w(function (_context46) {
         while (1) switch (_context46.p = _context46.n) {
           case 0:
@@ -9600,8 +9616,8 @@ function FileList() {
             break;
           case 3:
             _context46.p = 3;
-            _t23 = _context46.v;
-            console.warn('remote delete failed', _t23);
+            _t24 = _context46.v;
+            console.warn('remote delete failed', _t24);
           case 4:
             setFiles(function (prev) {
               return prev.filter(function (f) {
@@ -10471,7 +10487,7 @@ function FlagQuestionModal(_ref54) {
   };
   var submit = /*#__PURE__*/function () {
     var _ref55 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee41() {
-      var queue, _t24, _t25;
+      var queue, _t25, _t26;
       return _regenerator().w(function (_context47) {
         while (1) switch (_context47.p = _context47.n) {
           case 0:
@@ -10503,7 +10519,7 @@ function FlagQuestionModal(_ref54) {
             break;
           case 5:
             _context47.p = 5;
-            _t24 = _context47.v;
+            _t25 = _context47.v;
           case 6:
             queue = storage.get(KEYS.flagQueue, []);
             queue.push({
@@ -10534,10 +10550,10 @@ function FlagQuestionModal(_ref54) {
             break;
           case 7:
             _context47.p = 7;
-            _t25 = _context47.v;
+            _t26 = _context47.v;
             setStatus({
               kind: 'err',
-              msg: _t25.message
+              msg: _t26.message
             });
           case 8:
             _context47.p = 8;
@@ -10554,7 +10570,7 @@ function FlagQuestionModal(_ref54) {
   }();
   var fixNow = /*#__PURE__*/function () {
     var _ref56 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee42() {
-      var fix, fileId, qbank, cleanParts, nextTp, nextMc, _t26, _t27, _t28;
+      var fix, fileId, qbank, cleanParts, nextTp, nextMc, _t27, _t28, _t29;
       return _regenerator().w(function (_context48) {
         while (1) switch (_context48.p = _context48.n) {
           case 0:
@@ -10633,7 +10649,7 @@ function FlagQuestionModal(_ref54) {
             break;
           case 7:
             _context48.p = 7;
-            _t26 = _context48.v;
+            _t27 = _context48.v;
           case 8:
             _context48.n = 13;
             break;
@@ -10672,7 +10688,7 @@ function FlagQuestionModal(_ref54) {
             break;
           case 12:
             _context48.p = 12;
-            _t27 = _context48.v;
+            _t28 = _context48.v;
           case 13:
             setStatus({
               kind: 'ok',
@@ -10683,10 +10699,10 @@ function FlagQuestionModal(_ref54) {
             break;
           case 14:
             _context48.p = 14;
-            _t28 = _context48.v;
+            _t29 = _context48.v;
             setStatus({
               kind: 'err',
-              msg: _t28.message
+              msg: _t29.message
             });
           case 15:
             _context48.p = 15;
@@ -13298,7 +13314,7 @@ function ShortAnswerQuestion(_ref65) {
   };
   var submit = /*#__PURE__*/function () {
     var _ref66 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee43() {
-      var ok, res, _t29;
+      var ok, res, _t30;
       return _regenerator().w(function (_context49) {
         while (1) switch (_context49.p = _context49.n) {
           case 0:
@@ -13336,9 +13352,9 @@ function ShortAnswerQuestion(_ref65) {
             break;
           case 5:
             _context49.p = 5;
-            _t29 = _context49.v;
+            _t30 = _context49.v;
             setAuto({
-              error: (_t29 === null || _t29 === void 0 ? void 0 : _t29.message) || 'grading failed'
+              error: (_t30 === null || _t30 === void 0 ? void 0 : _t30.message) || 'grading failed'
             });
           case 6:
             _context49.p = 6;
@@ -14829,7 +14845,7 @@ function PracticePassagesView() {
   };
   var generate = /*#__PURE__*/function () {
     var _ref80 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee44() {
-      var avoid, out, id, _t30;
+      var avoid, out, id, _t31;
       return _regenerator().w(function (_context50) {
         while (1) switch (_context50.p = _context50.n) {
           case 0:
@@ -14880,8 +14896,8 @@ function PracticePassagesView() {
             break;
           case 4:
             _context50.p = 4;
-            _t30 = _context50.v;
-            setErr(_t30.message || 'Could not generate passage.');
+            _t31 = _context50.v;
+            setErr(_t31.message || 'Could not generate passage.');
             setState('error');
           case 5:
             return _context50.a(2);
@@ -15853,7 +15869,7 @@ function DailyCarsSlotCard(_ref86) {
       }
     }).catch(/*#__PURE__*/function () {
       var _ref87 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee45(e) {
-        var _gen, gen, src, questions, discipline, d2, _t31, _t32, _t33;
+        var _gen, gen, src, questions, discipline, d2, _t32, _t33, _t34;
         return _regenerator().w(function (_context51) {
           while (1) switch (_context51.p = _context51.n) {
             case 0:
@@ -15914,7 +15930,7 @@ function DailyCarsSlotCard(_ref86) {
               break;
             case 9:
               _context51.p = 9;
-              _t31 = _context51.v;
+              _t32 = _context51.v;
             case 10:
               if (gen) {
                 _context51.n = 12;
@@ -15953,7 +15969,7 @@ function DailyCarsSlotCard(_ref86) {
               break;
             case 15:
               _context51.p = 15;
-              _t32 = _context51.v;
+              _t33 = _context51.v;
               if (localOnly) {
                 _context51.n = 20;
                 break;
@@ -15976,10 +15992,10 @@ function DailyCarsSlotCard(_ref86) {
               break;
             case 19:
               _context51.p = 19;
-              _t33 = _context51.v;
+              _t34 = _context51.v;
             case 20:
               if (!cancelled) {
-                setErr(_t32.message);
+                setErr(_t33.message);
                 setState('error');
               }
             case 21:
@@ -16173,7 +16189,7 @@ function CarsArchive() {
   }, [api]);
   var openDay = /*#__PURE__*/function () {
     var _ref88 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee46(date) {
-      var cachedPayload, d, _t34;
+      var cachedPayload, d, _t35;
       return _regenerator().w(function (_context52) {
         while (1) switch (_context52.p = _context52.n) {
           case 0:
@@ -16204,8 +16220,8 @@ function CarsArchive() {
             break;
           case 4:
             _context52.p = 4;
-            _t34 = _context52.v;
-            setErr(_t34.message);
+            _t35 = _context52.v;
+            setErr(_t35.message);
           case 5:
             _context52.p = 5;
             setLoadingDate(null);
@@ -16378,7 +16394,7 @@ function SolvedConnectionGroup(_ref89) {
     termBusy = _useState250[0],
     setTermBusy = _useState250[1];
   var fetchExplain = useCallback(/*#__PURE__*/_asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee47() {
-    var text, _t35;
+    var text, _t36;
     return _regenerator().w(function (_context53) {
       while (1) switch (_context53.p = _context53.n) {
         case 0:
@@ -16408,8 +16424,8 @@ function SolvedConnectionGroup(_ref89) {
           break;
         case 5:
           _context53.p = 5;
-          _t35 = _context53.v;
-          setExplainErr(_t35.message || 'Could not load explanation.');
+          _t36 = _context53.v;
+          setExplainErr(_t36.message || 'Could not load explanation.');
         case 6:
           _context53.p = 6;
           setExplainBusy(false);
@@ -16421,7 +16437,7 @@ function SolvedConnectionGroup(_ref89) {
   })), [client, apiKey, group.category, group.terms, date, explain, explainBusy]);
   var fetchTermDef = useCallback(/*#__PURE__*/function () {
     var _ref91 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee48(term) {
-      var def, _t36;
+      var def, _t37;
       return _regenerator().w(function (_context54) {
         while (1) switch (_context54.p = _context54.n) {
           case 0:
@@ -16457,7 +16473,7 @@ function SolvedConnectionGroup(_ref89) {
             break;
           case 5:
             _context54.p = 5;
-            _t36 = _context54.v;
+            _t37 = _context54.v;
           case 6:
             _context54.p = 6;
             setTermBusy(function (b) {
@@ -17020,7 +17036,7 @@ function DailyConnectionsCard() {
       setState('ready');
     }).catch(/*#__PURE__*/function () {
       var _ref95 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee50(e) {
-        var poolSet, norm, normMap, _iterator74, _step74, t, n, reconcile, buildValid, gen, lastErr, attempt, d2, _t38, _t39, _t40;
+        var poolSet, norm, normMap, _iterator74, _step74, t, n, reconcile, buildValid, gen, lastErr, attempt, d2, _t39, _t40, _t41;
         return _regenerator().w(function (_context56) {
           while (1) switch (_context56.p = _context56.n) {
             case 0:
@@ -17101,7 +17117,7 @@ function DailyConnectionsCard() {
               buildValid = /*#__PURE__*/function () {
                 var _ref96 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee49() {
                   var _gen$groups;
-                  var gen, usedTerms, _iterator76, _step76, g, _t37;
+                  var gen, usedTerms, _iterator76, _step76, g, _t38;
                   return _regenerator().w(function (_context55) {
                     while (1) switch (_context55.p = _context55.n) {
                       case 0:
@@ -17152,8 +17168,8 @@ function DailyConnectionsCard() {
                         break;
                       case 9:
                         _context55.p = 9;
-                        _t37 = _context55.v;
-                        _iterator76.e(_t37);
+                        _t38 = _context55.v;
+                        _iterator76.e(_t38);
                       case 10:
                         _context55.p = 10;
                         _iterator76.f();
@@ -17182,8 +17198,8 @@ function DailyConnectionsCard() {
               return _context56.a(3, 11);
             case 9:
               _context56.p = 9;
-              _t38 = _context56.v;
-              lastErr = _t38;
+              _t39 = _context56.v;
+              lastErr = _t39;
             case 10:
               attempt++;
               _context56.n = 6;
@@ -17211,7 +17227,7 @@ function DailyConnectionsCard() {
               break;
             case 14:
               _context56.p = 14;
-              _t39 = _context56.v;
+              _t40 = _context56.v;
               _context56.p = 15;
               _context56.n = 16;
               return api.getConnections(today);
@@ -17230,10 +17246,10 @@ function DailyConnectionsCard() {
               break;
             case 18:
               _context56.p = 18;
-              _t40 = _context56.v;
+              _t41 = _context56.v;
             case 19:
               if (!cancelled) {
-                setErr(_t39.message);
+                setErr(_t40.message);
                 setState('error');
               }
             case 20:
@@ -17363,7 +17379,7 @@ function ConnectionsArchive() {
   }, [api]);
   var openDay = /*#__PURE__*/function () {
     var _ref97 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee51(date) {
-      var cachedPayload, d, _t41;
+      var cachedPayload, d, _t42;
       return _regenerator().w(function (_context57) {
         while (1) switch (_context57.p = _context57.n) {
           case 0:
@@ -17393,8 +17409,8 @@ function ConnectionsArchive() {
             break;
           case 4:
             _context57.p = 4;
-            _t41 = _context57.v;
-            setErr(_t41.message);
+            _t42 = _context57.v;
+            setErr(_t42.message);
           case 5:
             _context57.p = 5;
             setLoadingDate(null);
@@ -17920,7 +17936,7 @@ function MiniExamCard() {
   var target = MINI_EXAM_SECTIONS.length * MINI_EXAM_PER_SECTION;
   var start = /*#__PURE__*/function () {
     var _ref109 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee52() {
-      var items, _iterator83, _step83, section, res, picked, _iterator84, _step84, q, _t42, _t43;
+      var items, _iterator83, _step83, section, res, picked, _iterator84, _step84, q, _t43, _t44;
       return _regenerator().w(function (_context58) {
         while (1) switch (_context58.p = _context58.n) {
           case 0:
@@ -17979,8 +17995,8 @@ function MiniExamCard() {
             break;
           case 7:
             _context58.p = 7;
-            _t42 = _context58.v;
-            _iterator83.e(_t42);
+            _t43 = _context58.v;
+            _iterator83.e(_t43);
           case 8:
             _context58.p = 8;
             _iterator83.f();
@@ -18003,7 +18019,7 @@ function MiniExamCard() {
             break;
           case 11:
             _context58.p = 11;
-            _t43 = _context58.v;
+            _t44 = _context58.v;
             setErr('Could not load the exam bank. Try again in a moment.');
           case 12:
             _context58.p = 12;
@@ -18153,7 +18169,7 @@ function DailyExamCard(_ref110) {
   }, [payload, apiKey, mastered.length]);
   var generate = /*#__PURE__*/function () {
     var _ref111 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee53() {
-      var questionsOut, p, contribution, _t44;
+      var questionsOut, p, contribution, _t45;
       return _regenerator().w(function (_context59) {
         while (1) switch (_context59.p = _context59.n) {
           case 0:
@@ -18205,8 +18221,8 @@ function DailyExamCard(_ref110) {
             break;
           case 5:
             _context59.p = 5;
-            _t44 = _context59.v;
-            setErr(_t44.message || String(_t44));
+            _t45 = _context59.v;
+            setErr(_t45.message || String(_t45));
             setState('error');
           case 6:
             return _context59.a(2);
@@ -19056,7 +19072,7 @@ function ForceMasterModal(_ref117) {
     setBusy = _useState330[1];
   var submitPin = /*#__PURE__*/function () {
     var _ref118 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee54() {
-      var _t45;
+      var _t46;
       return _regenerator().w(function (_context60) {
         while (1) switch (_context60.p = _context60.n) {
           case 0:
@@ -19085,7 +19101,7 @@ function ForceMasterModal(_ref117) {
             break;
           case 5:
             _context60.p = 5;
-            _t45 = _context60.v;
+            _t46 = _context60.v;
             setErr('Incorrect PIN. Try again.');
             setBusy(false);
           case 6:
@@ -19462,7 +19478,7 @@ function LessonsView(_ref120) {
   useEffect(function () {
     var cancelled = false;
     _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee55() {
-      var data, m, _iterator91, _step91, _ch$stages2, ch, _t46;
+      var data, m, _iterator91, _step91, _ch$stages2, ch, _t47;
       return _regenerator().w(function (_context61) {
         while (1) switch (_context61.p = _context61.n) {
           case 0:
@@ -19494,7 +19510,7 @@ function LessonsView(_ref120) {
             break;
           case 3:
             _context61.p = 3;
-            _t46 = _context61.v;
+            _t47 = _context61.v;
           case 4:
             return _context61.a(2);
         }
@@ -19597,7 +19613,7 @@ function LessonsView(_ref120) {
   };
   var downloadLesson = /*#__PURE__*/function () {
     var _ref123 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee57(chapterId) {
-      var builtIn, full, lesson, _t47;
+      var builtIn, full, lesson, _t48;
       return _regenerator().w(function (_context63) {
         while (1) switch (_context63.p = _context63.n) {
           case 0:
@@ -19645,8 +19661,8 @@ function LessonsView(_ref120) {
             break;
           case 6:
             _context63.p = 6;
-            _t47 = _context63.v;
-            setError((_t47 === null || _t47 === void 0 ? void 0 : _t47.message) || 'Download failed.');
+            _t48 = _context63.v;
+            setError((_t48 === null || _t48 === void 0 ? void 0 : _t48.message) || 'Download failed.');
           case 7:
             _context63.p = 7;
             setBusy(function (b) {
@@ -21171,7 +21187,7 @@ function SettingsPanel(_ref143) {
     setKeyBusy = _useState368[1];
   var saveKey = /*#__PURE__*/function () {
     var _ref144 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee58() {
-      var trimmed, _t48;
+      var trimmed, _t49;
       return _regenerator().w(function (_context64) {
         while (1) switch (_context64.p = _context64.n) {
           case 0:
@@ -21202,9 +21218,9 @@ function SettingsPanel(_ref143) {
             break;
           case 5:
             _context64.p = 5;
-            _t48 = _context64.v;
+            _t49 = _context64.v;
             storage.remove(KEYS.apiKey);
-            setKeyErr("Key rejected: ".concat(_t48.message));
+            setKeyErr("Key rejected: ".concat(_t49.message));
           case 6:
             _context64.p = 6;
             setKeyBusy(false);
@@ -21860,7 +21876,7 @@ function PublishAllPanel() {
   });
   var publishAll = /*#__PURE__*/function () {
     var _ref150 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee60() {
-      var okCount, errCount, lastErr, _iterator108, _step108, _loop9, _t50;
+      var okCount, errCount, lastErr, _iterator108, _step108, _loop9, _t51;
       return _regenerator().w(function (_context67) {
         while (1) switch (_context67.p = _context67.n) {
           case 0:
@@ -21883,7 +21899,7 @@ function PublishAllPanel() {
             _iterator108 = _createForOfIteratorHelper(publishable);
             _context67.p = 2;
             _loop9 = /*#__PURE__*/_regenerator().m(function _loop9() {
-              var f, _qb$mc, _qb$twoPart, _qb$short, chapterId, created, ext, qb, pushes, _i28, _pushes2, _pushes2$_i, stage, payload, _t49;
+              var f, _qb$mc, _qb$twoPart, _qb$short, chapterId, created, ext, qb, pushes, _i28, _pushes2, _pushes2$_i, stage, payload, _t50;
               return _regenerator().w(function (_context66) {
                 while (1) switch (_context66.p = _context66.n) {
                   case 0:
@@ -21939,9 +21955,9 @@ function PublishAllPanel() {
                     break;
                   case 7:
                     _context66.p = 7;
-                    _t49 = _context66.v;
+                    _t50 = _context66.v;
                     errCount++;
-                    lastErr.msg = _t49.message;
+                    lastErr.msg = _t50.message;
                   case 8:
                     return _context66.a(2);
                 }
@@ -21962,8 +21978,8 @@ function PublishAllPanel() {
             break;
           case 6:
             _context67.p = 6;
-            _t50 = _context67.v;
-            _iterator108.e(_t50);
+            _t51 = _context67.v;
+            _iterator108.e(_t51);
           case 7:
             _context67.p = 7;
             _iterator108.f();
@@ -22096,7 +22112,7 @@ function FlagFixesPanel() {
   };
   var runPipeline = /*#__PURE__*/function () {
     var _ref151 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee61() {
-      var current, processedCount, _iterator109, _step109, _loop0, _ret5, _t54;
+      var current, processedCount, _iterator109, _step109, _loop0, _ret5, _t55;
       return _regenerator().w(function (_context69) {
         while (1) switch (_context69.p = _context69.n) {
           case 0:
@@ -22127,7 +22143,7 @@ function FlagFixesPanel() {
             _iterator109 = _createForOfIteratorHelper(pending);
             _context69.p = 3;
             _loop0 = /*#__PURE__*/_regenerator().m(function _loop0() {
-              var flag, fix, fileId, qbank, cleanParts, nextTp, nextMc, updated, _fix$choices3, _updated, _t51, _t52, _t53;
+              var flag, fix, fileId, qbank, cleanParts, nextTp, nextMc, updated, _fix$choices3, _updated, _t52, _t53, _t54;
               return _regenerator().w(function (_context68) {
                 while (1) switch (_context68.p = _context68.n) {
                   case 0:
@@ -22191,7 +22207,7 @@ function FlagFixesPanel() {
                     break;
                   case 5:
                     _context68.p = 5;
-                    _t51 = _context68.v;
+                    _t52 = _context68.v;
                   case 6:
                     _context68.n = 11;
                     break;
@@ -22236,7 +22252,7 @@ function FlagFixesPanel() {
                     break;
                   case 10:
                     _context68.p = 10;
-                    _t52 = _context68.v;
+                    _t53 = _context68.v;
                   case 11:
                     updated = current.find(function (f) {
                       return f.id === flag.id;
@@ -22269,8 +22285,8 @@ function FlagFixesPanel() {
                     break;
                   case 12:
                     _context68.p = 12;
-                    _t53 = _context68.v;
-                    if (!isRateLimit(_t53)) {
+                    _t54 = _context68.v;
+                    if (!isRateLimit(_t54)) {
                       _context68.n = 13;
                       break;
                     }
@@ -22289,7 +22305,7 @@ function FlagFixesPanel() {
                     });
                     if (_updated) {
                       _updated.status = 'error';
-                      _updated.error = _t53.message;
+                      _updated.error = _t54.message;
                     }
                   case 14:
                     return _context68.a(2);
@@ -22318,8 +22334,8 @@ function FlagFixesPanel() {
             break;
           case 8:
             _context69.p = 8;
-            _t54 = _context69.v;
-            _iterator109.e(_t54);
+            _t55 = _context69.v;
+            _iterator109.e(_t55);
           case 9:
             _context69.p = 9;
             _iterator109.f();
@@ -22517,7 +22533,7 @@ function CloudBankPanel() {
   });
   var publish = /*#__PURE__*/function () {
     var _ref153 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee62() {
-      var bank, res, _t55;
+      var bank, res, _t56;
       return _regenerator().w(function (_context70) {
         while (1) switch (_context70.p = _context70.n) {
           case 0:
@@ -22552,10 +22568,10 @@ function CloudBankPanel() {
             break;
           case 3:
             _context70.p = 3;
-            _t55 = _context70.v;
+            _t56 = _context70.v;
             setStatus({
               state: 'err',
-              message: _t55.message
+              message: _t56.message
             });
           case 4:
             _context70.p = 4;
@@ -22572,7 +22588,7 @@ function CloudBankPanel() {
   }();
   var pull = /*#__PURE__*/function () {
     var _ref154 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee63() {
-      var bank, _i29, _Object$keys4, fid, _i30, _Object$keys5, _fid, n, _t56;
+      var bank, _i29, _Object$keys4, fid, _i30, _Object$keys5, _fid, n, _t57;
       return _regenerator().w(function (_context71) {
         while (1) switch (_context71.p = _context71.n) {
           case 0:
@@ -22614,10 +22630,10 @@ function CloudBankPanel() {
             break;
           case 4:
             _context71.p = 4;
-            _t56 = _context71.v;
+            _t57 = _context71.v;
             setStatus({
               state: 'err',
-              message: _t56.message
+              message: _t57.message
             });
           case 5:
             _context71.p = 5;
@@ -22734,7 +22750,7 @@ function AccountPanel(_ref156) {
       className: "text-xl font-semibold"
     }, "@", session.username)), /*#__PURE__*/React.createElement("button", {
       onClick: /*#__PURE__*/_asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee64() {
-        var _t57;
+        var _t58;
         return _regenerator().w(function (_context72) {
           while (1) switch (_context72.p = _context72.n) {
             case 0:
@@ -22746,7 +22762,7 @@ function AccountPanel(_ref156) {
               break;
             case 2:
               _context72.p = 2;
-              _t57 = _context72.v;
+              _t58 = _context72.v;
             case 3:
               setSession(null);
             case 4:
@@ -22759,7 +22775,7 @@ function AccountPanel(_ref156) {
   }
   var submit = /*#__PURE__*/function () {
     var _ref158 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee65() {
-      var res, _t58, _t59;
+      var res, _t59, _t60;
       return _regenerator().w(function (_context73) {
         while (1) switch (_context73.p = _context73.n) {
           case 0:
@@ -22790,7 +22806,7 @@ function AccountPanel(_ref156) {
               pin
             });
           case 4:
-            _t58 = _context73.v;
+            _t59 = _context73.v;
             _context73.n = 7;
             break;
           case 5:
@@ -22800,9 +22816,9 @@ function AccountPanel(_ref156) {
               pin
             });
           case 6:
-            _t58 = _context73.v;
+            _t59 = _context73.v;
           case 7:
-            res = _t58;
+            res = _t59;
             setSession({
               token: res.token,
               username: res.username
@@ -22813,8 +22829,8 @@ function AccountPanel(_ref156) {
             break;
           case 8:
             _context73.p = 8;
-            _t59 = _context73.v;
-            setErr(_t59.message);
+            _t60 = _context73.v;
+            setErr(_t60.message);
           case 9:
             _context73.p = 9;
             setBusy(false);
@@ -23154,7 +23170,7 @@ function AuditModal(_ref163) {
   });
   var runVerify = /*#__PURE__*/function () {
     var _ref164 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee66() {
-      var mcOnly, results, flagged, _t60, _t61;
+      var mcOnly, results, flagged, _t61, _t62;
       return _regenerator().w(function (_context74) {
         while (1) switch (_context74.p = _context74.n) {
           case 0:
@@ -23203,7 +23219,7 @@ function AuditModal(_ref163) {
             break;
           case 6:
             _context74.p = 6;
-            _t60 = _context74.v;
+            _t61 = _context74.v;
           case 7:
             if (!flagged.length) setStatus({
               kind: 'ok',
@@ -23216,10 +23232,10 @@ function AuditModal(_ref163) {
             break;
           case 8:
             _context74.p = 8;
-            _t61 = _context74.v;
+            _t62 = _context74.v;
             setStatus({
               kind: 'err',
-              msg: _t61.message
+              msg: _t62.message
             });
             setPhase('ready');
           case 9:
@@ -23233,7 +23249,7 @@ function AuditModal(_ref163) {
   }();
   var acceptFix = /*#__PURE__*/function () {
     var _ref165 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee67(flag) {
-      var updated, qbank, localUpdated, _t62;
+      var updated, qbank, localUpdated, _t63;
       return _regenerator().w(function (_context75) {
         while (1) switch (_context75.p = _context75.n) {
           case 0:
@@ -23272,10 +23288,10 @@ function AuditModal(_ref163) {
             break;
           case 3:
             _context75.p = 3;
-            _t62 = _context75.v;
+            _t63 = _context75.v;
             setStatus({
               kind: 'err',
-              msg: _t62.message
+              msg: _t63.message
             });
           case 4:
             return _context75.a(2);
@@ -23612,7 +23628,7 @@ function BankTab() {
   }();
   var downloadChapter = /*#__PURE__*/function () {
     var _ref169 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee69(chapter) {
-      var full, _t63;
+      var full, _t64;
       return _regenerator().w(function (_context77) {
         while (1) switch (_context77.p = _context77.n) {
           case 0:
@@ -23638,10 +23654,10 @@ function BankTab() {
             break;
           case 4:
             _context77.p = 4;
-            _t63 = _context77.v;
+            _t64 = _context77.v;
             setStatus({
               kind: 'err',
-              msg: _t63.message
+              msg: _t64.message
             });
           case 5:
             _context77.p = 5;
@@ -23663,7 +23679,7 @@ function BankTab() {
   // signed in with a key can advance a chapter.
   var contributeChapter = /*#__PURE__*/function () {
     var _ref170 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee70(chapter, stages) {
-      var full, _iterator111, _step111, _loop1, localFile, refreshed, localFileId, fileRecord, _t64, _t65, _t66;
+      var full, _iterator111, _step111, _loop1, localFile, refreshed, localFileId, fileRecord, _t65, _t66, _t67;
       return _regenerator().w(function (_context79) {
         while (1) switch (_context79.p = _context79.n) {
           case 0:
@@ -23826,8 +23842,8 @@ function BankTab() {
             break;
           case 10:
             _context79.p = 10;
-            _t64 = _context79.v;
-            _iterator111.e(_t64);
+            _t65 = _context79.v;
+            _iterator111.e(_t65);
           case 11:
             _context79.p = 11;
             _iterator111.f();
@@ -23879,7 +23895,7 @@ function BankTab() {
             break;
           case 15:
             _context79.p = 15;
-            _t65 = _context79.v;
+            _t66 = _context79.v;
           case 16:
             setStatus({
               kind: 'ok',
@@ -23892,10 +23908,10 @@ function BankTab() {
             break;
           case 17:
             _context79.p = 17;
-            _t66 = _context79.v;
+            _t67 = _context79.v;
             setStatus({
               kind: 'err',
-              msg: _t66.message
+              msg: _t67.message
             });
           case 18:
             _context79.p = 18;
@@ -24156,7 +24172,7 @@ function BanksBrowser() {
   }, [api, tick]);
   var download = /*#__PURE__*/function () {
     var _ref171 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee71(username) {
-      var localCount, msg, bank, _i31, _Object$keys6, fid, _i32, _Object$keys7, _fid2, n, _t67;
+      var localCount, msg, bank, _i31, _Object$keys6, fid, _i32, _Object$keys7, _fid2, n, _t68;
       return _regenerator().w(function (_context80) {
         while (1) switch (_context80.p = _context80.n) {
           case 0:
@@ -24202,10 +24218,10 @@ function BanksBrowser() {
             break;
           case 5:
             _context80.p = 5;
-            _t67 = _context80.v;
+            _t68 = _context80.v;
             setStatus({
               username,
-              msg: _t67.message,
+              msg: _t68.message,
               kind: 'err'
             });
           case 6:
