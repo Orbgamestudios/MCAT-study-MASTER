@@ -4145,7 +4145,7 @@ function makeClient(getKey) {
   };
 
   async function loadPassageGuide() {
-    const res = await fetch('MCAT_PASSAGE_GENERATION.md?v=1', { cache: 'no-store' });
+    const res = await fetch('MCAT_PASSAGE_GENERATION.md?v=2', { cache: 'no-store' });
     if (!res.ok) throw new GeminiError(res.status, 'Could not load passage generation guide.');
     return res.text();
   }
@@ -4153,6 +4153,7 @@ function makeClient(getKey) {
   async function generatePracticePassage({ section, focus, avoid = [] }) {
     const guide = await loadPassageGuide();
     const science = !/cars|critical/i.test(section || '');
+    const questionCount = 6 + Math.floor(Math.random() * 3);
     let lastError = null;
     for (let attempt = 0; attempt < 3; attempt++) {
       const recent = (avoid || []).slice(0, attempt ? 4 : 6).map((p, i) =>
@@ -4178,7 +4179,7 @@ function makeClient(getKey) {
             (recent ? `Do not repeat or closely paraphrase any of these recent generated passages for this section:\n${recent}\n\n` : '') +
             (attempt ? 'The previous attempt was rejected because it was too long, too similar to a recent passage, or missing a usable table. Generate a shorter and clearly different passage now.\n\n' : '') +
             compactRules + '\n\n' +
-            'Write one passage and exactly six questions. Make it AAMC-style, passage-driven, and slightly harder than a normal single passage block.',
+            `Write one passage and exactly ${questionCount} questions. This is MCAT MAX: original, passage-driven practice that is meaningfully harder than the real MCAT through denser reasoning, close distractors, and data interpretation - never obscure trivia or copied test material.`,
           }],
         }],
         responseSchema: PRACTICE_PASSAGE_SCHEMA,
@@ -4203,8 +4204,11 @@ function makeClient(getKey) {
         continue;
       }
       const { questions } = validateMCQuestions(data.questions);
-      if (questions.length !== 6) throw new GeminiError(0, `Generated ${questions.length}/6 valid questions. Retry for a clean set.`);
-      const answerSlots = [0, 1, 2, 3, 0, 1].sort(() => Math.random() - 0.5);
+      if (questions.length !== questionCount) {
+        lastError = new GeminiError(0, `Generated ${questions.length}/${questionCount} valid questions. Retry for a clean MCAT MAX set.`);
+        continue;
+      }
+      const answerSlots = Array.from({ length: questionCount }, (_, i) => i % 4).sort(() => Math.random() - 0.5);
       data.questions = questions.map((q, i) => ({
         id: `passage_${Date.now()}_${i}`,
         mode: 'mc',
@@ -9467,16 +9471,35 @@ const PRACTICE_PASSAGE_SECTIONS = [
   { key: 'cars', label: 'CARS', name: 'Critical Analysis and Reasoning', subject: 'CARS' },
 ];
 
-function getPracticePassageBank() {
+function getStoredPracticePassageBank() {
   const arr = storage.get(KEYS.practicePassages, []) || [];
   return Array.isArray(arr) ? arr : [];
 }
+function getAuthoredMaxPassages() {
+  const candidates = Array.isArray(window.MCAT_MAX_SEED_PASSAGES) ? window.MCAT_MAX_SEED_PASSAGES : [];
+  const topics = new Set();
+  const unique = [];
+  for (const entry of candidates) {
+    const topic = String(entry?.topic || entry?.title || '').trim().toLowerCase();
+    const payload = entry?.payload;
+    if (!payload || !topic || topics.has(topic) || practicePassageLooksRepeated(payload, unique.map((item) => item.payload))) continue;
+    topics.add(topic);
+    unique.push(entry);
+  }
+  return unique;
+}
+function getPracticePassageBank() {
+  const local = getStoredPracticePassageBank();
+  const localIds = new Set(local.map((entry) => entry.id));
+  return [...getAuthoredMaxPassages().filter((entry) => !localIds.has(entry.id)), ...local];
+}
 function setPracticePassageBank(entries) {
-  storage.set(KEYS.practicePassages, entries);
+  const authoredIds = new Set(getAuthoredMaxPassages().map((entry) => entry.id));
+  storage.set(KEYS.practicePassages, entries.filter((entry) => !authoredIds.has(entry.id)));
   window.dispatchEvent(new Event('mcat:practicePassagesChanged'));
 }
 function savePracticePassage(entry) {
-  const existing = getPracticePassageBank().filter((p) => p.id !== entry.id);
+  const existing = getStoredPracticePassageBank().filter((p) => p.id !== entry.id);
   setPracticePassageBank([entry, ...existing].slice(0, 80));
 }
 function practicePassageFileId(entry) {
@@ -9509,7 +9532,7 @@ function practicePassageResult(entry, attempts) {
   };
 }
 
-function PracticePassageBankList({ sectionKey = '', title = 'Generated passage bank' }) {
+function PracticePassageBankList({ sectionKey = '', title = 'MCAT MAX passage bank' }) {
   const { attempts } = useApp();
   const [entries, setEntries] = useState(() => getPracticePassageBank());
   const [open, setOpen] = useState(null);
@@ -9535,7 +9558,7 @@ function PracticePassageBankList({ sectionKey = '', title = 'Generated passage b
         <h3 className="font-semibold text-[var(--text-strong)]">{title}</h3>
         <span className="text-xs text-[var(--text-faint)]">{visible.length} saved</span>
       </div>
-      <p className="text-sm text-[var(--text-muted)] mb-3">Generated passages are saved locally here so you can reopen or finish them later.</p>
+      <p className="text-sm text-[var(--text-muted)] mb-3">Author-created MCAT MAX passages are included here, alongside your saved generated sets.</p>
       {visible.length === 0 ? (
         <div className="text-sm text-[var(--text-muted)] bg-[var(--bg-elev-soft)] border border-dashed border-[var(--border-soft)] rounded-lg p-3">
           No generated passages saved for this section yet.
@@ -9554,6 +9577,7 @@ function PracticePassageBankList({ sectionKey = '', title = 'Generated passage b
                   </div>
                   <div className="text-xs text-[var(--text-faint)]">
                     {entry.payload?.discipline || entry.discipline || section?.name}
+                    {entry.source === 'authored' && <span className="text-[var(--accent-text)]"> · authored</span>}
                     {done.done
                       ? <span className="text-[var(--success-text)]"> · done {done.score}/{done.total}</span>
                       : done.answered > 0
@@ -9578,10 +9602,10 @@ function PracticePassageBankList({ sectionKey = '', title = 'Generated passage b
           payload={open.payload}
           onClose={() => setOpen(null)}
           alreadyDone={openResult.done}
-          label={`Practice ${open.sectionLabel || ''}`.trim()}
+          label={`MCAT MAX ${open.sectionLabel || ''}`.trim()}
           subject={open.subject || PRACTICE_PASSAGE_SECTIONS.find((s) => s.key === open.sectionKey)?.subject || ''}
           fileIdPrefix={`passage_${open.sectionKey}`}
-          chapterPrefix={`Practice ${open.sectionLabel || open.sectionKey?.toUpperCase() || ''}`.trim()}
+          chapterPrefix={`MCAT MAX ${open.sectionLabel || open.sectionKey?.toUpperCase() || ''}`.trim()}
           persistResult={false}
           savedResultOverride={openResult}
         />
@@ -9647,9 +9671,12 @@ function PracticePassagesView() {
       <PassageMcatPredictionCard attempts={attempts} />
       <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-5 space-y-4">
         <div>
-          <h2 className="font-semibold text-[var(--text-strong)]">Practice passages</h2>
+          <div className="flex items-center gap-2">
+            <h2 className="font-semibold text-[var(--text-strong)]">MCAT MAX</h2>
+            <span className="text-[10px] uppercase tracking-wide font-semibold rounded px-2 py-0.5 bg-[var(--accent-soft)] text-[var(--accent-text)]">Harder-than-MCAT</span>
+          </div>
           <p className="text-sm text-[var(--text-muted)] mt-1">
-            Generate one fresh MCAT-style passage block with six questions.
+            Original, harder-than-MCAT passage sets with 6-8 reasoning-heavy questions.
           </p>
         </div>
 
@@ -9671,7 +9698,7 @@ function PracticePassagesView() {
         </div>
 
         <label className="block">
-          <span className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Optional focus</span>
+          <span className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Optional MCAT MAX focus</span>
           <textarea
             value={focus}
             onChange={(e) => setFocus(e.target.value)}
@@ -9683,7 +9710,7 @@ function PracticePassagesView() {
 
         {!apiKey && (
           <div className="text-sm text-[var(--warning-text-strong)] bg-[var(--warning-bg)] border border-[var(--warning-text-strong)] rounded-lg p-3">
-            Add a Gemini API key in Settings to generate practice passages.
+            Add a Gemini API key in Settings to generate MCAT MAX passages.
           </div>
         )}
 
@@ -9692,7 +9719,7 @@ function PracticePassagesView() {
           disabled={!apiKey || state === 'generating'}
           className="w-full bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] disabled:opacity-40 rounded-lg py-2.5 text-sm font-medium"
         >
-          {state === 'generating' ? 'Generating passage...' : `Generate ${selected.label} passage`}
+          {state === 'generating' ? 'Generating MCAT MAX passage...' : `Generate ${selected.label} MCAT MAX passage`}
         </button>
 
         {state === 'error' && (
@@ -9724,14 +9751,14 @@ function PracticePassagesView() {
           payload={payload}
           onClose={() => setOpen(false)}
           alreadyDone={false}
-          label={`Practice ${selected.label}`}
+          label={`MCAT MAX ${selected.label}`}
           subject={selected.subject}
           fileIdPrefix={`passage_${selected.key}`}
-          chapterPrefix={`Practice ${selected.label}`}
+          chapterPrefix={`MCAT MAX ${selected.label}`}
           persistResult={false}
         />
       )}
-      <PracticePassageBankList sectionKey={selected.key} title={`${selected.label} generated passage bank`} />
+      <PracticePassageBankList sectionKey={selected.key} title={`${selected.label} MCAT MAX passage bank`} />
       <FreePassagePractice />
     </div>
   );
@@ -13536,7 +13563,7 @@ function PassageMcatPredictionCard({ attempts }) {
         )}
       </div>
       <p className="text-xs text-[var(--text-muted)] mt-2">
-        Based only on generated Passage tab sets and Daily CARS attempts. Missing sections are estimated from the sections you have completed.
+        Based only on MCAT MAX Passage tab sets and Daily CARS attempts. Missing sections are estimated from the sections you have completed.
       </p>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-4">
         {sections.map((s) => (
@@ -15680,7 +15707,7 @@ function BankTab() {
       </div>
 
       <CarsArchive />
-      <PracticePassageBankList title="Generated passage bank" />
+      <PracticePassageBankList title="MCAT MAX passage bank" />
       {changedChapters.length > 0 && !summaryDismissed && (
         <div className="bg-[var(--accent-soft)] border border-[var(--accent-border)] rounded-2xl p-4 sm:p-5">
           <div className="flex items-start justify-between gap-3">

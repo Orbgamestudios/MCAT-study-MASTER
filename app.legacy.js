@@ -5609,7 +5609,7 @@ function makeClient(getKey) {
         while (1) switch (_context9.n) {
           case 0:
             _context9.n = 1;
-            return fetch('MCAT_PASSAGE_GENERATION.md?v=1', {
+            return fetch('MCAT_PASSAGE_GENERATION.md?v=2', {
               cache: 'no-store'
             });
           case 1:
@@ -5631,7 +5631,7 @@ function makeClient(getKey) {
   } // ---- short answer generation ----
   function _generatePracticePassage() {
     _generatePracticePassage = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee0(_ref8) {
-      var section, focus, _ref8$avoid, avoid, guide, science, lastError, _loop2, _ret2, attempt;
+      var section, focus, _ref8$avoid, avoid, guide, science, questionCount, lastError, _loop2, _ret2, attempt;
       return _regenerator().w(function (_context1) {
         while (1) switch (_context1.n) {
           case 0:
@@ -5641,6 +5641,7 @@ function makeClient(getKey) {
           case 1:
             guide = _context1.v;
             science = !/cars|critical/i.test(section || '');
+            questionCount = 6 + Math.floor(Math.random() * 3);
             lastError = null;
             _loop2 = /*#__PURE__*/_regenerator().m(function _loop2(attempt) {
               var recent, compactRules, resp, data, _resp$candidates3, _validateMCQuestions3, questions, answerSlots, _t2;
@@ -5659,7 +5660,7 @@ function makeClient(getKey) {
                       contents: [{
                         role: 'user',
                         parts: [{
-                          text: "Generate one complete MCAT practice passage set for section: ".concat(section, ".\n") + "Optional focus from the student: ".concat(focus || 'Choose a high-yield topic for this section.', "\n\n") + (science ? 'This is a science passage, so you MUST include a structured `table` object with columns and rows. At least one question must require interpreting that table.\n' : '') + (recent ? "Do not repeat or closely paraphrase any of these recent generated passages for this section:\n".concat(recent, "\n\n") : '') + (attempt ? 'The previous attempt was rejected because it was too long, too similar to a recent passage, or missing a usable table. Generate a shorter and clearly different passage now.\n\n' : '') + compactRules + '\n\n' + 'Write one passage and exactly six questions. Make it AAMC-style, passage-driven, and slightly harder than a normal single passage block.'
+                          text: "Generate one complete MCAT practice passage set for section: ".concat(section, ".\n") + "Optional focus from the student: ".concat(focus || 'Choose a high-yield topic for this section.', "\n\n") + (science ? 'This is a science passage, so you MUST include a structured `table` object with columns and rows. At least one question must require interpreting that table.\n' : '') + (recent ? "Do not repeat or closely paraphrase any of these recent generated passages for this section:\n".concat(recent, "\n\n") : '') + (attempt ? 'The previous attempt was rejected because it was too long, too similar to a recent passage, or missing a usable table. Generate a shorter and clearly different passage now.\n\n' : '') + compactRules + '\n\n' + "Write one passage and exactly ".concat(questionCount, " questions. This is MCAT MAX: original, passage-driven practice that is meaningfully harder than the real MCAT through denser reasoning, close distractors, and data interpretation - never obscure trivia or copied test material.")
                         }]
                       }],
                       responseSchema: PRACTICE_PASSAGE_SCHEMA
@@ -5698,13 +5699,18 @@ function makeClient(getKey) {
                     return _context0.a(2, 0);
                   case 7:
                     _validateMCQuestions3 = validateMCQuestions(data.questions), questions = _validateMCQuestions3.questions;
-                    if (!(questions.length !== 6)) {
+                    if (!(questions.length !== questionCount)) {
                       _context0.n = 8;
                       break;
                     }
-                    throw new GeminiError(0, "Generated ".concat(questions.length, "/6 valid questions. Retry for a clean set."));
+                    lastError = new GeminiError(0, "Generated ".concat(questions.length, "/").concat(questionCount, " valid questions. Retry for a clean MCAT MAX set."));
+                    return _context0.a(2, 0);
                   case 8:
-                    answerSlots = [0, 1, 2, 3, 0, 1].sort(function () {
+                    answerSlots = Array.from({
+                      length: questionCount
+                    }, function (_, i) {
+                      return i % 4;
+                    }).sort(function () {
                       return Math.random() - 0.5;
                     });
                     data.questions = questions.map(function (q, i) {
@@ -14651,16 +14657,54 @@ var PRACTICE_PASSAGE_SECTIONS = [{
   name: 'Critical Analysis and Reasoning',
   subject: 'CARS'
 }];
-function getPracticePassageBank() {
+function getStoredPracticePassageBank() {
   var arr = storage.get(KEYS.practicePassages, []) || [];
   return Array.isArray(arr) ? arr : [];
 }
+function getAuthoredMaxPassages() {
+  var candidates = Array.isArray(window.MCAT_MAX_SEED_PASSAGES) ? window.MCAT_MAX_SEED_PASSAGES : [];
+  var topics = new Set();
+  var unique = [];
+  var _iterator67a = _createForOfIteratorHelper(candidates),
+    _step67a;
+  try {
+    for (_iterator67a.s(); !(_step67a = _iterator67a.n()).done;) {
+      var entry = _step67a.value;
+      var topic = String((entry === null || entry === void 0 ? void 0 : entry.topic) || (entry === null || entry === void 0 ? void 0 : entry.title) || '').trim().toLowerCase();
+      var payload = entry === null || entry === void 0 ? void 0 : entry.payload;
+      if (!payload || !topic || topics.has(topic) || practicePassageLooksRepeated(payload, unique.map(function (item) {
+        return item.payload;
+      }))) continue;
+      topics.add(topic);
+      unique.push(entry);
+    }
+  } catch (err) {
+    _iterator67a.e(err);
+  } finally {
+    _iterator67a.f();
+  }
+  return unique;
+}
+function getPracticePassageBank() {
+  var local = getStoredPracticePassageBank();
+  var localIds = new Set(local.map(function (entry) {
+    return entry.id;
+  }));
+  return [].concat(_toConsumableArray(getAuthoredMaxPassages().filter(function (entry) {
+    return !localIds.has(entry.id);
+  })), _toConsumableArray(local));
+}
 function setPracticePassageBank(entries) {
-  storage.set(KEYS.practicePassages, entries);
+  var authoredIds = new Set(getAuthoredMaxPassages().map(function (entry) {
+    return entry.id;
+  }));
+  storage.set(KEYS.practicePassages, entries.filter(function (entry) {
+    return !authoredIds.has(entry.id);
+  }));
   window.dispatchEvent(new Event('mcat:practicePassagesChanged'));
 }
 function savePracticePassage(entry) {
-  var existing = getPracticePassageBank().filter(function (p) {
+  var existing = getStoredPracticePassageBank().filter(function (p) {
     return p.id !== entry.id;
   });
   setPracticePassageBank([entry].concat(_toConsumableArray(existing)).slice(0, 80));
@@ -14711,7 +14755,7 @@ function PracticePassageBankList(_ref79) {
   var _ref79$sectionKey = _ref79.sectionKey,
     sectionKey = _ref79$sectionKey === void 0 ? '' : _ref79$sectionKey,
     _ref79$title = _ref79.title,
-    title = _ref79$title === void 0 ? 'Generated passage bank' : _ref79$title;
+    title = _ref79$title === void 0 ? 'MCAT MAX passage bank' : _ref79$title;
   var _useApp0 = useApp(),
     attempts = _useApp0.attempts;
   var _useState169 = useState(function () {
@@ -14751,7 +14795,7 @@ function PracticePassageBankList(_ref79) {
     className: "text-xs text-[var(--text-faint)]"
   }, visible.length, " saved")), /*#__PURE__*/React.createElement("p", {
     className: "text-sm text-[var(--text-muted)] mb-3"
-  }, "Generated passages are saved locally here so you can reopen or finish them later."), visible.length === 0 ? /*#__PURE__*/React.createElement("div", {
+  }, "Author-created MCAT MAX passages are included here, alongside your saved generated sets."), visible.length === 0 ? /*#__PURE__*/React.createElement("div", {
     className: "text-sm text-[var(--text-muted)] bg-[var(--bg-elev-soft)] border border-dashed border-[var(--border-soft)] rounded-lg p-3"
   }, "No generated passages saved for this section yet.") : /*#__PURE__*/React.createElement("ul", {
     className: "divide-y divide-[var(--border-soft)]"
@@ -14774,7 +14818,9 @@ function PracticePassageBankList(_ref79) {
       className: "text-[var(--text-muted)]"
     }, " \xB7 ", (section === null || section === void 0 ? void 0 : section.label) || entry.sectionLabel)), /*#__PURE__*/React.createElement("div", {
       className: "text-xs text-[var(--text-faint)]"
-    }, ((_entry$payload3 = entry.payload) === null || _entry$payload3 === void 0 ? void 0 : _entry$payload3.discipline) || entry.discipline || (section === null || section === void 0 ? void 0 : section.name), done.done ? /*#__PURE__*/React.createElement("span", {
+    }, ((_entry$payload3 = entry.payload) === null || _entry$payload3 === void 0 ? void 0 : _entry$payload3.discipline) || entry.discipline || (section === null || section === void 0 ? void 0 : section.name), entry.source === 'authored' && /*#__PURE__*/React.createElement("span", {
+      className: "text-[var(--accent-text)]"
+    }, " · authored"), done.done ? /*#__PURE__*/React.createElement("span", {
       className: "text-[var(--success-text)]"
     }, " \xB7 done ", done.score, "/", done.total) : done.answered > 0 ? /*#__PURE__*/React.createElement("span", {
       className: "text-[var(--warning-text-strong)]"
@@ -14791,12 +14837,12 @@ function PracticePassageBankList(_ref79) {
       return setOpen(null);
     },
     alreadyDone: openResult.done,
-    label: "Practice ".concat(open.sectionLabel || '').trim(),
+    label: "MCAT MAX ".concat(open.sectionLabel || '').trim(),
     subject: open.subject || ((_PRACTICE_PASSAGE_SEC = PRACTICE_PASSAGE_SECTIONS.find(function (s) {
       return s.key === open.sectionKey;
     })) === null || _PRACTICE_PASSAGE_SEC === void 0 ? void 0 : _PRACTICE_PASSAGE_SEC.subject) || '',
     fileIdPrefix: "passage_".concat(open.sectionKey),
-    chapterPrefix: "Practice ".concat(open.sectionLabel || ((_open$sectionKey = open.sectionKey) === null || _open$sectionKey === void 0 ? void 0 : _open$sectionKey.toUpperCase()) || '').trim(),
+    chapterPrefix: "MCAT MAX ".concat(open.sectionLabel || ((_open$sectionKey = open.sectionKey) === null || _open$sectionKey === void 0 ? void 0 : _open$sectionKey.toUpperCase()) || '').trim(),
     persistResult: false,
     savedResultOverride: openResult
   }));
@@ -14916,9 +14962,9 @@ function PracticePassagesView() {
     className: "bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-5 space-y-4"
   }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("h2", {
     className: "font-semibold text-[var(--text-strong)]"
-  }, "Practice passages"), /*#__PURE__*/React.createElement("p", {
+  }, "MCAT MAX"), /*#__PURE__*/React.createElement("p", {
     className: "text-sm text-[var(--text-muted)] mt-1"
-  }, "Generate one fresh MCAT-style passage block with six questions.")), /*#__PURE__*/React.createElement("div", {
+  }, "Original, harder-than-MCAT passage sets with 6-8 reasoning-heavy questions.")), /*#__PURE__*/React.createElement("div", {
     className: "grid grid-cols-2 sm:grid-cols-4 gap-2"
   }, PRACTICE_PASSAGE_SECTIONS.map(function (section) {
     return /*#__PURE__*/React.createElement("button", {
@@ -14936,7 +14982,7 @@ function PracticePassagesView() {
     className: "block"
   }, /*#__PURE__*/React.createElement("span", {
     className: "text-xs uppercase tracking-wide text-[var(--text-muted)]"
-  }, "Optional focus"), /*#__PURE__*/React.createElement("textarea", {
+  }, "Optional MCAT MAX focus"), /*#__PURE__*/React.createElement("textarea", {
     value: focus,
     onChange: function onChange(e) {
       return setFocus(e.target.value);
@@ -14946,11 +14992,11 @@ function PracticePassagesView() {
     placeholder: "Example: enzyme kinetics with inhibitors, renal physiology, social stratification, art criticism..."
   })), !apiKey && /*#__PURE__*/React.createElement("div", {
     className: "text-sm text-[var(--warning-text-strong)] bg-[var(--warning-bg)] border border-[var(--warning-text-strong)] rounded-lg p-3"
-  }, "Add a Gemini API key in Settings to generate practice passages."), /*#__PURE__*/React.createElement("button", {
+  }, "Add a Gemini API key in Settings to generate MCAT MAX passages."), /*#__PURE__*/React.createElement("button", {
     onClick: generate,
     disabled: !apiKey || state === 'generating',
     className: "w-full bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] disabled:opacity-40 rounded-lg py-2.5 text-sm font-medium"
-  }, state === 'generating' ? 'Generating passage...' : "Generate ".concat(selected.label, " passage")), state === 'error' && /*#__PURE__*/React.createElement("div", {
+  }, state === 'generating' ? 'Generating MCAT MAX passage...' : "Generate ".concat(selected.label, " MCAT MAX passage")), state === 'error' && /*#__PURE__*/React.createElement("div", {
     className: "text-sm text-[var(--danger-text)] bg-[var(--danger-bg)] border border-[var(--danger-border)] rounded-lg p-3 break-words"
   }, err)), payload && /*#__PURE__*/React.createElement("div", {
     className: "bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-4 sm:p-5 flex items-center justify-between gap-3"
@@ -14974,14 +15020,14 @@ function PracticePassagesView() {
       return setOpen(false);
     },
     alreadyDone: false,
-    label: "Practice ".concat(selected.label),
+    label: "MCAT MAX ".concat(selected.label),
     subject: selected.subject,
     fileIdPrefix: "passage_".concat(selected.key),
-    chapterPrefix: "Practice ".concat(selected.label),
+    chapterPrefix: "MCAT MAX ".concat(selected.label),
     persistResult: false
   }), /*#__PURE__*/React.createElement(PracticePassageBankList, {
     sectionKey: selected.key,
-    title: "".concat(selected.label, " generated passage bank")
+    title: "".concat(selected.label, " MCAT MAX passage bank")
   }), /*#__PURE__*/React.createElement(FreePassagePractice, null));
 }
 function StudyView() {
@@ -20789,7 +20835,7 @@ function PassageMcatPredictionCard(_ref132) {
     className: "text-right text-xs text-[var(--text-faint)]"
   }, total.questionCount, " question", total.questionCount === 1 ? '' : 's')), /*#__PURE__*/React.createElement("p", {
     className: "text-xs text-[var(--text-muted)] mt-2"
-  }, "Based only on generated Passage tab sets and Daily CARS attempts. Missing sections are estimated from the sections you have completed."), /*#__PURE__*/React.createElement("div", {
+  }, "Based only on MCAT MAX Passage tab sets and Daily CARS attempts. Missing sections are estimated from the sections you have completed."), /*#__PURE__*/React.createElement("div", {
     className: "grid grid-cols-2 sm:grid-cols-4 gap-2 mt-4"
   }, sections.map(function (s) {
     return /*#__PURE__*/React.createElement("div", {
@@ -24042,7 +24088,7 @@ function BankTab() {
   }), status && /*#__PURE__*/React.createElement("div", {
     className: "text-sm rounded-lg px-3 py-2 ".concat(status.kind === 'ok' ? 'bg-[var(--success-bg)] text-[var(--success-text)]' : status.kind === 'err' ? 'bg-[var(--danger-bg)] text-[var(--danger-text)]' : 'bg-[var(--accent-soft)] text-[var(--accent-text)]')
   }, status.kind === 'ok' ? '✓ ' : status.kind === 'info' ? '… ' : '', status.msg)), /*#__PURE__*/React.createElement(CarsArchive, null), /*#__PURE__*/React.createElement(PracticePassageBankList, {
-    title: "Generated passage bank"
+    title: "MCAT MAX passage bank"
   }), changedChapters.length > 0 && !summaryDismissed && /*#__PURE__*/React.createElement("div", {
     className: "bg-[var(--accent-soft)] border border-[var(--accent-border)] rounded-2xl p-4 sm:p-5"
   }, /*#__PURE__*/React.createElement("div", {

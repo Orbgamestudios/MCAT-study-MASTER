@@ -1,6 +1,8 @@
-# MCAT Practice Passage Generation Guide
+# MCAT MAX Passage Generation Guide
 
-Purpose: this is the instruction file the app sends to Gemini when generating practice passages in the Passages tab. It is based on public AAMC descriptions of MCAT structure, passage sources, and reasoning skills. Generate original practice only. Do not copy AAMC, Khan Academy, UWorld, Kaplan, Blueprint, Jack Westin, or any other proprietary passage or question text.
+Purpose: this is the instruction file the app sends to Gemini when generating MCAT MAX passages in the Passage tab. It is based on public AAMC descriptions of MCAT structure, passage sources, and reasoning skills. Generate original practice only. Do not copy, paraphrase, reconstruct, or emulate a specific AAMC, Khan Academy, UWorld, Kaplan, Blueprint, Jack Westin, or other proprietary passage or question.
+
+MCAT MAX is deliberately harder than the real exam, but it must stay fair: increase difficulty through multi-step reasoning, experimental design, data interpretation, and close-but-defensible distractors. Never increase difficulty through obscure facts, ambiguous wording, or an answer that cannot be justified from the passage and standard MCAT knowledge.
 
 ## Research basis
 
@@ -21,7 +23,7 @@ The AAMC Store states that official prep questions are written by the same peopl
 
 ## Core design model
 
-Each generated practice set is one passage plus six multiple-choice questions. The set is shorter than a full section but should feel like one real MCAT passage block.
+Each generated MCAT MAX set is one passage plus 6-8 multiple-choice questions. The set is shorter than a full section but should feel like one real passage block.
 
 The passage must do three jobs:
 
@@ -140,7 +142,7 @@ Common reasoning moves:
 
 ## Question construction rules
 
-Generate exactly six questions.
+Generate 6-8 questions. Follow the exact number requested by the user prompt.
 
 For science sections:
 
@@ -203,7 +205,7 @@ When data are included, at least one question must require interpretation of the
 
 ## Difficulty target
 
-Aim slightly harder than a single real MCAT passage block. A strong student should usually get 4-5 out of 6, not 6 out of 6. Difficulty should come from reasoning and close distractors, not obscure content.
+Aim meaningfully harder than a single real MCAT passage block. A strong student should usually get about 70-80% correct, not every item correct. Difficulty should come from reasoning and close distractors, not obscure content.
 
 ## Output schema
 
@@ -256,7 +258,7 @@ Before returning, verify:
 - The passage is original.
 - Any table is in the structured `table` field, not embedded in `passage`.
 - The section matches the selected section.
-- There are exactly six questions.
+- There are 6-8 questions and the requested count is met.
 - Every question has exactly four choices.
 - `correct_index` is 0, 1, 2, or 3.
 - The correct answer is uniquely best.

@@ -61,7 +61,7 @@
     writeScript('https://unpkg.com/react@18/umd/react.development.js');
     writeScript('https://unpkg.com/react-dom@18/umd/react-dom.development.js');
     if (!legacy) {
-      writeScript('https://unpkg.com/@babel/standalone/babel.min.js');
+      writeScript('https://unpkg.com/@babel/standalone@7.28.4/babel.min.js');
       writeScript('https://cdn.tailwindcss.com');
     }
   })();
@@ -881,7 +881,9 @@
 </script>
 <script>
   (function () {
-    var v = '214';
+    var v = '218';
+    document.write('<script src="mcat-max-passages.js?v=' + v + '"><\/script>');
+    document.write('<script src="mcat-max-batch-01.js?v=' + v + '"><\/script>');
     if (window.__MCAT_LEGACY_BOOT__) {
       document.write('<script src="app.legacy.js?v=' + v + '"><\/script>');
     } else {
