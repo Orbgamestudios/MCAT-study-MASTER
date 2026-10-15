@@ -78,8 +78,6 @@
     color: var(--text);
     font-family: ui-sans-serif, system-ui, sans-serif;
     transition: background-color 0.25s ease, color 0.25s ease;
-    /* iPhone notch + home indicator */
-    padding-top: env(safe-area-inset-top);
     padding-bottom: env(safe-area-inset-bottom);
     padding-left: env(safe-area-inset-left);
     padding-right: env(safe-area-inset-right);
@@ -881,7 +879,7 @@
 </script>
 <script>
   (function () {
-    var v = '219';
+    var v = '220';
     document.write('<script src="mcat-max-passages.js?v=' + v + '"><\/script>');
     document.write('<script src="mcat-max-batch-01.js?v=' + v + '"><\/script>');
     if (window.__MCAT_LEGACY_BOOT__) {
