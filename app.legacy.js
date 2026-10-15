@@ -8556,11 +8556,11 @@ function ApiKeyGate() {
         while (1) switch (_context40.p = _context40.n) {
           case 0:
             trimmed = val.trim();
-            if (trimmed.startsWith('AIza')) {
+            if (trimmed) {
               _context40.n = 1;
               break;
             }
-            setErr('That does not look like a Google AI API key (should start with AIza).');
+            setErr('Enter a Gemini API key.');
             return _context40.a(2);
           case 1:
             setBusy(true);
@@ -8613,7 +8613,7 @@ function ApiKeyGate() {
     onKeyDown: function onKeyDown(e) {
       return e.key === 'Enter' && !busy && save();
     },
-    placeholder: "AIza...",
+    placeholder: "Paste your Gemini API key",
     className: "flex-1 bg-[var(--bg-elev)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:border-[var(--accent-border)]",
     autoFocus: true
   }), /*#__PURE__*/React.createElement("button", {
@@ -20220,7 +20220,10 @@ function LessonsView(_ref120) {
     className: "font-semibold text-[var(--text-strong)]"
   }, "Lessons"), /*#__PURE__*/React.createElement("p", {
     className: "text-sm text-[var(--text-muted)] mt-1"
-  }, "Download a guided lesson and work through it in groups of ", LESSON_GROUP_SIZE, " sections. Each group is gated by a ", LESSON_CHECKPOINT_Q, "-question checkpoint (100% to advance), and a ", LESSON_FINAL_Q, "-question final exam masters the chapter.")), error && /*#__PURE__*/React.createElement("div", {
+  }, "Download a guided lesson and work through it in groups of ", LESSON_GROUP_SIZE, " sections. Each group is gated by a ", LESSON_CHECKPOINT_Q, "-question checkpoint (100% to advance), and a ", LESSON_FINAL_Q, "-question final exam masters the chapter."), /*#__PURE__*/React.createElement("button", {
+    onClick: onGoToStudy,
+    className: "mt-3 text-xs px-3 py-1.5 rounded font-medium bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)]"
+  }, "Study practice")), error && /*#__PURE__*/React.createElement("div", {
     className: "bg-red-500/10 border border-red-500/30 rounded-xl p-3 text-xs text-red-400"
   }, error), inProgress.length > 0 && /*#__PURE__*/React.createElement("div", {
     className: "bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-5 space-y-3"
@@ -21245,13 +21248,6 @@ function SettingsPanel(_ref143) {
             setApiKey('');
             return _context64.a(2);
           case 1:
-            if (trimmed.startsWith('AIza')) {
-              _context64.n = 2;
-              break;
-            }
-            setKeyErr('Google AI keys start with AIza.');
-            return _context64.a(2);
-          case 2:
             setKeyBusy(true);
             setKeyErr('');
             storage.set(KEYS.apiKey, trimmed);
@@ -21441,7 +21437,7 @@ function SettingsPanel(_ref143) {
       setKeyVal(e.target.value);
       setKeyErr('');
     },
-    placeholder: apiKey ? "current: \u2026".concat(apiKey.slice(-6)) : 'AIza...',
+    placeholder: apiKey ? "current: \u2026".concat(apiKey.slice(-6)) : 'Paste your Gemini API key',
     className: "flex-1 bg-[var(--bg-elev)] border border-[var(--border)] rounded px-3 py-2 text-sm font-mono focus:outline-none focus:border-[var(--accent-border)]"
   }), /*#__PURE__*/React.createElement("button", {
     onClick: function onClick() {
@@ -24686,7 +24682,7 @@ function Shell() {
     };
   }, []);
   var hasLibrary = apiKey || readOnly || session;
-  var tabs = [['lessons', 'Lessons'], ['study', 'Study'], ['passages', 'Passage'], ['home', 'Home'], ['stats', 'Stats'], ['banks', 'Bank']];
+  var tabs = [['lessons', 'Lessons'], ['passages', 'Passage'], ['home', 'Home'], ['stats', 'Stats'], ['banks', 'Bank']];
   useEffect(function () {
     if (readOnly) setTab('home');else if (!hasLibrary) setTab('home');
   }, [readOnly, hasLibrary]);
@@ -24701,7 +24697,7 @@ function Shell() {
     var _ref174 = _slicedToArray(_ref173, 1),
       k = _ref174[0];
     return k;
-  });
+  }).concat(['study']);
 
   // Per-tab scroll memory — ref, not state, so it never persists across
   // reloads. Switching saves the leaving tab's scrollY and restores the
@@ -24844,7 +24840,7 @@ function Shell() {
       flexShrink: 0
     }
   }), /*#__PURE__*/React.createElement("main", {
-    className: "flex-1 px-3 pb-3 pt-[17px] sm:px-6 sm:pb-6 sm:pt-[29px] overflow-x-hidden"
+    className: "flex-1 px-3 pb-3 pt-2 sm:px-6 sm:pb-6 sm:pt-3 overflow-x-hidden"
   }, /*#__PURE__*/React.createElement("div", {
     className: "max-w-3xl mx-auto"
   }, tabIs('home') && /*#__PURE__*/React.createElement("div", tabWrap('home', ''), /*#__PURE__*/React.createElement(HomeView, {

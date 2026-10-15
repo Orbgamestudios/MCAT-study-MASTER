@@ -5689,8 +5689,8 @@ function ApiKeyGate() {
 
   const save = async () => {
     const trimmed = val.trim();
-    if (!trimmed.startsWith('AIza')) {
-      setErr('That does not look like a Google AI API key (should start with AIza).');
+    if (!trimmed) {
+      setErr('Enter a Gemini API key.');
       return;
     }
     setBusy(true); setErr('');
@@ -5721,7 +5721,7 @@ function ApiKeyGate() {
             value={val}
             onChange={(e) => { setVal(e.target.value); setErr(''); }}
             onKeyDown={(e) => e.key === 'Enter' && !busy && save()}
-            placeholder="AIza..."
+            placeholder="Paste your Gemini API key"
             className="flex-1 bg-[var(--bg-elev)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:border-[var(--accent-border)]"
             autoFocus
           />
@@ -13088,10 +13088,15 @@ function LessonsView({ onGoToStudy }) {
   return (
     <div className="space-y-4">
       <div className="bg-[var(--bg-card)] border border-[var(--border-soft)] rounded-2xl p-5">
-        <h2 className="font-semibold text-[var(--text-strong)]">Lessons</h2>
-        <p className="text-sm text-[var(--text-muted)] mt-1">
-          Download a guided lesson and work through it in groups of {LESSON_GROUP_SIZE} sections. Each group is gated by a {LESSON_CHECKPOINT_Q}-question checkpoint (100% to advance), and a {LESSON_FINAL_Q}-question final exam masters the chapter.
-        </p>
+        <div className="flex items-start justify-between gap-3 flex-wrap">
+          <div>
+            <h2 className="font-semibold text-[var(--text-strong)]">Lessons</h2>
+            <p className="text-sm text-[var(--text-muted)] mt-1">
+              Download a guided lesson and work through it in groups of {LESSON_GROUP_SIZE} sections. Each group is gated by a {LESSON_CHECKPOINT_Q}-question checkpoint (100% to advance), and a {LESSON_FINAL_Q}-question final exam masters the chapter.
+            </p>
+          </div>
+          <button onClick={onGoToStudy} className="shrink-0 text-xs px-3 py-1.5 rounded font-medium bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)]">Study practice</button>
+        </div>
       </div>
 
       {error && (
@@ -13841,10 +13846,6 @@ function SettingsPanel({ onClose }) {
   const saveKey = async () => {
     const trimmed = keyVal.trim();
     if (!trimmed) { setApiKey(''); return; }
-    if (!trimmed.startsWith('AIza')) {
-      setKeyErr('Google AI keys start with AIza.');
-      return;
-    }
     setKeyBusy(true); setKeyErr('');
     storage.set(KEYS.apiKey, trimmed);
     try {
@@ -14021,7 +14022,7 @@ function SettingsPanel({ onClose }) {
             type={keyShow ? 'text' : 'password'}
             value={keyVal}
             onChange={(e) => { setKeyVal(e.target.value); setKeyErr(''); }}
-            placeholder={apiKey ? `current: …${apiKey.slice(-6)}` : 'AIza...'}
+            placeholder={apiKey ? `current: …${apiKey.slice(-6)}` : 'Paste your Gemini API key'}
             className="flex-1 bg-[var(--bg-elev)] border border-[var(--border)] rounded px-3 py-2 text-sm font-mono focus:outline-none focus:border-[var(--accent-border)]"
           />
           <button onClick={() => setKeyShow((s) => !s)} className="px-3 text-xs border border-[var(--border)] rounded hover:bg-[var(--bg-hover)]">
@@ -16142,14 +16143,14 @@ function Shell() {
   }, []);
 
   const hasLibrary = apiKey || readOnly || session;
-  const tabs = [['lessons', 'Lessons'], ['study', 'Study'], ['passages', 'Passage'], ['home', 'Home'], ['stats', 'Stats'], ['banks', 'Bank']];
+  const tabs = [['lessons', 'Lessons'], ['passages', 'Passage'], ['home', 'Home'], ['stats', 'Stats'], ['banks', 'Bank']];
   useEffect(() => { if (readOnly) setTab('home'); else if (!hasLibrary) setTab('home'); }, [readOnly, hasLibrary]);
   useEffect(() => { setProfileUser(null); }, [tab]);
 
   const tabRef = useRef(tab);
   useEffect(() => { tabRef.current = tab; }, [tab]);
 
-  const tabKeys = tabs.map(([k]) => k);
+  const tabKeys = [...tabs.map(([k]) => k), 'study'];
 
   // Per-tab scroll memory — ref, not state, so it never persists across
   // reloads. Switching saves the leaving tab's scrollY and restores the
@@ -16275,7 +16276,7 @@ function Shell() {
       {/* Spacer pushes content below the fixed header */}
       <div style={{ height: headerH, flexShrink: 0 }} />
 
-      <main className="flex-1 px-3 pb-3 pt-[17px] sm:px-6 sm:pb-6 sm:pt-[29px] overflow-x-hidden">
+      <main className="flex-1 px-3 pb-3 pt-2 sm:px-6 sm:pb-6 sm:pt-3 overflow-x-hidden">
         <div className="max-w-3xl mx-auto">
           {tabIs('home') && (
             <div {...tabWrap('home', '')}>
