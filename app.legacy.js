@@ -24699,20 +24699,11 @@ function Shell() {
     return k;
   }).concat(['study']);
 
-  // Per-tab scroll memory — ref, not state, so it never persists across
-  // reloads. Switching saves the leaving tab's scrollY and restores the
-  // entering tab's saved value (or 0 on first visit).
-  var scrollMemoryRef = useRef({});
   var switchTab = useCallback(function (newTab) {
     if (newTab === tabRef.current) return;
-    scrollMemoryRef.current[tabRef.current] = window.scrollY;
+    window.scrollTo(0, 0);
     setTab(newTab);
   }, []);
-  useLayoutEffect(function () {
-    var _scrollMemoryRef$curr;
-    var target = (_scrollMemoryRef$curr = scrollMemoryRef.current[tab]) !== null && _scrollMemoryRef$curr !== void 0 ? _scrollMemoryRef$curr : 0;
-    window.scrollTo(0, target);
-  }, [tab]);
   var tabWrap = function tabWrap(k, baseClass) {
     return {
       className: baseClass,
@@ -24840,7 +24831,7 @@ function Shell() {
       flexShrink: 0
     }
   }), /*#__PURE__*/React.createElement("main", {
-    className: "flex-1 px-3 pb-3 pt-2 sm:px-6 sm:pb-6 sm:pt-3 overflow-x-hidden"
+    className: "flex-1 px-3 pb-3 pt-4 sm:px-6 sm:pb-6 sm:pt-5 overflow-x-hidden"
   }, /*#__PURE__*/React.createElement("div", {
     className: "max-w-3xl mx-auto"
   }, tabIs('home') && /*#__PURE__*/React.createElement("div", tabWrap('home', ''), /*#__PURE__*/React.createElement(HomeView, {

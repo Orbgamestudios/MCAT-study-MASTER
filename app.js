@@ -16152,21 +16152,11 @@ function Shell() {
 
   const tabKeys = [...tabs.map(([k]) => k), 'study'];
 
-  // Per-tab scroll memory — ref, not state, so it never persists across
-  // reloads. Switching saves the leaving tab's scrollY and restores the
-  // entering tab's saved value (or 0 on first visit).
-  const scrollMemoryRef = useRef({});
-
   const switchTab = useCallback((newTab) => {
     if (newTab === tabRef.current) return;
-    scrollMemoryRef.current[tabRef.current] = window.scrollY;
+    window.scrollTo(0, 0);
     setTab(newTab);
   }, []);
-
-  useLayoutEffect(() => {
-    const target = scrollMemoryRef.current[tab] ?? 0;
-    window.scrollTo(0, target);
-  }, [tab]);
 
   const tabWrap = (k, baseClass) => ({
     className: baseClass,
@@ -16276,7 +16266,7 @@ function Shell() {
       {/* Spacer pushes content below the fixed header */}
       <div style={{ height: headerH, flexShrink: 0 }} />
 
-      <main className="flex-1 px-3 pb-3 pt-2 sm:px-6 sm:pb-6 sm:pt-3 overflow-x-hidden">
+      <main className="flex-1 px-3 pb-3 pt-4 sm:px-6 sm:pb-6 sm:pt-5 overflow-x-hidden">
         <div className="max-w-3xl mx-auto">
           {tabIs('home') && (
             <div {...tabWrap('home', '')}>
